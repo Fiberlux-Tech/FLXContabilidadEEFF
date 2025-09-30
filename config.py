@@ -60,6 +60,7 @@ variables_to_extract = {
     'tipoCambio': 'D15',
     'costoCapital_annual': 'D17',
     'plazoContrato': 'D19',
+    'tipoPago': 'D21',  # ## ADD THIS LINE ##
     'MRC': 'H9',
     'NRC': 'H11',
     'comisionesPersonal': 'H23',
