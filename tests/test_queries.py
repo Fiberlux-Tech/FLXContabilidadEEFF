@@ -1,4 +1,4 @@
-from queries import SQL_SCHEMA, SQL_VIEW, PNL_ACCOUNT_PREFIXES, fetch_pnl_data, _fetch_data
+from data.queries import SQL_SCHEMA, SQL_VIEW, PNL_ACCOUNT_PREFIXES, fetch_pnl_data, _fetch_data
 import inspect
 
 

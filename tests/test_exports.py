@@ -5,18 +5,19 @@ import os
 import pandas as pd
 import pytest
 
-from transforms import prepare_pnl, filter_for_statements, assign_partida_pl, prepare_stmt
-from aggregation import (
+from transforms.transforms import prepare_pnl, filter_for_statements, assign_partida_pl, prepare_stmt
+from transforms.aggregation import (
     summarize_by_cuenta, summarize_by_ceco, summarize_by_ceco_cuenta,
     detail_by_ceco, detail_ceco_by_cuenta, detail_resultado_financiero,
     sales_details, proyectos_especiales,
 )
-from statement_builder import pl_summary
-from excel_export import export_to_excel
-from pdf_export import export_to_pdf
-from pipeline import build_excel_data, build_pdf_data
-from models import PnLReportData, PdfReportData
-from calendar_config import MONTH_NAMES
+from transforms.statement_builder import pl_summary
+from export.excel.export import export_to_excel
+from export.pdf.export import export_to_pdf
+from export.excel.builder import build_excel_data
+from export.pdf.builder import build_pdf_data
+from models.models import PnLReportData, PdfReportData
+from config.calendar import MONTH_NAMES
 
 
 @pytest.fixture

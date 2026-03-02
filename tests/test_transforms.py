@@ -1,11 +1,11 @@
 import pandas as pd
 import pytest
 
-from transforms import (
+from transforms.transforms import (
     prepare_pnl, filter_for_statements, assign_partida_pl,
     prepare_stmt, get_excluded_cuentas,
 )
-from account_rules import EXCLUDED_CUENTA
+from rules.account_rules import EXCLUDED_CUENTA
 
 
 class TestPreparePnl:

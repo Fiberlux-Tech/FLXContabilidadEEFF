@@ -1,8 +1,8 @@
 import pytest
 
-from config import DatabaseConfig
-from db import _build_conn_str
-from exceptions import ConfigurationError
+from config.settings import DatabaseConfig
+from data.db import _build_conn_str
+from config.exceptions import ConfigurationError
 
 
 class TestBuildConnStr:

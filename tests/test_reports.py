@@ -1,14 +1,14 @@
 import pandas as pd
 import pytest
 
-from transforms import prepare_pnl, filter_for_statements, assign_partida_pl
-from aggregation import (
+from transforms.transforms import prepare_pnl, filter_for_statements, assign_partida_pl
+from transforms.aggregation import (
     summarize_by_cuenta, summarize_by_ceco,
     append_total_row, detail_resultado_financiero, sales_details,
     detail_by_ceco,
 )
-from statement_builder import pl_summary
-from calendar_config import MONTH_NAMES_SET
+from transforms.statement_builder import pl_summary
+from config.calendar import MONTH_NAMES_SET
 
 
 @pytest.fixture

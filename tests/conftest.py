@@ -1,7 +1,9 @@
 import pandas as pd
 import pytest
 
-from config import get_config
+pd.set_option("mode.copy_on_write", True)
+
+from config.settings import get_config
 
 
 @pytest.fixture(autouse=True)

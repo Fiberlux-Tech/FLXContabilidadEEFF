@@ -13,7 +13,7 @@ Covers:
 import pandas as pd
 import pytest
 
-from pdf_export import (
+from export.pdf.export import (
     _GROUP_SENTINEL,
     _filter_zero_rows,
     _remove_orphaned_group_headers,

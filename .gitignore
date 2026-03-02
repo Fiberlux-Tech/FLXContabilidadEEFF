@@ -6,3 +6,6 @@ __pycache__/
 .idea/
 .cache/
 .claude/
+build/
+dist/
+*.spec

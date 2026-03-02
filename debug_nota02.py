@@ -14,10 +14,10 @@ load_dotenv()
 
 import pandas as pd
 
-from db import connect, close_pool
-from queries import fetch_bs_data
-from transforms import prepare_bs_stmt
-from account_rules import BS_CLASSIFICATION
+from data.db import connect
+from data.queries import fetch_bs_data
+from transforms.transforms import prepare_bs_stmt
+from rules.account_rules import BS_CLASSIFICATION
 
 # The PARTIDA_BS value that Nota 02 filters on
 NOTA02_PARTIDA = "Cuentas por cobrar comerciales (neto)"
@@ -97,7 +97,6 @@ def main():
         nit_summary.to_excel(writer, sheet_name="Resumen por NIT", index=False)
 
     print(f"\nExcel saved to: {outfile.resolve()}")
-    close_pool()
 
 
 if __name__ == "__main__":

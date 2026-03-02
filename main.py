@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 # load_dotenv() must run before any local imports that read env vars at import time
 load_dotenv()
 
-from config import get_config  # noqa: E402
-from exceptions import PlantillasError, ConfigurationError, EmailError  # noqa: E402
+from config.settings import get_config  # noqa: E402
+from config.exceptions import PlantillasError, ConfigurationError, EmailError  # noqa: E402
 
 logging.basicConfig(
     level=get_config().log_level,
@@ -16,9 +16,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("plantillas.main")
 
-from cli import parse_args, resolve_period  # noqa: E402
-from pipeline import run_report  # noqa: E402
-from email_sender import get_email_sender  # noqa: E402
+from core.cli import parse_args, resolve_period  # noqa: E402
+from core.pipeline import run_report  # noqa: E402
+from core.email_sender import get_email_sender  # noqa: E402
 
 
 def main():

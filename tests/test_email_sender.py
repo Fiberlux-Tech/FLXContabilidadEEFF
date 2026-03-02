@@ -1,10 +1,10 @@
 import sys
 import pytest
 
-from email_sender import (
+from core.email_sender import (
     get_email_sender, OutlookEmailSender, SMTPEmailSender, EmailSender,
 )
-from exceptions import ConfigurationError
+from config.exceptions import ConfigurationError
 
 
 class TestGetEmailSender:
