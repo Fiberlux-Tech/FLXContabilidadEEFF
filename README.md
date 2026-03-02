@@ -1,4 +1,4 @@
-# PlantillasFLX - Financial Report Generator
+# FLXContabilidadEEFF - Financial Report Generator
 
 Automated financial report generation system for Peruvian companies. Reads accounting data from a SQL Server database, transforms it according to business rules, and generates **Profit & Loss (P&L)** and **Balance Sheet (BS)** reports in both **Excel** and **PDF** formats, with optional email distribution.
 
@@ -7,7 +7,7 @@ Supports four companies: **FIBERLINE**, **FIBERLUX**, **FIBERTECH**, and **NEXTN
 ## Project Structure
 
 ```
-PlantillasFLX/
+FLXContabilidadEEFF/
 ├── config/          # Configuration (DB, email, company metadata, calendar, note definitions)
 ├── core/            # CLI parsing, pipeline orchestration, email sending
 ├── data/            # Database connectivity (pyodbc), SQL queries, concurrent data fetching

@@ -1,10 +1,10 @@
-# PlantillasFLX - Architecture Guide
+# FLXContabilidadEEFF - Architecture Guide
 
-> AI-readable architecture documentation for the PlantillasFLX financial reporting system.
+> AI-readable architecture documentation for the FLXContabilidadEEFF financial reporting system.
 
 ## Project Purpose
 
-PlantillasFLX generates P&L (Profit & Loss) and Balance Sheet financial reports in Excel (.xlsx) and PDF formats from SQL Server accounting data. It targets Peruvian accounting standards and supports four companies within the FiberLux group.
+FLXContabilidadEEFF generates P&L (Profit & Loss) and Balance Sheet financial reports in Excel (.xlsx) and PDF formats from SQL Server accounting data. It targets Peruvian accounting standards and supports four companies within the FiberLux group.
 
 ## Technology Stack
 
@@ -22,7 +22,7 @@ PlantillasFLX generates P&L (Profit & Loss) and Balance Sheet financial reports 
 ## Module Map
 
 ```
-PlantillasFLX/
+FLXContabilidadEEFF/
 │
 ├── ENTRY POINTS
 │   ├── main.py              # Application entry point, orchestrates workflow

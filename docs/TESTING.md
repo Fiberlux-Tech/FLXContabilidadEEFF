@@ -1,6 +1,6 @@
 # Testing Guide
 
-> Test structure, patterns, fixtures, and coverage for PlantillasFLX.
+> Test structure, patterns, fixtures, and coverage for FLXContabilidadEEFF.
 
 ## Quick Start
 

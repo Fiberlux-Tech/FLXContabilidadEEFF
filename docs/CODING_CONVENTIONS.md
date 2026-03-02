@@ -1,6 +1,6 @@
 # Coding Conventions & Patterns
 
-> Standards and patterns used throughout PlantillasFLX. Follow these when modifying or extending the codebase.
+> Standards and patterns used throughout FLXContabilidadEEFF. Follow these when modifying or extending the codebase.
 
 ## Python Version & Syntax
 

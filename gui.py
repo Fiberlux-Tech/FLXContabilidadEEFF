@@ -61,16 +61,6 @@ class App(tk.Tk):
 
         # --- Window icon ---
         ico_path = os.path.join(_BASE_DIR, "images", "ICON.ico")
-        png_path = os.path.join(_BASE_DIR, "images", "ICON.png")
-
-        if not os.path.exists(ico_path) and os.path.exists(png_path):
-            try:
-                from PIL import Image
-                img = Image.open(png_path)
-                img.save(ico_path, format="ICO", sizes=[(256, 256), (48, 48), (32, 32), (16, 16)])
-            except Exception:
-                pass
-
         if os.path.exists(ico_path):
             self.iconbitmap(ico_path)
 

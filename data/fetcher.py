@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
-import pyarrow  # noqa: F401 — required as parquet engine
 
 from data.db import connect
 from data.queries import fetch_pnl_data, fetch_bs_data
@@ -26,7 +25,7 @@ def _cache_path(company: str, year: int, data_type: str) -> Path:
 
     data_type: 'pnl' or 'bs'
     """
-    return CACHE_DIR / f"{data_type}_{company}_{year}.parquet"
+    return CACHE_DIR / f"{data_type}_{company}_{year}.csv"
 
 
 def _load_cached(company: str, year: int, data_type: str) -> pd.DataFrame | None:
@@ -39,7 +38,7 @@ def _load_cached(company: str, year: int, data_type: str) -> pd.DataFrame | None
             path.unlink(missing_ok=True)
             return None
         try:
-            df = pd.read_parquet(path)
+            df = pd.read_csv(path)
             logger.info("Loaded cached %s data: %s", data_type.upper(), path.name)
             return df
         except (OSError, ValueError, Exception):
@@ -52,7 +51,7 @@ def _save_cache(company: str, year: int, data_type: str, df: pd.DataFrame) -> No
     CACHE_DIR.mkdir(exist_ok=True)
     path = _cache_path(company, year, data_type)
     try:
-        df.to_parquet(path)
+        df.to_csv(path, index=False)
         logger.info("Cached %s data to %s", data_type.upper(), path.name)
     except OSError:
         logger.warning("Failed to write cache file: %s", path.name)
