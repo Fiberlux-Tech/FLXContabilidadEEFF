@@ -1,98 +1,69 @@
+"""Centralized configuration — single point of truth for all environment variables."""
+
+import functools
 import os
-from openpyxl.styles import PatternFill
-
-# -----------------------------------------------------------------------------
-# STEP 1: SETUP AND CONFIGURATION
-# -----------------------------------------------------------------------------
-
-# Usa os.path.expanduser('~') para obtener el directorio de inicio del usuario (C:\Users\Username)
-USER_PROFILE_DIR = os.path.expanduser('~')
-
-# El nombre de la carpeta raíz de sincronización de OneDrive.
-ONEDRIVE_ROOT_NAME = r"OneDrive - FIBERLUX S.A.C"
-
-# La ruta específica *dentro* de la carpeta raíz de OneDrive para los archivos de Excel.
-EXCEL_SUB_PATH = r"Financial Planning Team - Documents\06. PLANTILLAS ECONOMICAS"
-
-# La ruta específica *dentro* de la carpeta raíz de OneDrive para la base de datos de Access.
-DATABASE_SUB_PATH = r"Financial Planning Team - Documents\00. DATA BASE\Plantillas Economicas.accdb"
-
-# Construcción de la ruta base de OneDrive
-ONEDRIVE_BASE_PATH = os.path.join(USER_PROFILE_DIR, ONEDRIVE_ROOT_NAME)
-
-# Ruta final a la carpeta de Excel que contiene las plantillas
-EXCEL_FOLDER_PATH = os.path.join(ONEDRIVE_BASE_PATH, EXCEL_SUB_PATH)
-
-# Ruta a la carpeta histórica para archivar archivos procesados
-HISTORICO_FOLDER_PATH = os.path.join(EXCEL_FOLDER_PATH, "HISTORICO")
-
-# Ruta final a tu base de datos de Access
-DATABASE_PATH = os.path.join(ONEDRIVE_BASE_PATH, DATABASE_SUB_PATH)
-
-# -----------------------------------------------------------------------------
-# DEFINICIONES DE NOMBRES DE HOJAS Y TABLAS
-# -----------------------------------------------------------------------------
-
-# Nombre de la única hoja de trabajo
-PLANTILLA_SHEET_NAME = "PLANTILLA"
-
-# Definiciones de nombres de las tres nuevas tablas en Access
-HEADER_TABLE_NAME = "transactionTable"
-FIXED_COST_TABLE_NAME = "FixedCosts"
-RECURRING_TABLE_NAME = "recurringServiceDetails"
-
-# Definiciones para la tabla de emails
-SALESMAN_TABLE_NAME = "emails"
-SALESMAN_NAME_COLUMN = "salesman"
-SALESMAN_EMAIL_COLUMN = "email"
-
-# -----------------------------------------------------------------------------
-# CONSTANTES DE EXCEL Y VARIABLES DE TRABAJO
-# -----------------------------------------------------------------------------
-
-# Diccionario que mapea nombres de variables a sus nuevas direcciones de celda en Excel
-variables_to_extract = {
-    'unidadNegocio': 'D5',
-    'clientName': 'D7',
-    'companyID': 'D9',
-    'salesman': 'D11',
-    'orderID': 'D13',
-    'tipoCambio': 'D15',
-    'costoCapital_annual': 'D17',
-    'plazoContrato': 'D19',
-    'tipoPago': 'D21',  # ## ADD THIS LINE ##
-    'MRC': 'H9',
-    'NRC': 'H11',
-    'comisionesPersonal': 'H23',
-}
-
-# Fila de inicio para el procesamiento y validación de tablas de detalle
-DETAIL_START_ROW = 37
-
-# --- COLUMNAS PARA LA TABLA DE COSTOS FIJOS (C-I) ---
-
-# Columnas para la validación condicional y categorías
-FIXED_CATEGORY_COL = 'C'       # CATEGORIA (Validation check)
-FIXED_TIPO_SERVICIO_COL = 'D'  # TIPO DE SERVICIO (Validation check against listaCotizaciones)
-FIXED_TICKET_COL = 'E'         # TICKER (Conditional check for emptiness)
-
-# Columnas para la extracción de valores numéricos y de texto
-FIXED_UBICACION_COL = 'F'      # UBICACION
-FIXED_Q_COL = 'G'              # CANTIDAD
-FIXED_COST_UNITARIO_COL = 'H'  # COSTO UNITARIO
-FIXED_COST_TOTAL_COL = 'I'     # TOTAL (Suma de Costos de Instalación)
+from dataclasses import dataclass, field
 
 
-# --- COLUMNAS PARA LA TABLA DE SERVICIOS RECURRENTES (L-T) ---
 
-RECURRING_SERVICE_COL = 'L'    # Tipo de Servicio (Validation check contra listaServicios)
-RECURRING_NOTA_COL = 'M'       # NOTA
-RECURRING_UBICACION_COL = 'N'  # UBICACIÓN
-RECURRING_Q_COL = 'O'          # Q (Cantidad) <--- CORREGIDO (Usuario: Columna O)
-RECURRING_REVENUE_UNIT_COL = 'P' # P (Precio Unitario de Ingreso) <--- NUEVA VARIABLE
-RECURRING_COST_1_COL = 'R'     # Costo Unitario (1) / CU1
-RECURRING_COST_2_COL = 'S'     # Costo Unitario (2) / CU2
-RECURRING_PROVEEDOR_COL = 'T'  # PROVEEDOR
+@dataclass(frozen=True)
+class DatabaseConfig:
+    driver: str = ""
+    server: str = ""
+    database: str = ""
+    uid: str = ""
+    pwd: str = ""
+    connect_timeout: int = 30
+    query_timeout: int = 120
+    encrypt: str = "yes"
+    trust_cert: str = "no"
 
-# Define el color de relleno rojo para celdas inválidas (usado en validación)
-RED_FILL = PatternFill(start_color="FF3300", end_color="FF3300", fill_type="solid")
+
+@dataclass(frozen=True)
+class EmailConfig:
+    backend: str = ""          # "outlook" or "smtp"; auto-detected if empty
+    to: str = ""               # comma-separated recipients
+    from_addr: str = ""        # EMAIL_FROM (SMTP only)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+
+
+@dataclass(frozen=True)
+class Config:
+    log_level: str = "INFO"
+    output_dir: str = "."
+    strict_bs_balance: bool = False  # True = raise on BS imbalance; False = warn only
+    db: DatabaseConfig = field(default_factory=DatabaseConfig)
+    email: EmailConfig = field(default_factory=EmailConfig)
+
+
+@functools.lru_cache(maxsize=1)
+def get_config() -> Config:
+    """Build Config from environment variables (call after load_dotenv)."""
+    return Config(
+        log_level=os.environ.get("LOG_LEVEL", "INFO"),
+        output_dir=os.environ.get("OUTPUT_DIR", "."),
+        strict_bs_balance=os.environ.get("STRICT_BS_BALANCE", "").lower() in ("1", "true", "yes"),
+        db=DatabaseConfig(
+            driver=os.environ.get("DB_DRIVER", ""),
+            server=os.environ.get("DB_SERVER", ""),
+            database=os.environ.get("DB_DATABASE", ""),
+            uid=os.environ.get("DB_UID", ""),
+            pwd=os.environ.get("DB_PWD", ""),
+            connect_timeout=int(os.environ.get("DB_CONNECT_TIMEOUT", "30")),
+            query_timeout=int(os.environ.get("DB_QUERY_TIMEOUT", "120")),
+            encrypt=os.environ.get("DB_ENCRYPT", "yes"),
+            trust_cert=os.environ.get("DB_TRUST_CERT", "no"),
+        ),
+        email=EmailConfig(
+            backend=os.environ.get("EMAIL_BACKEND", ""),
+            to=os.environ.get("EMAIL_TO", ""),
+            from_addr=os.environ.get("EMAIL_FROM", ""),
+            smtp_host=os.environ.get("SMTP_HOST", ""),
+            smtp_port=int(os.environ.get("SMTP_PORT", "587")),
+            smtp_user=os.environ.get("SMTP_USER", ""),
+            smtp_password=os.environ.get("SMTP_PASSWORD", ""),
+        ),
+    )
