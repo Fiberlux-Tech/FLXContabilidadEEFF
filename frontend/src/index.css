@@ -4,37 +4,111 @@
 
 @layer base {
   body {
-    @apply antialiased text-gray-800;
+    @apply antialiased text-txt;
     font-feature-settings: "tnum";  /* tabular numbers everywhere */
   }
 
-  /* Smooth scrollbar for tables */
-  .overflow-x-auto::-webkit-scrollbar {
-    @apply h-2;
-  }
-  .overflow-x-auto::-webkit-scrollbar-track {
-    @apply bg-gray-100 rounded-full;
-  }
-  .overflow-x-auto::-webkit-scrollbar-thumb {
-    @apply bg-gray-300 rounded-full;
-  }
-  .overflow-x-auto::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-400;
-  }
-  .overflow-auto::-webkit-scrollbar {
-    @apply w-2 h-2;
-  }
-  .overflow-auto::-webkit-scrollbar-track {
-    @apply bg-gray-100;
-  }
-  .overflow-auto::-webkit-scrollbar-thumb {
-    @apply bg-gray-300 rounded-full;
-  }
+  /* Scrollbar — horizontal (tables) */
+  .overflow-x-auto::-webkit-scrollbar { height: 6px; }
+  .overflow-x-auto::-webkit-scrollbar-track { background: #fafafa; border-radius: 99px; }
+  .overflow-x-auto::-webkit-scrollbar-thumb { background: #ddd; border-radius: 99px; }
+  .overflow-x-auto::-webkit-scrollbar-thumb:hover { background: #ccc; }
+
+  /* Scrollbar — vertical (modal, sidebar) */
+  .overflow-auto::-webkit-scrollbar,
+  .overflow-y-auto::-webkit-scrollbar { width: 6px; height: 6px; }
+  .overflow-auto::-webkit-scrollbar-track,
+  .overflow-y-auto::-webkit-scrollbar-track { background: #fafafa; }
+  .overflow-auto::-webkit-scrollbar-thumb,
+  .overflow-y-auto::-webkit-scrollbar-thumb { background: #ddd; border-radius: 99px; }
+  .overflow-auto::-webkit-scrollbar-thumb:hover,
+  .overflow-y-auto::-webkit-scrollbar-thumb:hover { background: #ccc; }
 }
 
 @layer components {
-  /* Sticky column shadow indicator */
-  .sticky-col-shadow {
-    box-shadow: 4px 0 6px -2px rgba(0,0,0,0.06);
+  /* ─── Sticky column shadow ─── */
+  .sticky-col {
+    @apply sticky left-0 z-10;
+    box-shadow: 4px 0 8px -3px rgba(0,0,0,0.04);
   }
+
+  /* ─── Table container ─── */
+  .table-card {
+    @apply border border-border rounded-[10px] overflow-hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  /* ─── Table header ─── */
+  .thead-row  { @apply bg-surface-alt border-b border-border; }
+  .thead-cell { @apply px-3.5 py-2.5 font-semibold whitespace-nowrap text-[11px] uppercase tracking-[0.5px] text-txt-muted; }
+
+  /* ─── Table rows ─── */
+  .row-base  { @apply border-b border-border-light transition-colors hover:bg-surface-alt; }
+  .row-total { @apply bg-surface-alt font-semibold border-t-2 border-t-border border-b-0; }
+
+  /* ─── Table cells ─── */
+  .cell-base      { @apply px-3.5 py-2 text-right whitespace-nowrap font-mono; }
+  .cell-neg       { @apply text-negative; }
+  .cell-zero      { @apply text-txt-faint; }
+  .cell-normal    { @apply text-txt-secondary; }
+  .cell-bold      { @apply font-semibold text-txt; }
+  .cell-clickable { @apply cursor-pointer hover:bg-accent-light hover:text-accent; }
+  .cell-selected  { @apply bg-accent-light ring-1 ring-accent-ring ring-inset; }
+  .cell-total-col { @apply border-l border-border bg-col-total font-semibold text-txt; }
+
+  /* ─── Filter input ─── */
+  .filter-input {
+    @apply w-full px-2 py-1 text-xs font-normal border border-border rounded-md
+           focus:outline-none focus:ring-1 focus:ring-accent/20 focus:border-accent
+           bg-surface text-txt placeholder:text-txt-faint;
+  }
+
+  /* ─── Buttons ─── */
+  .btn-icon {
+    @apply flex items-center justify-center w-8 h-8 rounded-md border border-border
+           text-txt-muted hover:bg-surface-alt hover:text-txt-secondary
+           disabled:opacity-40 disabled:cursor-not-allowed transition-colors;
+  }
+  .btn-export-green {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
+           bg-positive text-white rounded-md
+           disabled:opacity-40 disabled:cursor-not-allowed transition-colors;
+  }
+  .btn-export-green:hover:not(:disabled) { filter: brightness(0.9); }
+
+  /* ─── Toggle group ─── */
+  .toggle-group    { @apply inline-flex rounded-md overflow-hidden border border-border bg-surface-alt; }
+  .toggle-btn      { @apply px-3.5 py-1.5 text-xs font-medium transition-all whitespace-nowrap; }
+  .toggle-active   { @apply bg-accent text-white; box-shadow: 0 1px 3px rgba(209,69,59,0.25); }
+  .toggle-inactive { @apply bg-transparent text-txt-secondary hover:text-txt hover:bg-nav-hover; }
+
+  /* ─── Filter controls ─── */
+  .filter-label {
+    @apply block text-[10px] uppercase font-semibold text-txt-muted mb-1;
+    letter-spacing: 0.8px;
+  }
+  .select-base {
+    @apply bg-surface border border-border rounded-md px-3 py-1.5 text-[13px] font-medium
+           text-txt cursor-pointer outline-none transition-colors appearance-none
+           focus:ring-2 focus:ring-accent/10 focus:border-accent;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 28px;
+  }
+  .select-base:hover { border-color: #ccc; }
+
+  /* ─── Section title with badge ─── */
+  .section-title { @apply text-[15px] font-semibold text-txt mb-2.5 flex items-center gap-2; }
+  .section-badge { @apply text-[10px] font-semibold text-txt-muted bg-surface-alt border border-border rounded-full px-2 py-0.5; }
+
+  /* ─── Nav items ─── */
+  .nav-item-base {
+    @apply w-full flex items-center text-[13px] rounded-md transition-all
+           border-none bg-transparent text-left relative cursor-pointer;
+    font-family: inherit;
+  }
+  .nav-item-active { @apply bg-nav-active text-accent font-semibold; }
+  .nav-item-inactive { @apply text-nav-text hover:bg-nav-hover font-normal; }
+  .nav-indicator { @apply absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[18px] bg-accent rounded-r-[3px]; }
 }

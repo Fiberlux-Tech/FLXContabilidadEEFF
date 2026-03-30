@@ -43,17 +43,17 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
 
     return (
         <>
-            <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            <div className="table-card overflow-x-auto">
                 <table className="min-w-full text-xs">
                     <thead>
-                        <tr className="bg-thead text-white">
+                        <tr className="thead-row">
                             {DETAIL_COLS.map(col => (
-                                <th scope="col" key={col} className={`px-3 py-2.5 font-semibold whitespace-nowrap ${col === 'SALDO' ? 'text-right' : 'text-left'}`}>
+                                <th scope="col" key={col} className={`thead-cell text-[11px] font-semibold ${col === 'SALDO' ? 'text-right' : 'text-left'}`}>
                                     {DETAIL_HEADERS[col]}
                                 </th>
                             ))}
                         </tr>
-                        <tr className="bg-gray-50 border-b border-gray-200">
+                        <tr className="bg-surface border-b border-border">
                             {DETAIL_COLS.map(col => (
                                 <th key={col} className="px-2 py-1.5">
                                     <input
@@ -61,10 +61,7 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
                                         value={filters[col] ?? ''}
                                         onChange={e => updateFilter(col, e.target.value)}
                                         placeholder="Filtrar..."
-                                        className={`w-full px-2 py-1 text-xs font-normal border border-gray-200 rounded-md
-                                            focus:outline-none focus:ring-1 focus:ring-accent/40 focus:border-accent bg-white text-gray-700
-                                            placeholder:text-gray-300
-                                            ${col === 'SALDO' ? 'text-right' : 'text-left'}`}
+                                        className={`filter-input ${col === 'SALDO' ? 'text-right' : 'text-left'}`}
                                     />
                                 </th>
                             ))}
@@ -72,18 +69,18 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
                     </thead>
                     <tbody>
                         {pageRows.map((row, idx) => (
-                            <tr key={idx} className={`border-b border-gray-100 transition-colors hover:bg-gray-50/70
-                                ${idx % 2 === 1 ? 'bg-gray-50/30' : ''}`}>
+                            <tr key={idx} className={`row-base ${idx % 2 === 1 ? 'bg-surface-alt/30' : ''}`}>
                                 {DETAIL_COLS.map(col => {
                                     const val = row[col];
                                     const isSaldo = col === 'SALDO';
-                                    const isNeg = isSaldo && typeof val === 'number' && val < 0;
+                                    const numVal = isSaldo ? (val as number) : null;
                                     return (
                                         <td
                                             key={col}
-                                            className={`px-3 py-1.5 whitespace-nowrap
+                                            className={`px-3.5 py-2 whitespace-nowrap
                                                 ${isSaldo ? 'text-right font-mono font-medium' : 'text-left'}
-                                                ${isNeg ? 'text-negative' : 'text-gray-800'}`}
+                                                ${isSaldo && numVal !== null && numVal < 0 ? 'cell-neg' :
+                                                  isSaldo && numVal === 0 ? 'cell-zero' : 'text-txt-secondary'}`}
                                         >
                                             {isSaldo ? formatNumber(val as number) : (val ?? '')}
                                         </td>
@@ -97,7 +94,7 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
 
             {/* Pagination */}
             <div className="flex items-center justify-between mt-3 px-1">
-                <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                <div className="flex items-center gap-1.5 text-xs text-txt-muted">
                     <span>Filas:</span>
                     {PAGE_SIZES.map(size => (
                         <button
@@ -106,13 +103,13 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
                             className={`px-2 py-0.5 rounded-md text-xs font-medium transition-colors
                                 ${pageSize === size
                                     ? 'bg-accent text-white'
-                                    : 'text-gray-500 hover:bg-gray-100'}`}
+                                    : 'text-txt-muted hover:bg-surface-alt'}`}
                         >
                             {size}
                         </button>
                     ))}
                 </div>
-                <div className="flex items-center gap-3 text-xs text-gray-500">
+                <div className="flex items-center gap-3 text-xs text-txt-muted">
                     <span className="font-medium">
                         {filteredRows.length === 0 ? '0 registros' :
                             `${start + 1}\u2013${Math.min(start + pageSize, filteredRows.length)} de ${filteredRows.length}`}
@@ -122,14 +119,16 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
                         <button
                             onClick={() => setPage(p => p - 1)}
                             disabled={page === 0}
-                            className="px-2.5 py-1 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            className="px-2.5 py-1 rounded-md border border-border hover:bg-surface-alt
+                                       disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-txt-secondary"
                         >
                             Anterior
                         </button>
                         <button
                             onClick={() => setPage(p => p + 1)}
                             disabled={page >= totalPages - 1}
-                            className="px-2.5 py-1 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            className="px-2.5 py-1 rounded-md border border-border hover:bg-surface-alt
+                                       disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-txt-secondary"
                         >
                             Siguiente
                         </button>
@@ -308,7 +307,7 @@ export default function PLNoteView({ tables, columns, year }: PLNoteViewProps) {
             return (
                 <div className="flex items-center justify-center py-12">
                     <div className="animate-spin rounded-full h-6 w-6 border-2 border-accent border-t-transparent mr-3"></div>
-                    <span className="text-sm text-gray-500">Cargando detalle...</span>
+                    <span className="text-sm text-txt-muted">Cargando detalle...</span>
                 </div>
             );
         }
@@ -325,7 +324,7 @@ export default function PLNoteView({ tables, columns, year }: PLNoteViewProps) {
             );
         }
         if (state.detailRows.length === 0) {
-            return <div className="text-center py-8 text-sm text-gray-400">Sin registros</div>;
+            return <div className="text-center py-8 text-sm text-txt-muted">Sin registros</div>;
         }
         return (
             <DetailDataTable
@@ -362,9 +361,7 @@ export default function PLNoteView({ tables, columns, year }: PLNoteViewProps) {
                     <button
                         onClick={handleExportDetail}
                         disabled={filteredRows.length === 0 || state.isLoadingDetail}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
-                                   bg-positive text-white rounded-lg hover:bg-green-700
-                                   disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+                        className="btn-export-green"
                         title="Exportar detalle filtrado a Excel"
                     >
                         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -17,17 +17,17 @@ export class ErrorBoundary extends Component<Props, State> {
     render() {
         if (this.state.hasError) {
             return (
-                <div className="flex items-center justify-center min-h-screen bg-slate-50">
-                    <div className="bg-white p-8 rounded-lg shadow max-w-md text-center">
-                        <h1 className="text-xl font-bold text-red-600 mb-2">
+                <div className="flex items-center justify-center min-h-screen bg-surface-alt">
+                    <div className="bg-surface p-8 rounded-[14px] border border-border max-w-md text-center">
+                        <h1 className="text-xl font-bold text-negative mb-2">
                             Error inesperado
                         </h1>
-                        <p className="text-slate-600 mb-4">
+                        <p className="text-txt-secondary mb-4">
                             {this.state.error?.message || 'Ocurrio un error.'}
                         </p>
                         <button
                             onClick={() => window.location.reload()}
-                            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                            className="px-4 py-2 bg-accent text-white rounded-md hover:bg-accent-hover transition-colors"
                         >
                             Recargar pagina
                         </button>

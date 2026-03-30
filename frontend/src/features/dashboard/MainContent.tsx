@@ -20,7 +20,7 @@ export default function MainContent() {
             <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
                     <div className="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent mx-auto mb-4"></div>
-                    <p className="text-sm text-gray-400">Cargando datos...</p>
+                    <p className="text-sm text-txt-muted">Cargando datos...</p>
                 </div>
             </div>
         );
@@ -29,14 +29,14 @@ export default function MainContent() {
     if (error) {
         return (
             <div className="flex-1 flex items-center justify-center p-8">
-                <div className="bg-red-50 border border-red-100 rounded-xl p-6 text-center max-w-md">
-                    <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-3">
+                <div className="bg-accent-light border border-border rounded-[10px] p-6 text-center max-w-md">
+                    <div className="w-10 h-10 rounded-full bg-accent-light flex items-center justify-center mx-auto mb-3">
                         <svg className="w-5 h-5 text-negative" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                     </div>
                     <p className="font-medium text-negative mb-1">Error</p>
-                    <p className="text-sm text-red-600/70">{error}</p>
+                    <p className="text-sm text-txt-secondary">{error}</p>
                 </div>
             </div>
         );
@@ -45,12 +45,12 @@ export default function MainContent() {
     if (!reportData) {
         return (
             <div className="flex-1 flex items-center justify-center">
-                <div className="text-center text-gray-300">
+                <div className="text-center text-txt-faint">
                     <svg className="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    <p className="text-lg font-medium text-gray-400">Seleccione una empresa para comenzar</p>
-                    <p className="text-sm text-gray-300 mt-1">Los datos se cargaran automaticamente</p>
+                    <p className="text-lg font-medium text-txt-muted">Seleccione una empresa para comenzar</p>
+                    <p className="text-sm text-txt-faint mt-1">Los datos se cargaran automaticamente</p>
                 </div>
             </div>
         );
@@ -78,7 +78,7 @@ export default function MainContent() {
 
             if (tables.length === 0) {
                 return (
-                    <div className="text-center py-16 text-gray-400">
+                    <div className="text-center py-16 text-txt-muted">
                         <p className="text-sm">Sin datos para mostrar en esta vista</p>
                     </div>
                 );
@@ -117,8 +117,8 @@ export default function MainContent() {
     };
 
     return (
-        <main className="flex-1 p-6 overflow-auto">
-            <div className="max-w-[1400px] mx-auto">
+        <main className="flex-1 px-8 py-6 overflow-auto">
+            <div className="max-w-[1500px] mx-auto">
                 {renderView()}
             </div>
         </main>

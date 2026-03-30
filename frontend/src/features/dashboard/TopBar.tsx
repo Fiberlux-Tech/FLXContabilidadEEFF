@@ -8,42 +8,17 @@ function ToggleGroup({ value, options, onChange }: {
     onChange: (value: string) => void;
 }) {
     return (
-        <div className="inline-flex rounded-lg overflow-hidden border border-gray-200 shadow-sm">
+        <div className="toggle-group">
             {options.map(opt => (
                 <button
                     key={opt.value}
                     onClick={() => onChange(opt.value)}
-                    className={`px-3 py-1.5 text-xs font-medium transition-all
-                        ${value === opt.value
-                            ? 'bg-accent text-white shadow-inner'
-                            : 'bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
+                    className={`toggle-btn ${value === opt.value ? 'toggle-active' : 'toggle-inactive'}`}
                 >
                     {opt.label}
                 </button>
             ))}
         </div>
-    );
-}
-
-function IconButton({ onClick, disabled, title, children, className = '' }: {
-    onClick: () => void;
-    disabled: boolean;
-    title: string;
-    children: React.ReactNode;
-    className?: string;
-}) {
-    return (
-        <button
-            onClick={onClick}
-            disabled={disabled}
-            title={title}
-            className={`p-1.5 rounded-lg border border-gray-200 text-gray-400
-                       hover:bg-gray-50 hover:text-gray-600 hover:border-gray-300
-                       disabled:text-gray-300 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:border-gray-200
-                       transition-colors shadow-sm ${className}`}
-        >
-            {children}
-        </button>
     );
 }
 
@@ -81,24 +56,23 @@ export default function TopBar() {
         : `${companyName} \u2014 ${trailingLabel}`;
 
     return (
-        <header className="bg-white border-b border-gray-200 px-6 py-3 shadow-sm">
+        <header className="bg-surface border-b border-border px-8 py-3.5 sticky top-0 z-30">
             <div className="flex items-center justify-between">
                 {/* Left: View title */}
                 <div>
-                    <h2 className="text-lg font-bold text-gray-800">{title}</h2>
-                    <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>
+                    <h2 className="text-xl font-bold text-txt tracking-tight">{title}</h2>
+                    <p className="text-xs text-txt-muted mt-0.5">{subtitle}</p>
                 </div>
 
                 {/* Right: Filters */}
-                <div className="flex items-center gap-4">
+                <div className="flex items-end gap-4">
                     {/* Company */}
                     <div>
-                        <label className="block text-2xs uppercase tracking-wider text-gray-400 mb-1 font-medium">Empresa</label>
+                        <label className="filter-label">Empresa</label>
                         <select
                             value={selectedCompany}
                             onChange={e => setSelectedCompany(e.target.value)}
-                            className="bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 shadow-sm
-                                       focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                            className="select-base"
                         >
                             <option value="">Seleccionar...</option>
                             {companyKeys.map(key => (
@@ -107,11 +81,11 @@ export default function TopBar() {
                         </select>
                     </div>
 
-                    <div className="h-8 w-px bg-gray-200" />
+                    <div className="w-px h-8 bg-border self-end mb-0.5" />
 
                     {/* Granularity */}
                     <div>
-                        <label className="block text-2xs uppercase tracking-wider text-gray-400 mb-1 font-medium">Vista</label>
+                        <label className="filter-label">Vista</label>
                         <ToggleGroup
                             value={granularity}
                             options={[
@@ -124,7 +98,7 @@ export default function TopBar() {
 
                     {/* Period Range */}
                     <div>
-                        <label className="block text-2xs uppercase tracking-wider text-gray-400 mb-1 font-medium">Periodo</label>
+                        <label className="filter-label">Periodo</label>
                         <ToggleGroup
                             value={periodRange}
                             options={[
@@ -138,12 +112,11 @@ export default function TopBar() {
                     {/* Year (only for YTD) */}
                     {periodRange === 'ytd' ? (
                         <div>
-                            <label className="block text-2xs uppercase tracking-wider text-gray-400 mb-1 font-medium">Ano</label>
+                            <label className="filter-label">Ano</label>
                             <select
                                 value={selectedYear}
                                 onChange={e => setSelectedYear(Number(e.target.value))}
-                                className="bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-700 shadow-sm
-                                           focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent transition-colors"
+                                className="select-base"
                             >
                                 {years.map(y => (
                                     <option key={y} value={y}>{y}</option>
@@ -152,18 +125,19 @@ export default function TopBar() {
                         </div>
                     ) : (
                         <div>
-                            <label className="block text-2xs uppercase tracking-wider text-gray-400 mb-1 font-medium">Rango</label>
-                            <div className="px-3 py-1.5 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg shadow-sm font-medium">
+                            <label className="filter-label">Rango</label>
+                            <div className="px-3 py-1.5 text-[13px] text-txt-secondary bg-surface-alt border border-border rounded-md font-medium">
                                 {trailingLabel}
                             </div>
                         </div>
                     )}
 
-                    <div className="flex items-center gap-1.5 pt-4">
+                    <div className="flex items-center gap-1.5">
                         {/* Refresh button */}
-                        <IconButton
+                        <button
                             onClick={() => loadData(true)}
                             disabled={!selectedCompany || isLoading}
+                            className="btn-icon"
                             title="Recargar datos"
                         >
                             <svg
@@ -175,12 +149,13 @@ export default function TopBar() {
                                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                                 />
                             </svg>
-                        </IconButton>
+                        </button>
 
                         {/* Export current view to Excel */}
-                        <IconButton
+                        <button
                             onClick={handleExport}
                             disabled={!canExport}
+                            className="btn-icon"
                             title="Exportar vista actual a Excel"
                         >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -189,7 +164,7 @@ export default function TopBar() {
                                     d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                                 />
                             </svg>
-                        </IconButton>
+                        </button>
                     </div>
                 </div>
             </div>

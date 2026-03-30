@@ -24,19 +24,20 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
     };
 
     return (
-        <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-            <div className="bg-white p-10 rounded-lg shadow-xl w-full max-w-md">
-                <h2 className="text-3xl font-bold text-center text-gray-800 mb-8">
+        <div className="min-h-screen bg-surface-alt flex items-center justify-center">
+            <div className="bg-surface p-10 rounded-[14px] w-full max-w-md border border-border"
+                 style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.06)' }}>
+                <h2 className="text-3xl font-bold text-center text-txt mb-8">
                     {UI_LABELS.WELCOME_BACK}
                 </h2>
                 {error && (
-                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6" role="alert">
+                    <div className="bg-accent-light border border-accent/30 text-accent px-4 py-3 rounded-md mb-6 text-sm" role="alert">
                         {error}
                     </div>
                 )}
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700" htmlFor="username">
+                        <label className="block text-sm font-medium text-txt-secondary" htmlFor="username">
                             {UI_LABELS.USUARIO}
                         </label>
                         <input
@@ -45,11 +46,12 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
                             required
-                            className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-md shadow-sm focus:ring-black focus:border-black"
+                            className="mt-1 block w-full px-4 py-3 border border-border rounded-md
+                                       focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-colors"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700" htmlFor="password">
+                        <label className="block text-sm font-medium text-txt-secondary" htmlFor="password">
                             {UI_LABELS.CONTRASENA}
                         </label>
                         <input
@@ -58,13 +60,17 @@ export default function AuthPage({ onLogin }: AuthPageProps) {
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             required
-                            className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-md shadow-sm focus:ring-black focus:border-black"
+                            className="mt-1 block w-full px-4 py-3 border border-border rounded-md
+                                       focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-colors"
                         />
                     </div>
                     <button
                         type="submit"
                         disabled={isLoading}
-                        className="w-full py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-black hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black disabled:bg-gray-400"
+                        className="w-full py-3 px-4 border border-transparent rounded-md text-sm font-medium
+                                   text-white bg-accent hover:bg-accent-hover
+                                   focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent
+                                   disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
                         {isLoading ? UI_LABELS.PROCESSING : UI_LABELS.LOGIN}
                     </button>

@@ -32,7 +32,7 @@ export default function Modal({ isOpen, onClose, title, headerActions, children 
         <>
             {/* Backdrop */}
             <div
-                className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm transition-opacity"
+                className="fixed inset-0 z-50 bg-black/35 backdrop-blur-[4px] transition-opacity"
                 onClick={onClose}
             />
 
@@ -40,21 +40,23 @@ export default function Modal({ isOpen, onClose, title, headerActions, children 
             <div className="fixed inset-0 z-50 flex items-start justify-center pt-[5vh] pointer-events-none">
                 {/* Panel */}
                 <div
-                    className="pointer-events-auto flex flex-col bg-white rounded-2xl shadow-2xl
-                               max-w-[90vw] max-h-[85vh] border border-gray-200/50"
+                    className="pointer-events-auto flex flex-col bg-surface rounded-[14px]
+                               max-w-[90vw] max-h-[85vh] border border-border overflow-hidden"
+                    style={{ boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}
                     onClick={e => e.stopPropagation()}
                 >
                     {/* Header */}
-                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 shrink-0">
-                        <h2 className="text-sm font-semibold text-gray-700 truncate">{title}</h2>
+                    <div className="flex items-center justify-between px-5 py-3.5 border-b border-border-light shrink-0">
+                        <h2 className="text-sm font-semibold text-txt truncate">{title}</h2>
                         <div className="flex items-center gap-2 shrink-0 ml-4">
                             {headerActions}
                             <button
                                 onClick={onClose}
-                                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                                className="w-7 h-7 flex items-center justify-center text-txt-muted
+                                           hover:text-txt-secondary rounded-md hover:bg-surface-alt transition-colors"
                                 aria-label="Cerrar"
                             >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                 </svg>
                             </button>
@@ -62,7 +64,7 @@ export default function Modal({ isOpen, onClose, title, headerActions, children 
                     </div>
 
                     {/* Body */}
-                    <div className="overflow-auto p-4">
+                    <div className="overflow-auto px-5 py-4">
                         {children}
                     </div>
                 </div>

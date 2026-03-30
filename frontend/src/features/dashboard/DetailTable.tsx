@@ -15,29 +15,43 @@ interface DetailTableProps {
     onCellClick: (sel: CellSelection) => void;
 }
 
+/** Resolve a cell's CSS classes based on its value and row type */
+function cellClass(val: number | null | undefined, isBold: boolean): string {
+    if (val === null || val === undefined) return 'cell-normal';
+    if (val === 0) return 'cell-zero';
+    if (val < 0) return 'cell-neg';
+    return isBold ? 'cell-bold' : 'cell-normal';
+}
+
 export default function DetailTable({ title, rows, labelKeys, headerLabels, columns, year, partida, filterCol, selection, onCellClick }: DetailTableProps) {
     const totalHeader = String(year);
+    const dataRowCount = rows.filter(r => !labelKeys.some(k => r[k] === 'TOTAL')).length;
 
     return (
         <div>
-            <h3 className="text-base font-semibold text-gray-700 mb-2">{title}</h3>
-            <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-sm">
+            <h3 className="section-title">
+                {title}
+                <span className="section-badge">
+                    {dataRowCount} {dataRowCount === 1 ? 'cuenta' : 'cuentas'}
+                </span>
+            </h3>
+            <div className="table-card overflow-x-auto">
                 <table className="min-w-full text-xs">
                     <thead>
-                        <tr className="bg-thead text-white">
+                        <tr className="thead-row">
                             <th
                                 scope="col"
                                 colSpan={labelKeys.length}
-                                className="sticky left-0 z-10 bg-thead px-4 py-2.5 text-left font-semibold whitespace-nowrap min-w-[300px] sticky-col-shadow"
+                                className="thead-cell sticky-col bg-surface-alt text-left min-w-[360px]"
                             >
                                 {headerLabels.join(' / ')}
                             </th>
                             {columns.map(col => (
-                                <th scope="col" key={col.header} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap min-w-[85px]">
+                                <th scope="col" key={col.header} className="thead-cell text-right min-w-[90px]">
                                     {col.header}
                                 </th>
                             ))}
-                            <th scope="col" className="px-3 py-2.5 text-right font-bold whitespace-nowrap min-w-[85px]">
+                            <th scope="col" className="thead-cell text-right min-w-[90px] cell-total-col">
                                 {totalHeader}
                             </th>
                         </tr>
@@ -56,11 +70,8 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                             return (
                                 <tr
                                     key={idx}
-                                    className={`border-b border-gray-100 transition-colors
-                                        ${isTotal
-                                            ? 'bg-gray-100/80 font-bold border-t-2 border-t-gray-300'
-                                            : 'hover:bg-gray-50/70'}
-                                        ${isRowSelected ? 'ring-1 ring-accent-ring ring-inset' : ''}`}
+                                    className={`${isTotal ? 'row-total' : 'row-base'}
+                                        ${isRowSelected ? 'cell-selected' : ''}`}
                                 >
                                     <td
                                         colSpan={labelKeys.length}
@@ -71,10 +82,10 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                                             filterVal: rowFilterVal,
                                             label: `${rowLabel} \u2014 Todo el periodo`,
                                         })}
-                                        className={`sticky left-0 z-10 px-4 py-1.5 whitespace-nowrap cursor-pointer sticky-col-shadow
+                                        className={`sticky-col px-4 py-2 whitespace-nowrap cursor-pointer
                                             ${isTotal
-                                                ? 'font-bold text-gray-900 bg-gray-100/80 hover:bg-gray-200/70'
-                                                : 'text-gray-700 bg-white hover:bg-accent-light hover:text-accent'}
+                                                ? 'font-bold text-txt bg-surface-alt hover:bg-nav-hover'
+                                                : 'text-txt-secondary bg-surface hover:bg-accent-light hover:text-accent'}
                                             ${isRowSelected ? 'bg-accent-light' : ''}`}
                                     >
                                         {isTotal
@@ -83,7 +94,6 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                                     </td>
                                     {columns.map(col => {
                                         const val = getCellValue(row, col);
-                                        const isNeg = val !== null && val !== undefined && val < 0;
                                         const hasValue = val !== null && val !== undefined && val !== 0;
 
                                         const clickLabel = col.sourceMonths.length === 1
@@ -106,11 +116,10 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                                                     filterVal: isTotal ? null : rowFilterVal,
                                                     label: isTotal ? `TOTAL \u2014 ${col.header}` : clickLabel,
                                                 }) : undefined}
-                                                className={`px-3 py-1.5 text-right whitespace-nowrap font-mono
-                                                    ${isTotal ? 'font-bold' : ''}
-                                                    ${isNeg ? 'text-negative' : 'text-gray-800'}
-                                                    ${isClickable ? 'cursor-pointer hover:bg-accent-hover hover:text-accent' : ''}
-                                                    ${isSelected ? 'bg-accent-hover ring-1 ring-accent-ring ring-inset' : ''}`}
+                                                className={`cell-base
+                                                    ${cellClass(val, isTotal)}
+                                                    ${isClickable ? 'cell-clickable' : ''}
+                                                    ${isSelected ? 'cell-selected' : ''}`}
                                             >
                                                 {formatNumber(val)}
                                             </td>
@@ -119,7 +128,6 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                                     {/* Year total column */}
                                     {(() => {
                                         const total = getDetailTotal(row, columns);
-                                        const isNeg = total !== null && total !== undefined && total < 0;
                                         const hasValue = total !== null && total !== undefined && total !== 0;
 
                                         const isSelected = selection &&
@@ -136,10 +144,10 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                                                     filterVal: isTotal ? null : rowFilterVal,
                                                     label: `${rowLabel} \u2014 Todo el periodo`,
                                                 }) : undefined}
-                                                className={`px-3 py-1.5 text-right whitespace-nowrap font-mono font-bold
-                                                    ${isNeg ? 'text-negative' : 'text-gray-800'}
-                                                    ${hasValue ? 'cursor-pointer hover:bg-accent-hover hover:text-accent' : ''}
-                                                    ${isSelected ? 'bg-accent-hover ring-1 ring-accent-ring ring-inset' : ''}`}
+                                                className={`cell-base cell-total-col
+                                                    ${cellClass(total, true)}
+                                                    ${hasValue ? 'cell-clickable' : ''}
+                                                    ${isSelected ? 'cell-selected' : ''}`}
                                             >
                                                 {formatNumber(total)}
                                             </td>

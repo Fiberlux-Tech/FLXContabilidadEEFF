@@ -11,6 +11,14 @@ interface FinancialTableProps {
     variant: 'pl' | 'bs';
 }
 
+/** Resolve a cell's CSS classes based on its value and row type */
+function cellClass(val: number | null | undefined, isBold: boolean): string {
+    if (val === null || val === undefined) return 'cell-normal';
+    if (val === 0) return 'cell-zero';
+    if (val < 0) return 'cell-neg';
+    return isBold ? 'cell-bold' : 'cell-normal';
+}
+
 export default function FinancialTable({ rows, columns, labelKey, showTotal = false, variant }: FinancialTableProps) {
     const boldSet = variant === 'pl' ? BOLD_ROWS_PL : BOLD_ROWS_BS;
 
@@ -21,18 +29,23 @@ export default function FinancialTable({ rows, columns, labelKey, showTotal = fa
     }, [columns, showTotal]);
 
     return (
-        <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-sm">
+        <div className="table-card overflow-x-auto">
             <table className="min-w-full text-xs">
                 <thead>
-                    <tr className="bg-thead text-white">
-                        <th scope="col" className="sticky left-0 bg-thead z-10 px-4 py-2.5 text-left font-semibold min-w-[220px] sticky-col-shadow">
+                    <tr className="thead-row">
+                        <th scope="col" className="thead-cell sticky-col bg-surface-alt text-left min-w-[360px]">
                             PARTIDA
                         </th>
-                        {headerCols.map(col => (
-                            <th scope="col" key={col} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap min-w-[85px]">
-                                {col}
+                        {columns.map(col => (
+                            <th scope="col" key={col.header} className="thead-cell text-right min-w-[90px]">
+                                {col.header}
                             </th>
                         ))}
+                        {showTotal && (
+                            <th scope="col" className="thead-cell text-right min-w-[90px] cell-total-col">
+                                TOTAL
+                            </th>
+                        )}
                     </tr>
                 </thead>
                 <tbody>
@@ -45,7 +58,7 @@ export default function FinancialTable({ rows, columns, labelKey, showTotal = fa
                         if (isEmpty) {
                             return (
                                 <tr key={idx} className="h-1.5">
-                                    <td colSpan={headerCols.length + 1} className="bg-gray-50/50"></td>
+                                    <td colSpan={headerCols.length + 1} className="bg-surface-alt/50"></td>
                                 </tr>
                             );
                         }
@@ -53,38 +66,30 @@ export default function FinancialTable({ rows, columns, labelKey, showTotal = fa
                         return (
                             <tr
                                 key={idx}
-                                className={`border-b border-gray-100 transition-colors
-                                    ${isBold
-                                        ? 'bg-blue-50/40 hover:bg-blue-50/70'
-                                        : isSection
-                                            ? 'bg-gray-50 hover:bg-gray-100/70'
-                                            : 'hover:bg-gray-50/70'}`}
+                                className={`row-base
+                                    ${isBold ? 'bg-surface-alt hover:bg-surface-alt' : ''}
+                                    ${isSection ? 'bg-surface-alt' : ''}`}
                             >
-                                <td className={`sticky left-0 z-10 px-4 py-1.5 whitespace-nowrap sticky-col-shadow
+                                <td className={`sticky-col px-4 py-2 whitespace-nowrap
                                     ${isBold
-                                        ? 'font-bold text-gray-900 bg-blue-50/40'
+                                        ? 'font-bold text-txt bg-surface-alt'
                                         : isSection
-                                            ? 'font-semibold text-gray-600 bg-gray-50'
-                                            : 'text-gray-700 bg-white'}`}>
+                                            ? 'font-semibold text-txt-secondary bg-surface-alt'
+                                            : 'text-txt-secondary bg-surface'}`}>
                                     {label}
                                 </td>
                                 {columns.map(col => {
                                     const val = getCellValue(row, col);
-                                    const isNeg = val !== null && val !== undefined && val < 0;
                                     return (
-                                        <td key={col.header} className={`px-3 py-1.5 text-right whitespace-nowrap font-mono
-                                            ${isBold ? 'font-bold' : ''}
-                                            ${isNeg ? 'text-negative' : 'text-gray-800'}`}>
+                                        <td key={col.header} className={`cell-base ${cellClass(val, isBold)}`}>
                                             {formatNumber(val)}
                                         </td>
                                     );
                                 })}
                                 {showTotal && (() => {
                                     const total = getSummaryTotal(row, columns, variant);
-                                    const isNeg = total !== null && total !== undefined && total < 0;
                                     return (
-                                        <td className={`px-3 py-1.5 text-right whitespace-nowrap font-mono font-bold
-                                            ${isNeg ? 'text-negative' : 'text-gray-800'}`}>
+                                        <td className={`cell-base cell-total-col ${cellClass(total, true)}`}>
                                             {formatNumber(total)}
                                         </td>
                                     );
