@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useReport } from '@/contexts/ReportContext';
+import { useReport, isBsView } from '@/contexts/ReportContext';
 import FinancialTable from '@/features/dashboard/FinancialTable';
 import PLNoteView from '@/features/dashboard/PLNoteView';
 import type { ReportData, TableConfig, ReportRow } from '@/types';
@@ -58,50 +58,8 @@ export default function MainContent() {
     }
 
     const renderView = () => {
-        const noteConfig = VIEW_TABLE_CONFIGS[currentView as NoteView];
-        if (noteConfig) {
-            // Build tables, applying trailing merge if needed
-            let tables = noteConfig.tables(reportData);
-
-            if (periodRange === 'trailing12') {
-                // Merge each table's rows with prev year data
-                tables = tables.map(t => {
-                    const dataKey = getDataKeyForTable(t, reportData);
-                    if (dataKey) {
-                        return { ...t, rows: getMergedDetailRows(dataKey, t.labelKeys) };
-                    }
-                    return t;
-                });
-            }
-
-            // Filter out all-zero tables
-            tables = tables.filter(t => !isAllZeroTable(t.rows, ALL_MONTHS));
-
-            if (tables.length === 0) {
-                return (
-                    <div className="text-center py-16 text-txt-muted">
-                        <p className="text-sm">Sin datos para mostrar en esta vista</p>
-                    </div>
-                );
-            }
-
-            return <PLNoteView tables={tables} columns={plColumns} year={reportData.year} />;
-        }
-
-        if (currentView === 'pl') {
-            const rows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
-            return (
-                <FinancialTable
-                    rows={rows}
-                    columns={plColumns}
-                    labelKey="PARTIDA_PL"
-                    showTotal
-                    variant="pl"
-                />
-            );
-        }
-
-        if (currentView === 'bs') {
+        // BS views need BS data loaded first
+        if (isBsView(currentView)) {
             if (isBsLoading || reportData.bs_summary.length === 0) {
                 return (
                     <div className="flex-1 flex items-center justify-center py-16">
@@ -122,6 +80,57 @@ export default function MainContent() {
                     </div>
                 );
             }
+        }
+
+        // Note views (P&L and BS)
+        const noteConfig = VIEW_TABLE_CONFIGS[currentView as NoteView];
+        if (noteConfig) {
+            const isBs = isBsView(currentView);
+            const columns = isBs ? bsColumns : plColumns;
+
+            // Build tables, applying trailing merge if needed
+            let tables = noteConfig.tables(reportData);
+
+            if (periodRange === 'trailing12') {
+                tables = tables.map(t => {
+                    const dataKey = getDataKeyForTable(t, reportData);
+                    if (dataKey) {
+                        return { ...t, rows: isBs
+                            ? getMergedRows(dataKey, t.labelKeys[t.labelKeys.length - 1], 'bs')
+                            : getMergedDetailRows(dataKey, t.labelKeys) };
+                    }
+                    return t;
+                });
+            }
+
+            // Filter out all-zero tables
+            tables = tables.filter(t => !isAllZeroTable(t.rows, ALL_MONTHS));
+
+            if (tables.length === 0) {
+                return (
+                    <div className="text-center py-16 text-txt-muted">
+                        <p className="text-sm">Sin datos para mostrar en esta vista</p>
+                    </div>
+                );
+            }
+
+            return <PLNoteView tables={tables} columns={columns} year={reportData.year} />;
+        }
+
+        if (currentView === 'pl') {
+            const rows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
+            return (
+                <FinancialTable
+                    rows={rows}
+                    columns={plColumns}
+                    labelKey="PARTIDA_PL"
+                    showTotal
+                    variant="pl"
+                />
+            );
+        }
+
+        if (currentView === 'bs') {
             const rows = getMergedRows('bs_summary', 'PARTIDA_BS', 'bs');
             return (
                 <FinancialTable
@@ -149,6 +158,7 @@ export default function MainContent() {
 /** Map a TableConfig back to the ReportData key so we can fetch merged rows */
 function getDataKeyForTable(table: TableConfig, data: ReportData): keyof ReportData | null {
     const mapping: [keyof ReportData, ReportRow[]][] = [
+        // P&L notes
         ['ingresos_ordinarios', data.ingresos_ordinarios],
         ['ingresos_proyectos', data.ingresos_proyectos],
         ['costo', data.costo],
@@ -158,6 +168,12 @@ function getDataKeyForTable(table: TableConfig, data: ReportData): keyof ReportD
         ['dya_gasto', data.dya_gasto],
         ['resultado_financiero_ingresos', data.resultado_financiero_ingresos],
         ['resultado_financiero_gastos', data.resultado_financiero_gastos],
+        // BS notes
+        ['bs_efectivo', data.bs_efectivo],
+        ['bs_cxc_comerciales', data.bs_cxc_comerciales],
+        ['bs_cxc_comerciales_nit_top20', data.bs_cxc_comerciales_nit_top20],
+        ['bs_cxc_otras', data.bs_cxc_otras],
+        ['bs_cxc_otras_nit_top20', data.bs_cxc_otras_nit_top20],
     ];
     for (const [key, rows] of mapping) {
         if (table.rows === rows) return key;

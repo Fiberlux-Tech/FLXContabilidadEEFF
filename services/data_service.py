@@ -24,8 +24,10 @@ from accounting.transforms import (
 from accounting.aggregation import (
     preaggregate, sales_details, proyectos_especiales,
     detail_by_ceco, detail_resultado_financiero,
+    bs_detail_by_cuenta, bs_top20_by_nit,
 )
 from accounting.statements import pl_summary, bs_summary
+from accounting.notes import BS_DETAIL_ENTRIES
 from excel.builder import build_excel_data, build_bs_data
 from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MONTH_NAMES_SET
 from config.company import VALID_COMPANIES
@@ -358,12 +360,13 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
         full = _get_from_cache("result", company, year)
         if full:
             logger.info("Serving BS from full cache for %s/%d", company, year)
-            bs_result = {
-                "bs_summary": full["bs_summary"],
-                "company": company, "year": year, "months": full["months"],
-            }
-            _set_in_cache("bs_result", company, year, bs_result)
-            return bs_result
+            # The old full cache may not have BS detail keys — fall through
+            # to recompute if it only has bs_summary
+            if "bs_efectivo" in full:
+                bs_result = {k: v for k, v in full.items()
+                             if k == "bs_summary" or k.startswith("bs_") or k in ("company", "year", "months")}
+                _set_in_cache("bs_result", company, year, bs_result)
+                return bs_result
 
     t0 = time.perf_counter()
 
@@ -392,6 +395,25 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
         "year": year,
         "months": MONTH_NAMES_LIST,
     }
+
+    # BS note detail tables (reuse the same aggregation functions as Excel/PDF)
+    if df_bs is not None:
+        for key, partidas, include_pf, exclude_pf in BS_DETAIL_ENTRIES:
+            result[key] = _df_to_records(bs_detail_by_cuenta(
+                df_bs, partidas,
+                cuenta_prefixes=include_pf,
+                exclude_cuenta_prefixes=exclude_pf,
+            ))
+
+        # NIT top-20 ranking tables
+        _BS_NIT_RANKINGS = [
+            ("bs_cxc_comerciales_nit_top20", ["Cuentas por cobrar comerciales (neto)"]),
+            ("bs_cxc_otras_nit_top20",       ["Otras cuentas por cobrar (neto)"]),
+            ("bs_cxp_comerciales_nit_top20", ["Cuentas por pagar comerciales"]),
+            ("bs_cxp_otras_nit_top20",       ["Otras cuentas por pagar"]),
+        ]
+        for key, partidas in _BS_NIT_RANKINGS:
+            result[key] = _df_to_records(bs_top20_by_nit(df_bs, partidas))
 
     _set_in_cache("bs_result", company, year, result)
     if df_bs is not None:

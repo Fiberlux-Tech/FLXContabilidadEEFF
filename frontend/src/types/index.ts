@@ -44,6 +44,25 @@ export interface ReportData {
   dya_gasto: ReportRow[];
   resultado_financiero_ingresos: ReportRow[];
   resultado_financiero_gastos: ReportRow[];
+  // BS note detail tables
+  bs_efectivo: ReportRow[];
+  bs_cxc_comerciales: ReportRow[];
+  bs_cxc_comerciales_nit_top20: ReportRow[];
+  bs_cxc_otras: ReportRow[];
+  bs_cxc_otras_nit_top20: ReportRow[];
+  bs_cxc_relacionadas: ReportRow[];
+  bs_ppe: ReportRow[];
+  bs_ppe_depreciacion: ReportRow[];
+  bs_intangible: ReportRow[];
+  bs_intangible_amortizacion: ReportRow[];
+  bs_otros_activos: ReportRow[];
+  bs_cxp_comerciales: ReportRow[];
+  bs_cxp_comerciales_nit_top20: ReportRow[];
+  bs_cxp_otras: ReportRow[];
+  bs_cxp_otras_nit_top20: ReportRow[];
+  bs_cxp_relacionadas: ReportRow[];
+  bs_provisiones: ReportRow[];
+  bs_tributos: ReportRow[];
   company: string;
   year: number;
   months: string[];
@@ -55,6 +74,25 @@ export type PLReportData = Omit<ReportData, 'bs_summary'>;
 /** Response from /api/data/load-bs */
 export interface BSReportData {
   bs_summary: ReportRow[];
+  // BS note detail tables
+  bs_efectivo: ReportRow[];
+  bs_cxc_comerciales: ReportRow[];
+  bs_cxc_comerciales_nit_top20: ReportRow[];
+  bs_cxc_otras: ReportRow[];
+  bs_cxc_otras_nit_top20: ReportRow[];
+  bs_cxc_relacionadas: ReportRow[];
+  bs_ppe: ReportRow[];
+  bs_ppe_depreciacion: ReportRow[];
+  bs_intangible: ReportRow[];
+  bs_intangible_amortizacion: ReportRow[];
+  bs_otros_activos: ReportRow[];
+  bs_cxp_comerciales: ReportRow[];
+  bs_cxp_comerciales_nit_top20: ReportRow[];
+  bs_cxp_otras: ReportRow[];
+  bs_cxp_otras_nit_top20: ReportRow[];
+  bs_cxp_relacionadas: ReportRow[];
+  bs_provisiones: ReportRow[];
+  bs_tributos: ReportRow[];
   company: string;
   year: number;
   months: string[];

@@ -12,11 +12,15 @@ export const VIEW_TITLE_MAP: Record<View, string> = {
     gasto_admin: 'Gastos de Administracion',
     dya: 'Depreciacion y Amortizacion',
     resultado_financiero: 'Resultado Financiero',
+    bs_efectivo: 'Efectivo y Equivalentes',
+    bs_cxc_comerciales: 'Cuentas por Cobrar Comerciales',
+    bs_cxc_otras: 'Otras Cuentas por Cobrar',
 };
 
 // ── Note view table configs ──────────────────────────────────────────
 
-export type NoteView = 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'dya' | 'resultado_financiero';
+export type NoteView = 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'dya' | 'resultado_financiero'
+    | 'bs_efectivo' | 'bs_cxc_comerciales' | 'bs_cxc_otras';
 
 export interface NoteViewConfig {
     tables: (d: ReportData) => TableConfig[];
@@ -60,6 +64,28 @@ export const VIEW_TABLE_CONFIGS: Record<NoteView, NoteViewConfig> = {
         tables: (d) => [
             { title: 'Ingresos Financieros', rows: d.resultado_financiero_ingresos, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
             { title: 'Gastos Financieros', rows: d.resultado_financiero_gastos, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
+        ],
+        labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
+    },
+
+    // ── BS note views ───────────────────────────────────────────────────
+    bs_efectivo: {
+        tables: (d) => [
+            { title: 'Efectivo y Equivalentes de Efectivo', rows: d.bs_efectivo ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'Efectivo y equivalentes de efectivo', filterCol: 'CUENTA_CONTABLE' },
+        ],
+        labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
+    },
+    bs_cxc_comerciales: {
+        tables: (d) => [
+            { title: 'Cuentas por Cobrar Comerciales', rows: d.bs_cxc_comerciales ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'Cuentas por cobrar comerciales (neto)', filterCol: 'CUENTA_CONTABLE' },
+            { title: 'Top 20 por NIT', rows: d.bs_cxc_comerciales_nit_top20 ?? [], labelKeys: ['NIT', 'RAZON_SOCIAL'], headerLabels: ['NIT', 'Razon Social'], partida: 'Cuentas por cobrar comerciales (neto)', filterCol: 'NIT' },
+        ],
+        labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
+    },
+    bs_cxc_otras: {
+        tables: (d) => [
+            { title: 'Otras Cuentas por Cobrar', rows: d.bs_cxc_otras ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'Otras cuentas por cobrar (neto)', filterCol: 'CUENTA_CONTABLE' },
+            { title: 'Top 20 por NIT', rows: d.bs_cxc_otras_nit_top20 ?? [], labelKeys: ['NIT', 'RAZON_SOCIAL'], headerLabels: ['NIT', 'Razon Social'], partida: 'Otras cuentas por cobrar (neto)', filterCol: 'NIT' },
         ],
         labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
     },

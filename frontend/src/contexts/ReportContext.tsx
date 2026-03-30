@@ -3,7 +3,12 @@ import { api } from '@/lib/api';
 import { API_CONFIG } from '@/config';
 import type { ReportData, PLReportData, BSReportData, CompanyMap, Granularity, PeriodRange, DisplayColumn, MonthSource, ReportRow } from '@/types';
 
-export type View = 'pl' | 'bs' | 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'dya' | 'resultado_financiero';
+export type View = 'pl' | 'bs' | 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'dya' | 'resultado_financiero'
+    | 'bs_efectivo' | 'bs_cxc_comerciales' | 'bs_cxc_otras';
+
+export function isBsView(view: View): boolean {
+    return view === 'bs' || view.startsWith('bs_');
+}
 
 const ALL_MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'] as const;
 const QUARTER_MONTHS: [string, string, string][] = [
@@ -100,16 +105,22 @@ function reportReducer(state: ReportState, action: ReportAction): ReportState {
             return { ...state, isLoading: false, error: action.error, reportData: null, prevYearData: null };
         case 'BS_LOAD_START':
             return { ...state, isBsLoading: true, bsError: null };
-        case 'BS_LOAD_SUCCESS':
+        case 'BS_LOAD_SUCCESS': {
+            // Merge all BS fields (summary + note details) into reportData
+            const { company: _c, year: _y, months: _m, ...bsFields } = action.data;
+            const prevBsFields = action.prevYearData
+                ? (() => { const { company: _c2, year: _y2, months: _m2, ...rest } = action.prevYearData; return rest; })()
+                : null;
             return {
                 ...state, isBsLoading: false,
                 reportData: state.reportData
-                    ? { ...state.reportData, bs_summary: action.data.bs_summary }
+                    ? { ...state.reportData, ...bsFields }
                     : null,
-                prevYearData: action.prevYearData && state.prevYearData
-                    ? { ...state.prevYearData, bs_summary: action.prevYearData.bs_summary }
+                prevYearData: prevBsFields && state.prevYearData
+                    ? { ...state.prevYearData, ...prevBsFields }
                     : state.prevYearData,
             };
+        }
         case 'BS_LOAD_ERROR':
             return { ...state, isBsLoading: false, bsError: action.error };
         case 'EXPORT_START':
@@ -443,8 +454,8 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             const [plData, prevPlData] = await Promise.all([plPromise, prevPlPromise]);
             dispatch({ type: 'LOAD_PL_SUCCESS', data: plData, prevYearData: prevPlData });
 
-            // If user is on BS tab, fetch BS immediately after P&L
-            if (state.currentView === 'bs') {
+            // If user is on any BS view, fetch BS immediately after P&L
+            if (isBsView(state.currentView)) {
                 fetchBsData(force, signal);
             }
         } catch (err: unknown) {
@@ -477,10 +488,10 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
         };
     }, [state.selectedCompany, state.companies, loadData]);
 
-    // Trigger BS fetch when user switches to BS tab and BS data isn't loaded yet
+    // Trigger BS fetch when user switches to any BS view and BS data isn't loaded yet
     useEffect(() => {
         if (
-            state.currentView === 'bs' &&
+            isBsView(state.currentView) &&
             state.reportData &&
             state.reportData.bs_summary.length === 0 &&
             !state.isBsLoading &&

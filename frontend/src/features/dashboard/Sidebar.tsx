@@ -30,6 +30,13 @@ const PL_SUB_ITEMS = [
     { view: 'resultado_financiero', label: 'Resultado Financiero' },
 ] as const;
 
+const BS_SUB_ITEMS = [
+    { view: 'bs', label: 'Resumen' },
+    { view: 'bs_efectivo', label: 'Efectivo y Equivalentes' },
+    { view: 'bs_cxc_comerciales', label: 'Cuentas por Cobrar Comerciales' },
+    { view: 'bs_cxc_otras', label: 'Otras Cuentas por Cobrar' },
+] as const;
+
 function ExportButton({ onClick, disabled, svgPath, label }: {
     onClick: () => void;
     disabled: boolean;
@@ -59,8 +66,6 @@ export default function Sidebar() {
         currentView, setCurrentView,
         reportData, exportFile, isExporting,
     } = useReport();
-
-    const isPLActive = currentView !== 'bs';
 
     return (
         <aside className="w-[280px] bg-nav border-r border-nav-border flex flex-col min-h-screen shrink-0 overflow-y-auto">
@@ -100,18 +105,26 @@ export default function Sidebar() {
                 {/* Divider */}
                 <div className="h-px bg-nav-border mx-3 my-2" />
 
-                {/* Balance General */}
-                <button
-                    onClick={() => setCurrentView('bs')}
-                    className={`nav-item-base gap-2.5 px-3 py-[7px]
-                        ${currentView === 'bs' ? 'nav-item-active' : 'nav-item-inactive'}`}
-                >
-                    {currentView === 'bs' && <span className="nav-indicator" />}
-                    <svg className={`w-4 h-4 shrink-0 ${currentView === 'bs' ? 'text-accent' : 'text-txt-muted'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
-                    </svg>
-                    Balance General
-                </button>
+                {/* Balance General section */}
+                <div className="mb-1">
+                    <div className="flex items-center gap-2.5 px-3 py-[7px] text-[13px] font-semibold text-nav-text">
+                        <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+                        </svg>
+                        Balance General
+                    </div>
+                    <div className="space-y-0.5">
+                        {BS_SUB_ITEMS.map(item => (
+                            <NavButton
+                                key={item.view}
+                                view={item.view}
+                                label={item.label}
+                                currentView={currentView}
+                                onClick={setCurrentView}
+                            />
+                        ))}
+                    </div>
+                </div>
             </nav>
 
             {/* Export */}
