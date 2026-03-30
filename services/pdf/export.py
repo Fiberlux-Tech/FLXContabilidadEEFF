@@ -11,7 +11,8 @@ from accounting.rules import (
     BS_PPE_GROUPS, BS_PPE_DEPRECIACION_GROUPS, BS_TRIBUTOS_GROUPS,
     get_bs_group, BS_GROUP_TABLES,
 )
-from config.calendar import MONTH_NAMES, QUARTER_MONTHS, MONTH_NAMES_ES, get_end_month
+from config.calendar import MONTH_NAMES, QUARTER_MONTHS, MONTH_NAMES_ES
+from config.period import get_end_month
 from config.company import COMPANY_META
 from pdf.constants import (
     NAVY, CHARCOAL, WHITE, LIGHT_GRAY, MUTED_BLUE, ZEBRA_GRAY, LINE_GRAY,
@@ -855,7 +856,7 @@ def _render_notes(pdf, data, col_names, n_vals, bs_col_names, n_bs_vals,
                   detail_label_pcts, detail_2col_label_pcts,
                   subtitle_text, pl_row_cache, _pdf_has_data):
     """Render all nota pages (config-driven)."""
-    from config.nota import numbered_groups, nota_title as _nota_title
+    from config.nota_utils import numbered_groups, nota_title as _nota_title
 
     bs_det_label_pcts = DETAIL_LABEL_PCT_NARROW if n_bs_vals <= MAX_NARROW_VALUE_COLS else DETAIL_LABEL_PCT_WIDE
     bs_det_widths, bs_det_val_w = _compute_widths(pdf, n_bs_vals, bs_det_label_pcts)
@@ -937,7 +938,8 @@ def export_to_pdf(output_path, data: PdfReportData):
         "gasto_admin", "resultado_financiero_ingresos", "resultado_financiero_gastos",
         "dya_costo", "dya_gasto",
     ]
-    from config.nota import NOTA_GROUPS, build_partida_nota_map
+    from config.nota import NOTA_GROUPS
+    from config.nota_utils import build_partida_nota_map
     _attr_label_cols = {
         e.data_attr: list(e.pdf_label_cols)
         for grp in NOTA_GROUPS for e in grp.entries

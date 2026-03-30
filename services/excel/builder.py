@@ -6,7 +6,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 import pandas as pd
 
 from accounting.rules import DETAIL_CATEGORIES
-from config.calendar import MONTH_NAMES, MONTH_NAMES_SET, derive_period_type, get_period_months
+from config.calendar import MONTH_NAMES, MONTH_NAMES_SET
+from config.period import derive_period_type, get_period_months
 from accounting.transforms import (
     prepare_pnl, filter_for_statements, assign_partida_pl,
     prepare_bs_stmt, get_excluded_cuentas,

@@ -9,7 +9,9 @@ import pandas as pd
 
 from data.db import connect
 from data.queries import fetch_pnl_data, fetch_bs_data
-from config.calendar import MIN_YEAR, month_end_boundary
+from config.calendar import MIN_YEAR
+from config.period import month_end_boundary
+from config.settings import get_config
 
 
 logger = logging.getLogger("plantillas.data_fetcher")
@@ -88,7 +90,8 @@ def fetch_all_data(company: str, year: int, month: int | None, conn_factory=None
 
     logger.info("Fetching data concurrently%s...", "" if need_pdf else " (Excel-only)")
     futures = {}
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    max_workers = get_config().db.fetch_max_workers
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         # 1) P&L full year (always fetch full year; filter in-memory for month)
         futures["raw_full"] = pool.submit(_fetch_with_own_conn, fetch_pnl_data, conn_factory, company, year, None)
 

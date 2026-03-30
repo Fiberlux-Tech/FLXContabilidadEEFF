@@ -5,7 +5,7 @@ import pandas as pd
 import pyodbc
 
 from accounting.rules import BS_ACCOUNT_PREFIXES, PNL_ACCOUNT_PREFIXES
-from config.calendar import month_end_boundary
+from config.period import month_end_boundary
 from config.exceptions import QueryError
 
 

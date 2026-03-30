@@ -2,7 +2,8 @@ import logging
 
 import pandas as pd
 
-from config.calendar import MONTH_NAMES, get_end_month
+from config.calendar import MONTH_NAMES
+from config.period import get_end_month
 from models.models import PeriodContext
 from accounting.aggregation import (
     aggregate_period, merge_current_prev,

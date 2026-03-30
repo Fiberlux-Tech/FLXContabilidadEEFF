@@ -40,7 +40,16 @@ def _build_conn_str(db_cfg: DatabaseConfig) -> str:
 # ── Connection pool ──────────────────────────────────────────────────────
 
 _conn_str: str | None = None
-_pool: Queue[pyodbc.Connection] = Queue(maxsize=8)
+_pool: Queue[pyodbc.Connection] | None = None
+
+
+def _get_pool() -> Queue[pyodbc.Connection]:
+    """Lazily create the connection pool with configured size."""
+    global _pool
+    if _pool is None:
+        cfg = get_config().db
+        _pool = Queue(maxsize=cfg.pool_size)
+    return _pool
 
 
 def _get_conn_str() -> str:
@@ -80,8 +89,9 @@ def connect() -> Generator[pyodbc.Connection]:
     conn = None
 
     # Try to grab an existing connection from the pool
+    pool = _get_pool()
     try:
-        conn = _pool.get_nowait()
+        conn = pool.get_nowait()
         if not _is_alive(conn):
             try:
                 conn.close()
@@ -106,6 +116,6 @@ def connect() -> Generator[pyodbc.Connection]:
     else:
         # Return to pool if there's room, otherwise close
         try:
-            _pool.put_nowait(conn)
+            pool.put_nowait(conn)
         except Exception:
             conn.close()

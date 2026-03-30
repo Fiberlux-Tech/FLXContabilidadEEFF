@@ -3,7 +3,8 @@ import pandas as pd
 from models.models import PnLReportData
 from accounting.aggregation import TOTAL_COL, append_total_row
 from accounting.rules import get_bs_group, BS_GROUP_TABLES
-from config.nota import numbered_groups, nota_title, RenderPattern
+from config.nota import RenderPattern
+from config.nota_utils import numbered_groups, nota_title
 from excel.styles import (
     # Constants
     COL_B_WIDTH_PL, COL_B_WIDTH_BS,

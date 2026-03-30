@@ -3,7 +3,8 @@ from collections import namedtuple
 
 import pandas as pd
 
-from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MONTH_NAMES_SET, get_period_months, get_ytd_months
+from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MONTH_NAMES_SET
+from config.period import get_period_months, get_ytd_months
 from accounting.rules import INGRESO_FINANCIERO_PREFIX
 
 
