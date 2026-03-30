@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
 import { API_CONFIG } from '@/config';
-import type { ReportData, CompanyMap, Granularity, PeriodRange, DisplayColumn, MonthSource, ReportRow } from '@/types';
+import type { ReportData, PLReportData, BSReportData, CompanyMap, Granularity, PeriodRange, DisplayColumn, MonthSource, ReportRow } from '@/types';
 
 export type View = 'pl' | 'bs' | 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'dya' | 'resultado_financiero';
 
@@ -29,6 +29,9 @@ interface ReportState {
     isLoading: boolean;
     error: string | null;
     isExporting: boolean;
+    /** Whether BS data is being fetched separately */
+    isBsLoading: boolean;
+    bsError: string | null;
 }
 
 type ReportAction =
@@ -40,8 +43,11 @@ type ReportAction =
     | { type: 'SET_PERIOD_RANGE'; periodRange: PeriodRange }
     | { type: 'SET_VIEW'; view: View }
     | { type: 'LOAD_START' }
-    | { type: 'LOAD_SUCCESS'; data: ReportData; prevYearData: ReportData | null }
+    | { type: 'LOAD_PL_SUCCESS'; data: PLReportData; prevYearData: PLReportData | null }
     | { type: 'LOAD_ERROR'; error: string }
+    | { type: 'BS_LOAD_START' }
+    | { type: 'BS_LOAD_SUCCESS'; data: BSReportData; prevYearData: BSReportData | null }
+    | { type: 'BS_LOAD_ERROR'; error: string }
     | { type: 'EXPORT_START' }
     | { type: 'EXPORT_SUCCESS' }
     | { type: 'EXPORT_ERROR'; error: string };
@@ -59,6 +65,8 @@ const initialState: ReportState = {
     isLoading: false,
     error: null,
     isExporting: false,
+    isBsLoading: false,
+    bsError: null,
 };
 
 function reportReducer(state: ReportState, action: ReportAction): ReportState {
@@ -78,11 +86,32 @@ function reportReducer(state: ReportState, action: ReportAction): ReportState {
         case 'SET_VIEW':
             return { ...state, currentView: action.view };
         case 'LOAD_START':
-            return { ...state, isLoading: true, error: null };
-        case 'LOAD_SUCCESS':
-            return { ...state, isLoading: false, reportData: action.data, prevYearData: action.prevYearData };
+            return { ...state, isLoading: true, error: null, bsError: null };
+        case 'LOAD_PL_SUCCESS':
+            // Set reportData with empty bs_summary — BS loads separately
+            return {
+                ...state, isLoading: false,
+                reportData: { ...action.data, bs_summary: [] } as ReportData,
+                prevYearData: action.prevYearData
+                    ? { ...action.prevYearData, bs_summary: [] } as ReportData
+                    : null,
+            };
         case 'LOAD_ERROR':
             return { ...state, isLoading: false, error: action.error, reportData: null, prevYearData: null };
+        case 'BS_LOAD_START':
+            return { ...state, isBsLoading: true, bsError: null };
+        case 'BS_LOAD_SUCCESS':
+            return {
+                ...state, isBsLoading: false,
+                reportData: state.reportData
+                    ? { ...state.reportData, bs_summary: action.data.bs_summary }
+                    : null,
+                prevYearData: action.prevYearData && state.prevYearData
+                    ? { ...state.prevYearData, bs_summary: action.prevYearData.bs_summary }
+                    : state.prevYearData,
+            };
+        case 'BS_LOAD_ERROR':
+            return { ...state, isBsLoading: false, bsError: action.error };
         case 'EXPORT_START':
             return { ...state, isExporting: true, error: null };
         case 'EXPORT_SUCCESS':
@@ -333,6 +362,8 @@ interface IReportContext {
     loadData: (force?: boolean) => Promise<void>;
     exportFile: (type: 'excel' | 'pdf' | 'all') => Promise<void>;
     isExporting: boolean;
+    isBsLoading: boolean;
+    bsError: string | null;
     /** Computed display columns for current granularity/range/variant */
     getDisplayColumns: (variant: 'pl' | 'bs') => DisplayColumn[];
     /** Trailing 12M month sources (for drill-down year resolution) */
@@ -359,40 +390,70 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
         });
     }, []);
 
-    const loadData = useCallback(async (force = false, signal?: AbortSignal) => {
+    // ─── BS fetch (separate, on-demand) ────────────────────────
+    const bsAbortRef = useRef<AbortController | null>(null);
+
+    const fetchBsData = useCallback(async (force = false, signal?: AbortSignal) => {
         if (!state.selectedCompany) return;
-        dispatch({ type: 'LOAD_START' });
+        dispatch({ type: 'BS_LOAD_START' });
         try {
-            // Always fetch current year
-            const dataPromise = api.post<ReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD, {
+            const bsPromise = api.post<BSReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD_BS, {
                 company: state.selectedCompany,
                 year: state.selectedYear,
                 force_refresh: force,
             }, { signal });
 
-            // For trailing 12M, also fetch previous year
-            let prevPromise: Promise<ReportData> | null = null;
+            let prevBsPromise: Promise<BSReportData> | null = null;
             if (state.periodRange === 'trailing12') {
-                prevPromise = api.post<ReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD, {
+                prevBsPromise = api.post<BSReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD_BS, {
                     company: state.selectedCompany,
                     year: state.selectedYear - 1,
                     force_refresh: force,
                 }, { signal });
             }
 
-            const [data, prevData] = await Promise.all([
-                dataPromise,
-                prevPromise,
-            ]);
+            const [bsData, prevBsData] = await Promise.all([bsPromise, prevBsPromise]);
+            dispatch({ type: 'BS_LOAD_SUCCESS', data: bsData, prevYearData: prevBsData });
+        } catch (err: unknown) {
+            if (err instanceof DOMException && err.name === 'AbortError') return;
+            dispatch({ type: 'BS_LOAD_ERROR', error: err instanceof Error ? err.message : 'Error al cargar Balance General' });
+        }
+    }, [state.selectedCompany, state.selectedYear, state.periodRange]);
 
-            dispatch({ type: 'LOAD_SUCCESS', data, prevYearData: prevData });
+    // ─── P&L fetch (primary, fast path) ──────────────────────
+    const loadData = useCallback(async (force = false, signal?: AbortSignal) => {
+        if (!state.selectedCompany) return;
+        dispatch({ type: 'LOAD_START' });
+        try {
+            const plPromise = api.post<PLReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD_PL, {
+                company: state.selectedCompany,
+                year: state.selectedYear,
+                force_refresh: force,
+            }, { signal });
+
+            let prevPlPromise: Promise<PLReportData> | null = null;
+            if (state.periodRange === 'trailing12') {
+                prevPlPromise = api.post<PLReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD_PL, {
+                    company: state.selectedCompany,
+                    year: state.selectedYear - 1,
+                    force_refresh: force,
+                }, { signal });
+            }
+
+            const [plData, prevPlData] = await Promise.all([plPromise, prevPlPromise]);
+            dispatch({ type: 'LOAD_PL_SUCCESS', data: plData, prevYearData: prevPlData });
+
+            // If user is on BS tab, fetch BS immediately after P&L
+            if (state.currentView === 'bs') {
+                fetchBsData(force, signal);
+            }
         } catch (err: unknown) {
             if (err instanceof DOMException && err.name === 'AbortError') return;
             dispatch({ type: 'LOAD_ERROR', error: err instanceof Error ? err.message : 'Error al cargar datos' });
         }
-    }, [state.selectedCompany, state.selectedYear, state.periodRange]);
+    }, [state.selectedCompany, state.selectedYear, state.periodRange, state.currentView, fetchBsData]);
 
-    // Auto-load data when company, year, or periodRange changes (debounced + cancellable)
+    // Auto-load P&L when company, year, or periodRange changes (debounced + cancellable)
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortRef = useRef<AbortController | null>(null);
 
@@ -401,6 +462,7 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
 
         if (debounceRef.current) clearTimeout(debounceRef.current);
         if (abortRef.current) abortRef.current.abort();
+        if (bsAbortRef.current) bsAbortRef.current.abort();
 
         debounceRef.current = setTimeout(() => {
             const controller = new AbortController();
@@ -411,8 +473,25 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
         return () => {
             if (debounceRef.current) clearTimeout(debounceRef.current);
             if (abortRef.current) abortRef.current.abort();
+            if (bsAbortRef.current) bsAbortRef.current.abort();
         };
     }, [state.selectedCompany, state.companies, loadData]);
+
+    // Trigger BS fetch when user switches to BS tab and BS data isn't loaded yet
+    useEffect(() => {
+        if (
+            state.currentView === 'bs' &&
+            state.reportData &&
+            state.reportData.bs_summary.length === 0 &&
+            !state.isBsLoading &&
+            !state.bsError
+        ) {
+            if (bsAbortRef.current) bsAbortRef.current.abort();
+            const controller = new AbortController();
+            bsAbortRef.current = controller;
+            fetchBsData(false, controller.signal);
+        }
+    }, [state.currentView, state.reportData, state.isBsLoading, state.bsError, fetchBsData]);
 
     const exportFile = useCallback(async (type: 'excel' | 'pdf' | 'all') => {
         if (!state.selectedCompany) return;
@@ -503,6 +582,8 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             companiesError: state.companiesError,
             loadData, exportFile,
             isExporting: state.isExporting,
+            isBsLoading: state.isBsLoading,
+            bsError: state.bsError,
             getDisplayColumns,
             trailingMonthSources,
             getMergedRows,

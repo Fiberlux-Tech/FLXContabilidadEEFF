@@ -9,6 +9,7 @@ export default function MainContent() {
     const {
         reportData, currentView, isLoading, error,
         getDisplayColumns, periodRange, getMergedRows, getMergedDetailRows,
+        isBsLoading, bsError,
     } = useReport();
 
     // Compute display columns for both variants
@@ -101,6 +102,26 @@ export default function MainContent() {
         }
 
         if (currentView === 'bs') {
+            if (isBsLoading || reportData.bs_summary.length === 0) {
+                return (
+                    <div className="flex-1 flex items-center justify-center py-16">
+                        <div className="text-center">
+                            <div className="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent mx-auto mb-4"></div>
+                            <p className="text-sm text-txt-muted">Cargando Balance General...</p>
+                        </div>
+                    </div>
+                );
+            }
+            if (bsError) {
+                return (
+                    <div className="flex-1 flex items-center justify-center p-8">
+                        <div className="bg-accent-light border border-border rounded-[10px] p-6 text-center max-w-md">
+                            <p className="font-medium text-negative mb-1">Error</p>
+                            <p className="text-sm text-txt-secondary">{bsError}</p>
+                        </div>
+                    </div>
+                );
+            }
             const rows = getMergedRows('bs_summary', 'PARTIDA_BS', 'bs');
             return (
                 <FinancialTable

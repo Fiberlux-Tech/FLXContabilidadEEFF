@@ -106,7 +106,7 @@ def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
     # Rules in priority order — np.select picks the first match
     conditions = [
         cuenta.isin(PROVISION_INCOBRABLE_CUENTAS),
-        ceco1 == CECO_PREFIX_DYA_COSTO,
+        cuenta4.isin(DYA_GASTO_PREFIXES) & ceco1.isin(CECO_PREFIX_DYA_COSTO),
         cuenta4.isin(DYA_GASTO_PREFIXES),
         cuenta == PARTICIPACION_TRABAJADORES_CUENTA,
         cuenta4.isin(DIFERENCIA_CAMBIO_PREFIXES),

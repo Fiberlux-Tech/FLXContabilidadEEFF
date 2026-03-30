@@ -159,3 +159,25 @@ def fetch_all_data(company: str, year: int, month: int | None, conn_factory=None
             raw_bs_prev = pd.DataFrame(columns=raw_bs.columns if not raw_bs.empty else raw.columns)
 
     return raw, raw_current_full, raw_prev, raw_bs, raw_bs_prev
+
+
+# ── Single-statement fetch functions (for split dashboard loading) ─────
+
+def fetch_pnl_only(company: str, year: int, conn_factory=None) -> pd.DataFrame:
+    """Fetch only P&L data for a single year.  Used by the split dashboard endpoint."""
+    if conn_factory is None:
+        conn_factory = connect
+    t0 = time.perf_counter()
+    df = _fetch_with_own_conn(fetch_pnl_data, conn_factory, company, year, None)
+    logger.info("fetch_pnl_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
+    return df
+
+
+def fetch_bs_only(company: str, year: int, conn_factory=None) -> pd.DataFrame:
+    """Fetch only BS data for a single year.  Used by the split dashboard endpoint."""
+    if conn_factory is None:
+        conn_factory = connect
+    t0 = time.perf_counter()
+    df = _fetch_with_own_conn(fetch_bs_data, conn_factory, company, year, None)
+    logger.info("fetch_bs_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
+    return df

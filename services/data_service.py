@@ -2,6 +2,10 @@
 
 Used by the web API to load all report data in one call.  Reuses the same
 fetch and transform pipeline as the CLI/export path.
+
+Split endpoints (load_pl_data / load_bs_data) allow the dashboard to fetch
+P&L first (fast) and defer BS until the user needs it, with background
+pre-fetching to warm the cache.
 """
 
 import logging
@@ -12,7 +16,7 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 
-from data.fetcher import fetch_all_data
+from data.fetcher import fetch_all_data, fetch_pnl_only, fetch_bs_only
 from accounting.transforms import (
     prepare_pnl, filter_for_statements, assign_partida_pl,
     prepare_bs_stmt,
@@ -50,6 +54,9 @@ _STORES: dict[str, OrderedDict[tuple[str, int], tuple[float, object]]] = {
     "df": OrderedDict(),
     "bs": OrderedDict(),
     "raw": OrderedDict(),
+    "pl_result": OrderedDict(),   # JSON-ready P&L-only response
+    "bs_result": OrderedDict(),   # JSON-ready BS-only response
+    "pl_df": OrderedDict(),       # pl_summary DataFrame (BS needs it for UTILIDAD NETA)
 }
 
 # Cache observability — simple hit/miss counters per store
@@ -236,9 +243,194 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
     if df_bs is not None:
         _set_in_cache("bs", company, year, df_bs)
     _set_in_cache("raw", company, year, (raw, raw_current_full, raw_prev, raw_bs, raw_bs_prev))
+
+    # Cross-populate split caches so split endpoints get instant hits
+    _set_in_cache("pl_df", company, year, pl)
+    _set_in_cache("pl_result", company, year, {k: v for k, v in result.items() if k != "bs_summary"})
+    _set_in_cache("bs_result", company, year, {
+        "bs_summary": result["bs_summary"], "company": company, "year": year, "months": months,
+    })
+
     logger.info("Total load_report_data: %.2fs", time.perf_counter() - t0)
 
     return result
+
+
+# ── Split P&L / BS loading (fast dashboard path) ──────────────────────
+
+def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Run P&L transform pipeline.  Returns (df_stmt, pl_df, pl_records_dict)."""
+    df_pnl = prepare_pnl(raw_current_full)
+    df_stmt = filter_for_statements(df_pnl)
+    df_stmt = assign_partida_pl(df_stmt)
+    pl = pl_summary(df_stmt)
+
+    non_month_cols = [c for c in pl.columns if c not in MONTH_NAMES_SET]
+    pl = pl.reindex(columns=non_month_cols + MONTH_NAMES_LIST, fill_value=0)
+
+    preagg = preaggregate(df_stmt)
+    sd = sales_details(df_stmt, with_total_row=True, preagg=preagg)
+    pe = proyectos_especiales(df_stmt, MONTH_NAMES_LIST, with_total_row=True)
+    costo = detail_by_ceco(df_stmt, ["COSTO"], with_total_row=True, preagg=preagg)
+    gasto_venta = detail_by_ceco(df_stmt, ["GASTO VENTA"], with_total_row=True, preagg=preagg)
+    gasto_admin = detail_by_ceco(df_stmt, ["GASTO ADMIN"], with_total_row=True, preagg=preagg)
+    dya_costo = detail_by_ceco(df_stmt, ["D&A - COSTO"], with_total_row=True, preagg=preagg)
+    dya_gasto = detail_by_ceco(df_stmt, ["D&A - GASTO"], with_total_row=True, preagg=preagg)
+    res_fin = detail_resultado_financiero(df_stmt, preagg=preagg)
+
+    records = {
+        "pl_summary": _df_to_records(pl),
+        "ingresos_ordinarios": _df_to_records(sd),
+        "ingresos_proyectos": _df_to_records(pe),
+        "costo": _df_to_records(costo),
+        "gasto_venta": _df_to_records(gasto_venta),
+        "gasto_admin": _df_to_records(gasto_admin),
+        "dya_costo": _df_to_records(dya_costo),
+        "dya_gasto": _df_to_records(dya_gasto),
+        "resultado_financiero_ingresos": _df_to_records(res_fin.ingresos),
+        "resultado_financiero_gastos": _df_to_records(res_fin.gastos),
+    }
+    return df_stmt, pl, records
+
+
+def load_pl_data(company: str, year: int, *, force_refresh: bool = False) -> dict:
+    """Fetch and transform P&L data only.  BS is pre-fetched in the background.
+
+    Returns the same shape as load_report_data minus bs_summary.
+    """
+    if company not in VALID_COMPANIES:
+        raise ValueError(f"Unknown company: {company!r}")
+
+    if not force_refresh:
+        cached = _get_from_cache("pl_result", company, year)
+        if cached:
+            logger.info("Serving cached P&L data for %s/%d", company, year)
+            return cached
+        # If a full load was done before, extract P&L from it
+        full = _get_from_cache("result", company, year)
+        if full:
+            logger.info("Serving P&L from full cache for %s/%d", company, year)
+            pl_result = {k: v for k, v in full.items() if k != "bs_summary"}
+            _set_in_cache("pl_result", company, year, pl_result)
+            return pl_result
+
+    t0 = time.perf_counter()
+
+    raw_current_full = fetch_pnl_only(company, year)
+    logger.info("P&L fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw_current_full))
+
+    t1 = time.perf_counter()
+    df_stmt, pl, records = _run_pl_transforms(raw_current_full)
+    logger.info("P&L transforms: %.2fs", time.perf_counter() - t1)
+
+    result = {
+        **records,
+        "company": company,
+        "year": year,
+        "months": MONTH_NAMES_LIST,
+    }
+
+    _set_in_cache("pl_result", company, year, result)
+    _set_in_cache("pl_df", company, year, pl)
+    _set_in_cache("df", company, year, df_stmt)
+    logger.info("Total load_pl_data: %.2fs", time.perf_counter() - t0)
+
+    # Pre-fetch BS in background so it's ready when the user needs it
+    _prefetch_bs_background(company, year)
+
+    return result
+
+
+def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dict:
+    """Fetch and transform BS data.  Requires P&L to have been loaded first
+    (for UTILIDAD NETA injection into PATRIMONIO).
+
+    If P&L is not cached, loads it first as a safety net.
+    """
+    if company not in VALID_COMPANIES:
+        raise ValueError(f"Unknown company: {company!r}")
+
+    if not force_refresh:
+        cached = _get_from_cache("bs_result", company, year)
+        if cached:
+            logger.info("Serving cached BS data for %s/%d", company, year)
+            return cached
+        full = _get_from_cache("result", company, year)
+        if full:
+            logger.info("Serving BS from full cache for %s/%d", company, year)
+            bs_result = {
+                "bs_summary": full["bs_summary"],
+                "company": company, "year": year, "months": full["months"],
+            }
+            _set_in_cache("bs_result", company, year, bs_result)
+            return bs_result
+
+    t0 = time.perf_counter()
+
+    # Ensure P&L summary is available (needed for Resultados del Ejercicio)
+    pl_df = _get_from_cache("pl_df", company, year)
+    if pl_df is None:
+        logger.info("P&L not cached for %s/%d — loading first (BS dependency)", company, year)
+        load_pl_data(company, year)
+        pl_df = _get_from_cache("pl_df", company, year)
+
+    raw_bs = fetch_bs_only(company, year)
+    logger.info("BS fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw_bs))
+
+    t1 = time.perf_counter()
+    if not raw_bs.empty:
+        df_bs = prepare_bs_stmt(raw_bs)
+        bs = bs_summary(df_bs, include_detail=False, pl_summary_df=pl_df)
+    else:
+        df_bs = None
+        bs = pd.DataFrame()
+    logger.info("BS transforms: %.2fs", time.perf_counter() - t1)
+
+    result = {
+        "bs_summary": _df_to_records(bs),
+        "company": company,
+        "year": year,
+        "months": MONTH_NAMES_LIST,
+    }
+
+    _set_in_cache("bs_result", company, year, result)
+    if df_bs is not None:
+        _set_in_cache("bs", company, year, df_bs)
+    logger.info("Total load_bs_data: %.2fs", time.perf_counter() - t0)
+
+    return result
+
+
+# ── Background BS pre-fetch ───────────────────────────────────────────
+
+_bg_lock = threading.Lock()
+_bg_tasks: dict[tuple[str, int], threading.Thread] = {}
+
+
+def _prefetch_bs_background(company: str, year: int) -> None:
+    """Spawn a daemon thread to pre-fetch BS data so it's cached when needed."""
+    key = (company, year)
+    with _bg_lock:
+        # Already cached or already in flight — skip
+        if _get_from_cache("bs_result", company, year) is not None:
+            return
+        existing = _bg_tasks.get(key)
+        if existing is not None and existing.is_alive():
+            return
+
+        def worker():
+            try:
+                load_bs_data(company, year)
+                logger.info("Background BS pre-fetch done for %s/%d", company, year)
+            except Exception:
+                logger.exception("Background BS pre-fetch failed for %s/%d", company, year)
+            finally:
+                with _bg_lock:
+                    _bg_tasks.pop(key, None)
+
+        t = threading.Thread(target=worker, daemon=True)
+        _bg_tasks[key] = t
+        t.start()
 
 
 # ── Detail drill-down ──────────────────────────────────────────────────
@@ -267,8 +459,8 @@ def get_detail_records(
     """
     df = _get_from_cache("df", company, year)
     if df is None:
-        # Force a load to populate the df cache
-        load_report_data(company, year, force_refresh=True)
+        # Force a P&L load to populate the df cache (BS not needed for detail)
+        load_pl_data(company, year, force_refresh=True)
         df = _get_from_cache("df", company, year)
         if df is None:
             return []

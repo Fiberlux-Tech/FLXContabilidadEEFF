@@ -49,6 +49,17 @@ export interface ReportData {
   months: string[];
 }
 
+/** Response from /api/data/load-pl (everything except bs_summary) */
+export type PLReportData = Omit<ReportData, 'bs_summary'>;
+
+/** Response from /api/data/load-bs */
+export interface BSReportData {
+  bs_summary: ReportRow[];
+  company: string;
+  year: number;
+  months: string[];
+}
+
 export type Granularity = 'monthly' | 'quarterly';
 export type PeriodRange = 'ytd' | 'trailing12';
 

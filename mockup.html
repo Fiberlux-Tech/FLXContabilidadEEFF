@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FLX Contabilidad — Todoist-style Mockup</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* Todoist-inspired warm palette */
+    --sidebar-bg: #FAFAFA;
+    --sidebar-hover: #F0F0F0;
+    --sidebar-active-bg: #FFEFE5;
+    --sidebar-active-text: #D1453B;
+    --sidebar-text: #333;
+    --sidebar-muted: #808080;
+    --sidebar-border: #EAEAEA;
+
+    --surface: #FFFFFF;
+    --surface-alt: #FAFAFA;
+    --bg: #F5F5F5;
+
+    --text-primary: #202020;
+    --text-secondary: #666;
+    --text-muted: #999;
+    --text-faint: #ccc;
+
+    --accent: #D1453B;
+    --accent-light: #FFEFE5;
+    --accent-hover: #B8352D;
+
+    --border: #E8E8E8;
+    --border-light: #F0F0F0;
+
+    --negative: #D1453B;
+    --positive: #058527;
+
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    color: var(--text-primary);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "tnum";
+  }
+
+  /* ─── LAYOUT ─────────────────────────────────────── */
+  .shell { display: flex; min-height: 100vh; }
+
+  /* ─── SIDEBAR ────────────────────────────────────── */
+  .sidebar {
+    width: 280px;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--sidebar-border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .sidebar-header { padding: 20px 20px 16px; }
+  .sidebar-header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+  }
+  .sidebar-header p {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    font-weight: 500;
+  }
+
+  .sidebar-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    padding: 16px 20px 6px;
+  }
+
+  .sidebar-nav { flex: 1; padding: 0 8px; }
+
+  .nav-group { margin-bottom: 4px; }
+
+  .nav-group-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--sidebar-text);
+    border-radius: var(--radius-sm);
+    cursor: default;
+  }
+  .nav-group-header svg { color: var(--text-muted); flex-shrink: 0; }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 6px 40px;
+    font-size: 13px;
+    color: var(--sidebar-text);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+    position: relative;
+    font-weight: 400;
+    font-family: inherit;
+  }
+  .nav-item:hover { background: var(--sidebar-hover); }
+  .nav-item.active {
+    background: var(--sidebar-active-bg);
+    color: var(--sidebar-active-text);
+    font-weight: 600;
+  }
+  .nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 18px;
+    background: var(--accent);
+    border-radius: 0 3px 3px 0;
+  }
+
+  .nav-item-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    font-size: 13px;
+    color: var(--sidebar-text);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+    position: relative;
+    font-weight: 400;
+    font-family: inherit;
+  }
+  .nav-item-top:hover { background: var(--sidebar-hover); }
+  .nav-item-top.active {
+    background: var(--sidebar-active-bg);
+    color: var(--sidebar-active-text);
+    font-weight: 600;
+  }
+  .nav-item-top svg { color: var(--text-muted); flex-shrink: 0; }
+  .nav-item-top.active svg { color: var(--sidebar-active-text); }
+
+  .sidebar-divider { height: 1px; background: var(--sidebar-border); margin: 8px 12px; }
+
+  .sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--sidebar-border); }
+
+  .sidebar-export { padding: 4px 8px; }
+  .export-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+  }
+  .export-btn:hover { background: var(--sidebar-hover); color: var(--text-primary); }
+  .export-btn svg { color: var(--text-muted); flex-shrink: 0; }
+
+  .user-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+  }
+  .user-info { display: flex; align-items: center; gap: 10px; }
+  .user-avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 11px; flex-shrink: 0;
+  }
+  .user-name { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+  .user-role { font-size: 11px; color: var(--text-muted); }
+  .logout-btn {
+    background: none; border: none; color: var(--text-muted);
+    cursor: pointer; padding: 4px; border-radius: var(--radius-sm); transition: all 0.15s;
+  }
+  .logout-btn:hover { background: var(--sidebar-hover); color: var(--text-secondary); }
+
+  /* ─── MAIN AREA ──────────────────────────────────── */
+  .main-area { flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+
+  /* ─── TOP BAR ────────────────────────────────────── */
+  .topbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+  }
+
+  .topbar-left h2 {
+    font-size: 20px; font-weight: 700;
+    color: var(--text-primary); letter-spacing: -0.3px;
+  }
+  .topbar-left p { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+  .topbar-right { display: flex; align-items: flex-end; gap: 16px; }
+
+  .filter-group { display: flex; flex-direction: column; gap: 4px; }
+  .filter-label {
+    font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted);
+  }
+  .filter-select {
+    appearance: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 28px 6px 10px;
+    font-size: 13px; font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer; outline: none;
+    transition: border-color 0.15s;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    font-family: inherit;
+  }
+  .filter-select:hover { border-color: #ccc; }
+  .filter-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(209,69,59,0.1); }
+
+  .toggle-group {
+    display: inline-flex;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+  }
+  .toggle-btn {
+    padding: 6px 14px;
+    font-size: 12px; font-weight: 500;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none; cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit; white-space: nowrap;
+  }
+  .toggle-btn:hover { color: var(--text-primary); background: var(--sidebar-hover); }
+  .toggle-btn.active {
+    background: var(--accent); color: white;
+    box-shadow: 0 1px 3px rgba(209,69,59,0.25);
+  }
+
+  .icon-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer; transition: all 0.15s;
+  }
+  .icon-btn:hover { background: var(--surface-alt); color: var(--text-secondary); border-color: #ccc; }
+
+  .topbar-divider { width: 1px; height: 32px; background: var(--border); align-self: flex-end; margin-bottom: 2px; }
+
+  /* ─── CONTENT ────────────────────────────────────── */
+  .content { flex: 1; padding: 24px 32px; overflow-x: auto; }
+  .content-inner { max-width: 1500px; }
+
+  /* ─── TABLE ──────────────────────────────────────── */
+  .table-section { margin-bottom: 32px; }
+  .table-section-title {
+    font-size: 15px; font-weight: 600;
+    color: var(--text-primary); margin-bottom: 10px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .table-section-title .badge {
+    font-size: 10px; font-weight: 600;
+    color: var(--text-muted);
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 99px;
+    padding: 2px 8px;
+  }
+
+  .table-wrapper {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+  .table-scroll { overflow-x: auto; }
+  .table-scroll::-webkit-scrollbar { height: 6px; }
+  .table-scroll::-webkit-scrollbar-track { background: var(--surface-alt); }
+  .table-scroll::-webkit-scrollbar-thumb { background: #ddd; border-radius: 99px; }
+  .table-scroll::-webkit-scrollbar-thumb:hover { background: #ccc; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+
+  thead th {
+    padding: 10px 14px;
+    font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-muted);
+    background: var(--surface-alt);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    position: sticky; top: 0; z-index: 5;
+  }
+  thead th:first-child {
+    text-align: left; min-width: 360px;
+    position: sticky; left: 0; z-index: 10;
+    background: var(--surface-alt);
+    box-shadow: 4px 0 8px -3px rgba(0,0,0,0.04);
+  }
+  thead th:not(:first-child) { text-align: right; min-width: 90px; }
+
+  tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border-light);
+    white-space: nowrap;
+  }
+  tbody td:first-child {
+    text-align: left; font-weight: 500;
+    color: var(--text-primary);
+    position: sticky; left: 0;
+    background: var(--surface);
+    z-index: 5;
+    box-shadow: 4px 0 8px -3px rgba(0,0,0,0.04);
+  }
+  tbody td:not(:first-child) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace, 'Inter';
+    color: var(--text-secondary);
+  }
+
+  tbody tr { transition: background-color 0.1s; }
+  tbody tr:hover td { background-color: var(--surface-alt); }
+  tbody tr:hover td:first-child { background-color: var(--surface-alt); }
+
+  td.clickable { cursor: pointer; transition: all 0.1s; }
+  td.clickable:hover { color: var(--accent) !important; background: var(--accent-light) !important; }
+
+  tr.total-row td {
+    font-weight: 600; color: var(--text-primary);
+    background: var(--surface-alt);
+    border-top: 2px solid var(--border);
+    border-bottom: none;
+  }
+  tr.total-row td:first-child { background: var(--surface-alt); color: var(--text-primary); }
+
+  .neg { color: var(--negative) !important; }
+  .zero { color: var(--text-faint); }
+
+  th.col-total, td.col-total {
+    font-weight: 600 !important;
+    color: var(--text-primary) !important;
+    background: #F8F8FC !important;
+    border-left: 1px solid var(--border);
+  }
+  tr.total-row td.col-total { background: #F0F0F5 !important; }
+
+  /* ─── MODAL ──────────────────────────────────────── */
+  .modal-demo {
+    display: none;
+    position: fixed; inset: 0; z-index: 100;
+  }
+  .modal-demo.open { display: flex; }
+  .modal-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.35);
+    backdrop-filter: blur(4px);
+  }
+  .modal-center {
+    position: relative; z-index: 1;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding-top: 5vh; width: 100%; pointer-events: none;
+  }
+  .modal-panel {
+    pointer-events: auto;
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    max-width: 90vw; max-height: 85vh;
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border-light);
+    flex-shrink: 0;
+  }
+  .modal-header h3 { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+  .modal-header-actions { display: flex; align-items: center; gap: 8px; }
+  .modal-export-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; font-size: 12px; font-weight: 500;
+    color: white; background: var(--positive);
+    border: none; border-radius: var(--radius-sm);
+    cursor: pointer; transition: all 0.15s; font-family: inherit;
+  }
+  .modal-export-btn:hover { background: #047020; }
+  .modal-close {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-sm);
+    border: none; background: none;
+    color: var(--text-muted); cursor: pointer; transition: all 0.15s;
+  }
+  .modal-close:hover { background: var(--surface-alt); color: var(--text-secondary); }
+  .modal-body { overflow: auto; padding: 16px 20px; }
+
+  .modal-table thead th {
+    text-transform: none; font-size: 11px; font-weight: 600;
+  }
+  .modal-table thead th:first-child { min-width: auto; position: static; box-shadow: none; }
+  .modal-table thead th:not(:first-child) { position: static; }
+  .modal-filter-row th {
+    background: var(--surface) !important;
+    padding: 4px 6px !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+  .modal-filter-row input {
+    width: 100%; padding: 4px 8px;
+    font-size: 11px; border: 1px solid var(--border);
+    border-radius: 4px; outline: none;
+    font-family: inherit; color: var(--text-primary);
+  }
+  .modal-filter-row input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(209,69,59,0.08);
+  }
+  .modal-filter-row input::placeholder { color: var(--text-faint); }
+  .modal-table tbody td:first-child { position: static; background: transparent; box-shadow: none; }
+
+  .pagination {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0 4px; font-size: 12px; color: var(--text-muted);
+  }
+  .pagination-sizes { display: flex; align-items: center; gap: 4px; }
+  .pagination-sizes span { margin-right: 4px; }
+  .size-btn {
+    padding: 3px 8px; border-radius: 4px; border: none; background: none;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    color: var(--text-muted); font-family: inherit; transition: all 0.1s;
+  }
+  .size-btn:hover { background: var(--surface-alt); }
+  .size-btn.active { background: var(--accent); color: white; }
+
+  .pagination-nav { display: flex; align-items: center; gap: 8px; }
+  .pagination-nav span { font-weight: 500; }
+  .page-btn {
+    padding: 4px 10px; border: 1px solid var(--border);
+    border-radius: 4px; background: var(--surface);
+    font-size: 12px; cursor: pointer; font-family: inherit;
+    color: var(--text-secondary); transition: all 0.1s;
+  }
+  .page-btn:hover { background: var(--surface-alt); border-color: #ccc; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- ═══════════ SIDEBAR ═══════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>FLX Contabilidad</h1>
+      <p>Estados Financieros</p>
+    </div>
+
+    <div class="sidebar-section-label" style="padding-top:8px;">Reportes</div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-header">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+          Estado de Resultados
+        </div>
+        <button class="nav-item">Resumen</button>
+        <button class="nav-item">Ingresos</button>
+        <button class="nav-item">Costo de Operaciones</button>
+        <button class="nav-item">Gastos de Ventas</button>
+        <button class="nav-item">Gastos de Administracion</button>
+        <button class="nav-item">Depreciacion y Amortizacion</button>
+        <button class="nav-item active">Resultado Financiero</button>
+      </div>
+
+      <div class="sidebar-divider"></div>
+
+      <button class="nav-item-top">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg>
+        Balance General
+      </button>
+    </nav>
+
+    <div class="sidebar-export">
+      <div class="sidebar-section-label" style="padding: 8px 12px 4px;">Exportar</div>
+      <button class="export-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Excel
+      </button>
+      <button class="export-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+        PDF
+      </button>
+      <button class="export-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+        Todo
+      </button>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="user-section">
+        <div class="user-info">
+          <div class="user-avatar">A</div>
+          <div>
+            <div class="user-name">Admin</div>
+            <div class="user-role">admin</div>
+          </div>
+        </div>
+        <button class="logout-btn" title="Cerrar Sesion">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══════════ MAIN AREA ═══════════ -->
+  <div class="main-area">
+
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <h2>Resultado Financiero</h2>
+        <p>FIBERLUX TECH S.A.C. — 2026</p>
+      </div>
+      <div class="topbar-right">
+        <div class="filter-group">
+          <span class="filter-label">Empresa</span>
+          <select class="filter-select">
+            <option>FIBERTECH</option>
+            <option>FIBERLUX</option>
+            <option>FIBERLINE</option>
+            <option>NEXTNET</option>
+          </select>
+        </div>
+
+        <div class="topbar-divider"></div>
+
+        <div class="filter-group">
+          <span class="filter-label">Vista</span>
+          <div class="toggle-group">
+            <button class="toggle-btn active">Mensual</button>
+            <button class="toggle-btn">Trimestral</button>
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <span class="filter-label">Periodo</span>
+          <div class="toggle-group">
+            <button class="toggle-btn active">Ano Actual</button>
+            <button class="toggle-btn">Ultimos 12M</button>
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <span class="filter-label">Ano</span>
+          <select class="filter-select">
+            <option>2026</option>
+            <option>2025</option>
+          </select>
+        </div>
+
+        <div style="display: flex; gap: 6px; align-self: flex-end;">
+          <button class="icon-btn" title="Recargar datos">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          </button>
+          <button class="icon-btn" title="Exportar vista a Excel">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- CONTENT -->
+    <div class="content">
+      <div class="content-inner">
+
+        <!-- Ingresos Financieros -->
+        <div class="table-section">
+          <div class="table-section-title">
+            Ingresos Financieros
+            <span class="badge">1 cuenta</span>
+          </div>
+          <div class="table-wrapper">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cuenta / Descripcion</th>
+                    <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th><th>MAY</th><th>JUN</th>
+                    <th>JUL</th><th>AUG</th><th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
+                    <th class="col-total">2026</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="clickable">77.2.1.1.01 — INTERESES FINANCIEROS</td>
+                    <td class="zero">-</td><td class="clickable">107</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total">107</td>
+                  </tr>
+                  <tr class="total-row">
+                    <td>— TOTAL</td>
+                    <td class="zero">-</td><td>107</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total">107</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gastos Financieros -->
+        <div class="table-section">
+          <div class="table-section-title">
+            Gastos Financieros
+            <span class="badge">8 cuentas</span>
+          </div>
+          <div class="table-wrapper">
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Cuenta / Descripcion</th>
+                    <th>JAN</th><th>FEB</th><th>MAR</th><th>APR</th><th>MAY</th><th>JUN</th>
+                    <th>JUL</th><th>AUG</th><th>SEP</th><th>OCT</th><th>NOV</th><th>DEC</th>
+                    <th class="col-total">2026</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="clickable">67.3.1.1.05 — INTERESES - MORATORIOS</td>
+                    <td class="zero">-</td><td class="neg clickable">-1</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total neg">-1</td>
+                  </tr>
+                  <tr>
+                    <td class="clickable">67.3.1.2.02 — GASTOS CONFIRMING/FACTORING/COMPAS</td>
+                    <td class="neg clickable">-43</td><td class="neg clickable">-38</td><td class="neg clickable">-28</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total neg">-109</td>
+                  </tr>
+                  <tr>
+                    <td class="clickable">67.3.2.1.01 — INTERESES LEASING FINANCIERO</td>
+                    <td class="neg clickable">-1,319</td><td class="neg clickable">-1,340</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total neg">-2,659</td>
+                  </tr>
+                  <tr>
+                    <td class="clickable">67.7.3.1.01 — OTROS</td>
+                    <td class="zero">-</td><td class="neg clickable">-4,167</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total neg">-4,167</td>
+                  </tr>
+                  <tr>
+                    <td class="clickable">67.3.6.1.04 — INTERESES DE ARRENDAMIENTO NIIF 16</td>
+                    <td class="neg clickable">-2,529</td><td class="neg clickable">-4,274</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total neg">-6,803</td>
+                  </tr>
+                  <tr>
+                    <td class="clickable">67.3.6.1.02 — INTERESES MORATORIOS</td>
+                    <td class="neg clickable">-12,356</td><td class="neg clickable">-12,281</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total neg">-24,637</td>
+                  </tr>
+                  <tr>
+                    <td class="clickable">67.3.1.1.01 — INTERESES - PRESTAMOS</td>
+                    <td class="neg clickable">-75,925</td><td class="neg clickable">-36,191</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total neg">-112,116</td>
+                  </tr>
+                  <tr>
+                    <td class="clickable">67.3.6.1.01 — INTERESES DE LETRAS</td>
+                    <td class="neg clickable">-156,709</td><td class="neg clickable">-148,924</td><td class="neg clickable">-709</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total neg">-306,342</td>
+                  </tr>
+                  <tr class="total-row">
+                    <td>— TOTAL</td>
+                    <td class="neg">-248,881</td><td class="neg">-207,217</td><td class="neg">-737</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td><td class="zero">-</td><td class="zero">-</td>
+                    <td class="zero">-</td><td class="zero">-</td>
+                    <td class="col-total neg">-456,835</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ MODAL DEMO ═══════════ -->
+<div class="modal-demo" id="modal-demo">
+  <div class="modal-backdrop" onclick="document.getElementById('modal-demo').classList.remove('open')"></div>
+  <div class="modal-center">
+    <div class="modal-panel" style="width: 1000px;">
+      <div class="modal-header">
+        <h3>Detalle: INTERESES DE LETRAS — FEB</h3>
+        <div class="modal-header-actions">
+          <button class="modal-export-btn">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Excel
+          </button>
+          <button class="modal-close" onclick="document.getElementById('modal-demo').classList.remove('open')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="table-wrapper">
+          <table class="modal-table">
+            <thead>
+              <tr>
+                <th>Asiento</th>
+                <th>Cuenta</th>
+                <th>Descripcion</th>
+                <th>NIT</th>
+                <th>Razon Social</th>
+                <th>Fecha</th>
+                <th style="text-align:right">Saldo</th>
+              </tr>
+              <tr class="modal-filter-row">
+                <th><input placeholder="Filtrar..." /></th>
+                <th><input placeholder="Filtrar..." /></th>
+                <th><input placeholder="Filtrar..." /></th>
+                <th><input placeholder="Filtrar..." /></th>
+                <th><input placeholder="Filtrar..." /></th>
+                <th><input placeholder="Filtrar..." /></th>
+                <th><input placeholder="Filtrar..." style="text-align:right" /></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>20260201</td><td>67.3.6.1.01</td><td>INTERESES DE LETRAS</td>
+                <td>20100017491</td><td>BANCO DE CREDITO DEL PERU</td><td>2026-02-05</td>
+                <td style="text-align:right; font-family: monospace;" class="neg">-48,231</td>
+              </tr>
+              <tr>
+                <td>20260202</td><td>67.3.6.1.01</td><td>INTERESES DE LETRAS</td>
+                <td>20100130204</td><td>BBVA CONTINENTAL</td><td>2026-02-10</td>
+                <td style="text-align:right; font-family: monospace;" class="neg">-35,817</td>
+              </tr>
+              <tr>
+                <td>20260203</td><td>67.3.6.1.01</td><td>INTERESES DE LETRAS</td>
+                <td>20100047218</td><td>INTERBANK</td><td>2026-02-14</td>
+                <td style="text-align:right; font-family: monospace;" class="neg">-28,442</td>
+              </tr>
+              <tr>
+                <td>20260204</td><td>67.3.6.1.01</td><td>INTERESES DE LETRAS</td>
+                <td>20100017491</td><td>BANCO DE CREDITO DEL PERU</td><td>2026-02-20</td>
+                <td style="text-align:right; font-family: monospace;" class="neg">-22,156</td>
+              </tr>
+              <tr>
+                <td>20260205</td><td>67.3.6.1.01</td><td>INTERESES DE LETRAS</td>
+                <td>20100130204</td><td>BBVA CONTINENTAL</td><td>2026-02-25</td>
+                <td style="text-align:right; font-family: monospace;" class="neg">-14,278</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination">
+          <div class="pagination-sizes">
+            <span>Filas:</span>
+            <button class="size-btn active">25</button>
+            <button class="size-btn">50</button>
+            <button class="size-btn">100</button>
+          </div>
+          <div class="pagination-nav">
+            <span>1–5 de 5</span>
+            <button class="page-btn" disabled style="opacity:0.4">Anterior</button>
+            <button class="page-btn" disabled style="opacity:0.4">Siguiente</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('td.clickable').forEach(td => {
+    td.addEventListener('click', () => {
+      document.getElementById('modal-demo').classList.add('open');
+    });
+  });
+</script>
+
+</body>
+</html>

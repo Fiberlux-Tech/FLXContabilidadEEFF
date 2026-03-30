@@ -3,6 +3,8 @@
 import os
 import logging
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request, send_file
@@ -19,7 +21,10 @@ from config.exceptions import (
     ExportError, DataValidationError,
 )
 from config.settings import get_config
-from data_service import load_report_data, get_detail_records, get_raw_cached, get_bs_cached, get_cache_stats
+from data_service import (
+    load_report_data, load_pl_data, load_bs_data,
+    get_detail_records, get_raw_cached, get_bs_cached, get_cache_stats,
+)
 from pipeline import run_report
 
 api_bp = Blueprint('api', __name__)
@@ -100,6 +105,62 @@ def load_data():
         return jsonify({'status': 'error', 'error': str(exc)}), 500
     except PlantillasError as exc:
         logger.exception("Error loading data for %s/%s", company, year)
+        return jsonify({'status': 'error', 'error': 'Error interno del servidor'}), 500
+
+
+@api_bp.route('/data/load-pl', methods=['POST'])
+@login_required
+def load_pl():
+    """Fetch P&L data only (fast path). BS is pre-fetched in the background.
+
+    Body: { "company": "FIBERLUX", "year": 2026 }
+    Optional: { "force_refresh": true }
+    """
+    body = request.get_json(silent=True) or {}
+    force_refresh = body.get('force_refresh', False)
+    company, year = _validate_company_year(body)
+
+    try:
+        t0 = time.perf_counter()
+        data = load_pl_data(company, year, force_refresh=force_refresh)
+        result = {k: v for k, v in data.items() if not k.startswith('_')}
+        result['_timing_ms'] = round((time.perf_counter() - t0) * 1000)
+        return _ok(result)
+    except (ValueError, KeyError) as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
+    except (QueryError, DataValidationError) as exc:
+        logger.exception("Data error loading P&L for %s/%s", company, year)
+        return jsonify({'status': 'error', 'error': str(exc)}), 500
+    except PlantillasError as exc:
+        logger.exception("Error loading P&L for %s/%s", company, year)
+        return jsonify({'status': 'error', 'error': 'Error interno del servidor'}), 500
+
+
+@api_bp.route('/data/load-bs', methods=['POST'])
+@login_required
+def load_bs():
+    """Fetch BS data. Requires P&L to be loaded first (for UTILIDAD NETA).
+
+    Body: { "company": "FIBERLUX", "year": 2026 }
+    Optional: { "force_refresh": true }
+    """
+    body = request.get_json(silent=True) or {}
+    force_refresh = body.get('force_refresh', False)
+    company, year = _validate_company_year(body)
+
+    try:
+        t0 = time.perf_counter()
+        data = load_bs_data(company, year, force_refresh=force_refresh)
+        result = {k: v for k, v in data.items() if not k.startswith('_')}
+        result['_timing_ms'] = round((time.perf_counter() - t0) * 1000)
+        return _ok(result)
+    except (ValueError, KeyError) as exc:
+        return jsonify({'status': 'error', 'error': str(exc)}), 400
+    except (QueryError, DataValidationError) as exc:
+        logger.exception("Data error loading BS for %s/%s", company, year)
+        return jsonify({'status': 'error', 'error': str(exc)}), 500
+    except PlantillasError as exc:
+        logger.exception("Error loading BS for %s/%s", company, year)
         return jsonify({'status': 'error', 'error': 'Error interno del servidor'}), 500
 
 
