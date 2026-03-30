@@ -11,16 +11,6 @@ interface FinancialTableProps {
     variant: 'pl' | 'bs';
 }
 
-function getRowClassName(isBold: boolean, isSection: boolean) {
-    if (isBold) return 'font-bold text-gray-900 bg-gray-50';
-    if (isSection) return 'font-semibold text-gray-700 bg-gray-100';
-    return 'text-gray-700 bg-white';
-}
-
-function getCellClassName(isBold: boolean, isSection: boolean, isNeg: boolean) {
-    return `px-2 py-1.5 text-right whitespace-nowrap font-mono ${isBold ? 'font-bold' : ''} ${isNeg ? 'text-red-600' : 'text-gray-800'} ${isSection ? 'bg-gray-100' : ''}`;
-}
-
 export default function FinancialTable({ rows, columns, labelKey, showTotal = false, variant }: FinancialTableProps) {
     const boldSet = variant === 'pl' ? BOLD_ROWS_PL : BOLD_ROWS_BS;
 
@@ -31,15 +21,15 @@ export default function FinancialTable({ rows, columns, labelKey, showTotal = fa
     }, [columns, showTotal]);
 
     return (
-        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+        <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-sm">
             <table className="min-w-full text-xs">
                 <thead>
-                    <tr className="bg-gray-800 text-white">
-                        <th scope="col" className="sticky left-0 bg-gray-800 z-10 px-3 py-2 text-left font-medium min-w-[220px]">
+                    <tr className="bg-thead text-white">
+                        <th scope="col" className="sticky left-0 bg-thead z-10 px-4 py-2.5 text-left font-semibold min-w-[220px] sticky-col-shadow">
                             PARTIDA
                         </th>
                         {headerCols.map(col => (
-                            <th scope="col" key={col} className="px-2 py-2 text-right font-medium whitespace-nowrap min-w-[85px]">
+                            <th scope="col" key={col} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap min-w-[85px]">
                                 {col}
                             </th>
                         ))}
@@ -54,27 +44,37 @@ export default function FinancialTable({ rows, columns, labelKey, showTotal = fa
 
                         if (isEmpty) {
                             return (
-                                <tr key={idx} className="h-2">
-                                    <td colSpan={headerCols.length + 1}></td>
+                                <tr key={idx} className="h-1.5">
+                                    <td colSpan={headerCols.length + 1} className="bg-gray-50/50"></td>
                                 </tr>
                             );
                         }
 
-                        const rowStyle = getRowClassName(isBold, !!isSection);
-
                         return (
                             <tr
                                 key={idx}
-                                className={`border-b border-gray-100 hover:bg-blue-50/50 transition-colors ${isBold ? 'bg-gray-50' : ''} ${isSection ? 'bg-gray-100' : ''}`}
+                                className={`border-b border-gray-100 transition-colors
+                                    ${isBold
+                                        ? 'bg-blue-50/40 hover:bg-blue-50/70'
+                                        : isSection
+                                            ? 'bg-gray-50 hover:bg-gray-100/70'
+                                            : 'hover:bg-gray-50/70'}`}
                             >
-                                <td className={`sticky left-0 z-10 px-3 py-1.5 whitespace-nowrap ${rowStyle}`}>
+                                <td className={`sticky left-0 z-10 px-4 py-1.5 whitespace-nowrap sticky-col-shadow
+                                    ${isBold
+                                        ? 'font-bold text-gray-900 bg-blue-50/40'
+                                        : isSection
+                                            ? 'font-semibold text-gray-600 bg-gray-50'
+                                            : 'text-gray-700 bg-white'}`}>
                                     {label}
                                 </td>
                                 {columns.map(col => {
                                     const val = getCellValue(row, col);
                                     const isNeg = val !== null && val !== undefined && val < 0;
                                     return (
-                                        <td key={col.header} className={getCellClassName(isBold, !!isSection, isNeg)}>
+                                        <td key={col.header} className={`px-3 py-1.5 text-right whitespace-nowrap font-mono
+                                            ${isBold ? 'font-bold' : ''}
+                                            ${isNeg ? 'text-negative' : 'text-gray-800'}`}>
                                             {formatNumber(val)}
                                         </td>
                                     );
@@ -83,7 +83,8 @@ export default function FinancialTable({ rows, columns, labelKey, showTotal = fa
                                     const total = getSummaryTotal(row, columns, variant);
                                     const isNeg = total !== null && total !== undefined && total < 0;
                                     return (
-                                        <td className={getCellClassName(true, !!isSection, isNeg)}>
+                                        <td className={`px-3 py-1.5 text-right whitespace-nowrap font-mono font-bold
+                                            ${isNeg ? 'text-negative' : 'text-gray-800'}`}>
                                             {formatNumber(total)}
                                         </td>
                                     );

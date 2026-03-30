@@ -1,3 +1,40 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply antialiased text-gray-800;
+    font-feature-settings: "tnum";  /* tabular numbers everywhere */
+  }
+
+  /* Smooth scrollbar for tables */
+  .overflow-x-auto::-webkit-scrollbar {
+    @apply h-2;
+  }
+  .overflow-x-auto::-webkit-scrollbar-track {
+    @apply bg-gray-100 rounded-full;
+  }
+  .overflow-x-auto::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 rounded-full;
+  }
+  .overflow-x-auto::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400;
+  }
+  .overflow-auto::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+  .overflow-auto::-webkit-scrollbar-track {
+    @apply bg-gray-100;
+  }
+  .overflow-auto::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 rounded-full;
+  }
+}
+
+@layer components {
+  /* Sticky column shadow indicator */
+  .sticky-col-shadow {
+    box-shadow: 4px 0 6px -2px rgba(0,0,0,0.06);
+  }
+}

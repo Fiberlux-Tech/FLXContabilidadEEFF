@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useReport } from '@/contexts/ReportContext';
 import FinancialTable from '@/features/dashboard/FinancialTable';
 import PLNoteView from '@/features/dashboard/PLNoteView';
-import type { ReportData, TableConfig, ReportRow, DisplayColumn } from '@/types';
+import type { ReportData, TableConfig, ReportRow } from '@/types';
 import { VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
 
 export default function MainContent() {
@@ -19,8 +19,8 @@ export default function MainContent() {
         return (
             <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className="text-gray-500">Cargando datos...</p>
+                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent mx-auto mb-4"></div>
+                    <p className="text-sm text-gray-400">Cargando datos...</p>
                 </div>
             </div>
         );
@@ -28,10 +28,15 @@ export default function MainContent() {
 
     if (error) {
         return (
-            <div className="flex-1 p-8">
-                <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-red-700">
-                    <p className="font-medium">Error</p>
-                    <p className="text-sm mt-1">{error}</p>
+            <div className="flex-1 flex items-center justify-center p-8">
+                <div className="bg-red-50 border border-red-100 rounded-xl p-6 text-center max-w-md">
+                    <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-3">
+                        <svg className="w-5 h-5 text-negative" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                    </div>
+                    <p className="font-medium text-negative mb-1">Error</p>
+                    <p className="text-sm text-red-600/70">{error}</p>
                 </div>
             </div>
         );
@@ -40,11 +45,12 @@ export default function MainContent() {
     if (!reportData) {
         return (
             <div className="flex-1 flex items-center justify-center">
-                <div className="text-center text-gray-400">
-                    <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                <div className="text-center text-gray-300">
+                    <svg className="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    <p className="text-lg">Seleccione una empresa para comenzar</p>
+                    <p className="text-lg font-medium text-gray-400">Seleccione una empresa para comenzar</p>
+                    <p className="text-sm text-gray-300 mt-1">Los datos se cargaran automaticamente</p>
                 </div>
             </div>
         );
@@ -72,7 +78,7 @@ export default function MainContent() {
 
             if (tables.length === 0) {
                 return (
-                    <div className="text-center py-12 text-gray-400">
+                    <div className="text-center py-16 text-gray-400">
                         <p className="text-sm">Sin datos para mostrar en esta vista</p>
                     </div>
                 );
@@ -121,7 +127,6 @@ export default function MainContent() {
 
 /** Map a TableConfig back to the ReportData key so we can fetch merged rows */
 function getDataKeyForTable(table: TableConfig, data: ReportData): keyof ReportData | null {
-    // Match by checking if table.rows reference is the same as a known key
     const mapping: [keyof ReportData, ReportRow[]][] = [
         ['ingresos_ordinarios', data.ingresos_ordinarios],
         ['ingresos_proyectos', data.ingresos_proyectos],

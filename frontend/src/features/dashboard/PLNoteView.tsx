@@ -46,23 +46,24 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
             <div className="overflow-x-auto border border-gray-200 rounded-lg">
                 <table className="min-w-full text-xs">
                     <thead>
-                        <tr className="bg-gray-700 text-white">
+                        <tr className="bg-thead text-white">
                             {DETAIL_COLS.map(col => (
-                                <th scope="col" key={col} className={`px-3 py-2 font-medium whitespace-nowrap ${col === 'SALDO' ? 'text-right' : 'text-left'}`}>
+                                <th scope="col" key={col} className={`px-3 py-2.5 font-semibold whitespace-nowrap ${col === 'SALDO' ? 'text-right' : 'text-left'}`}>
                                     {DETAIL_HEADERS[col]}
                                 </th>
                             ))}
                         </tr>
-                        <tr className="bg-gray-100">
+                        <tr className="bg-gray-50 border-b border-gray-200">
                             {DETAIL_COLS.map(col => (
-                                <th key={col} className="px-2 py-1">
+                                <th key={col} className="px-2 py-1.5">
                                     <input
                                         type="text"
                                         value={filters[col] ?? ''}
                                         onChange={e => updateFilter(col, e.target.value)}
                                         placeholder="Filtrar..."
-                                        className={`w-full px-1.5 py-0.5 text-xs font-normal border border-gray-300 rounded
-                                            focus:outline-none focus:border-blue-400 bg-white text-gray-700
+                                        className={`w-full px-2 py-1 text-xs font-normal border border-gray-200 rounded-md
+                                            focus:outline-none focus:ring-1 focus:ring-accent/40 focus:border-accent bg-white text-gray-700
+                                            placeholder:text-gray-300
                                             ${col === 'SALDO' ? 'text-right' : 'text-left'}`}
                                     />
                                 </th>
@@ -71,7 +72,8 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
                     </thead>
                     <tbody>
                         {pageRows.map((row, idx) => (
-                            <tr key={idx} className="border-b border-gray-100 hover:bg-blue-50/50 transition-colors">
+                            <tr key={idx} className={`border-b border-gray-100 transition-colors hover:bg-gray-50/70
+                                ${idx % 2 === 1 ? 'bg-gray-50/30' : ''}`}>
                                 {DETAIL_COLS.map(col => {
                                     const val = row[col];
                                     const isSaldo = col === 'SALDO';
@@ -80,8 +82,8 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
                                         <td
                                             key={col}
                                             className={`px-3 py-1.5 whitespace-nowrap
-                                                ${isSaldo ? 'text-right font-mono' : 'text-left'}
-                                                ${isNeg ? 'text-red-600' : 'text-gray-800'}`}
+                                                ${isSaldo ? 'text-right font-mono font-medium' : 'text-left'}
+                                                ${isNeg ? 'text-negative' : 'text-gray-800'}`}
                                         >
                                             {isSaldo ? formatNumber(val as number) : (val ?? '')}
                                         </td>
@@ -92,39 +94,46 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
                     </tbody>
                 </table>
             </div>
-            <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
-                <div className="flex items-center gap-2">
-                    <span>Filas por pagina:</span>
+
+            {/* Pagination */}
+            <div className="flex items-center justify-between mt-3 px-1">
+                <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <span>Filas:</span>
                     {PAGE_SIZES.map(size => (
                         <button
                             key={size}
                             onClick={() => { setPageSize(size); setPage(() => 0); }}
-                            className={`px-2 py-0.5 rounded ${pageSize === size ? 'bg-gray-800 text-white' : 'hover:bg-gray-100'}`}
+                            className={`px-2 py-0.5 rounded-md text-xs font-medium transition-colors
+                                ${pageSize === size
+                                    ? 'bg-accent text-white'
+                                    : 'text-gray-500 hover:bg-gray-100'}`}
                         >
                             {size}
                         </button>
                     ))}
                 </div>
-                <div className="flex items-center gap-3">
-                    <span>
+                <div className="flex items-center gap-3 text-xs text-gray-500">
+                    <span className="font-medium">
                         {filteredRows.length === 0 ? '0 registros' :
-                            `${start + 1}–${Math.min(start + pageSize, filteredRows.length)} de ${filteredRows.length}`}
+                            `${start + 1}\u2013${Math.min(start + pageSize, filteredRows.length)} de ${filteredRows.length}`}
                         {hasFilters && ` (${detailRows.length} total)`}
                     </span>
-                    <button
-                        onClick={() => setPage(p => p - 1)}
-                        disabled={page === 0}
-                        className="px-2 py-0.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                        Anterior
-                    </button>
-                    <button
-                        onClick={() => setPage(p => p + 1)}
-                        disabled={page >= totalPages - 1}
-                        className="px-2 py-0.5 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                        Siguiente
-                    </button>
+                    <div className="flex gap-1">
+                        <button
+                            onClick={() => setPage(p => p - 1)}
+                            disabled={page === 0}
+                            className="px-2.5 py-1 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                            Anterior
+                        </button>
+                        <button
+                            onClick={() => setPage(p => p + 1)}
+                            disabled={page >= totalPages - 1}
+                            className="px-2.5 py-1 rounded-md border border-gray-200 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                        >
+                            Siguiente
+                        </button>
+                    </div>
                 </div>
             </div>
         </>
@@ -185,11 +194,6 @@ function detailReducer(state: DetailState, action: DetailAction): DetailState {
     }
 }
 
-// Month name to number mapping for date filtering
-const MONTH_NUM: Record<string, number> = {
-    JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6,
-    JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12,
-};
 
 export default function PLNoteView({ tables, columns, year }: PLNoteViewProps) {
     const { selectedCompany, selectedYear, periodRange, trailingMonthSources } = useReport();
@@ -224,7 +228,6 @@ export default function PLNoteView({ tables, columns, year }: PLNoteViewProps) {
 
             if (periodRange === 'trailing12' && selMonths) {
                 // For trailing 12M, we may need to fetch from two different years
-                // Determine which year each month belongs to
                 const monthYearMap = new Map<string, number>();
                 for (const src of trailingMonthSources) {
                     monthYearMap.set(src.month, src.year);
@@ -276,7 +279,7 @@ export default function PLNoteView({ tables, columns, year }: PLNoteViewProps) {
                 }
                 dispatch({ type: 'LOAD_SUCCESS', rows: allRows });
             } else {
-                // Single month or full period — existing behavior
+                // Single month or full period
                 const body: Record<string, unknown> = {
                     company: companyRef.current,
                     year: yearRef.current,
@@ -303,17 +306,26 @@ export default function PLNoteView({ tables, columns, year }: PLNoteViewProps) {
     const renderDetailContent = () => {
         if (state.isLoadingDetail) {
             return (
-                <div className="flex items-center justify-center py-8">
-                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mr-3"></div>
+                <div className="flex items-center justify-center py-12">
+                    <div className="animate-spin rounded-full h-6 w-6 border-2 border-accent border-t-transparent mr-3"></div>
                     <span className="text-sm text-gray-500">Cargando detalle...</span>
                 </div>
             );
         }
         if (state.detailError) {
-            return <div className="text-center py-6 text-sm text-red-500">{state.detailError}</div>;
+            return (
+                <div className="text-center py-8">
+                    <div className="inline-flex items-center gap-2 text-sm text-negative">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        {state.detailError}
+                    </div>
+                </div>
+            );
         }
         if (state.detailRows.length === 0) {
-            return <div className="text-center py-6 text-sm text-gray-400">Sin registros</div>;
+            return <div className="text-center py-8 text-sm text-gray-400">Sin registros</div>;
         }
         return (
             <DetailDataTable
@@ -351,15 +363,15 @@ export default function PLNoteView({ tables, columns, year }: PLNoteViewProps) {
                         onClick={handleExportDetail}
                         disabled={filteredRows.length === 0 || state.isLoadingDetail}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
-                                   bg-green-600 text-white rounded-md hover:bg-green-700
-                                   disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                   bg-positive text-white rounded-lg hover:bg-green-700
+                                   disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
                         title="Exportar detalle filtrado a Excel"
                     >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                                 d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        Exportar Excel
+                        Excel
                     </button>
                 }
             >

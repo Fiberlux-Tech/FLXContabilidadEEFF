@@ -199,29 +199,58 @@ function mergeTrailingDetailRows(
     monthSources: MonthSource[],
     currentYear: number,
 ): ReportRow[] {
-    // Build composite key for lookup
+    const isTotalRow = (row: ReportRow) => labelKeys.some(k => row[k] === 'TOTAL');
     const makeKey = (row: ReportRow) => labelKeys.map(k => String(row[k] ?? '')).join('|||');
+
+    // Separate TOTAL rows from data rows
+    const currentData = currentRows.filter(r => !isTotalRow(r));
+    const prevData = prevRows.filter(r => !isTotalRow(r));
+
     const prevLookup = new Map<string, ReportRow>();
-    for (const row of prevRows) {
+    for (const row of prevData) {
         prevLookup.set(makeKey(row), row);
     }
 
-    // Collect all unique keys from both sets
+    // Merge data rows (excluding TOTAL)
     const seenKeys = new Set<string>();
-    const allRows: ReportRow[] = [];
+    const dataRows: ReportRow[] = [];
 
-    for (const row of currentRows) {
+    for (const row of currentData) {
         const key = makeKey(row);
         seenKeys.add(key);
-        allRows.push(mergeOneDetailRow(row, prevLookup.get(key), labelKeys, monthSources, currentYear));
+        dataRows.push(mergeOneDetailRow(row, prevLookup.get(key), labelKeys, monthSources, currentYear));
     }
-    for (const row of prevRows) {
+    for (const row of prevData) {
         const key = makeKey(row);
         if (!seenKeys.has(key)) {
-            allRows.push(mergeOneDetailRow(undefined, row, labelKeys, monthSources, currentYear));
+            dataRows.push(mergeOneDetailRow(undefined, row, labelKeys, monthSources, currentYear));
         }
     }
-    return allRows;
+
+    // Re-sort data rows by TOTAL descending (matching backend behavior)
+    dataRows.sort((a, b) => {
+        const ta = (a['TOTAL'] as number) ?? 0;
+        const tb = (b['TOTAL'] as number) ?? 0;
+        return Math.abs(tb) - Math.abs(ta);
+    });
+
+    // Rebuild TOTAL row by summing all month columns from merged data rows
+    const monthKeys = monthSources.map(s => s.month);
+    const totalRow: ReportRow = {};
+    for (const k of labelKeys) totalRow[k] = 'TOTAL';
+    let grandTotal = 0;
+    for (const m of monthKeys) {
+        let colSum = 0;
+        for (const row of dataRows) {
+            colSum += (row[m] as number) ?? 0;
+        }
+        totalRow[m] = colSum;
+        grandTotal += colSum;
+    }
+    totalRow['TOTAL'] = grandTotal;
+
+    // Append TOTAL row at the end
+    return [...dataRows, totalRow];
 }
 
 function mergeOneDetailRow(

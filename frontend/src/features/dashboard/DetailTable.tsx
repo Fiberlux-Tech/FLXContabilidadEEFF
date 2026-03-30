@@ -16,29 +16,28 @@ interface DetailTableProps {
 }
 
 export default function DetailTable({ title, rows, labelKeys, headerLabels, columns, year, partida, filterCol, selection, onCellClick }: DetailTableProps) {
-    // Value columns: display columns + TOTAL (year)
     const totalHeader = String(year);
 
     return (
         <div>
             <h3 className="text-base font-semibold text-gray-700 mb-2">{title}</h3>
-            <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-sm">
                 <table className="min-w-full text-xs">
                     <thead>
-                        <tr className="bg-gray-800 text-white">
+                        <tr className="bg-thead text-white">
                             <th
                                 scope="col"
                                 colSpan={labelKeys.length}
-                                className="sticky left-0 z-10 bg-gray-800 px-3 py-2 text-left font-medium whitespace-nowrap min-w-[300px]"
+                                className="sticky left-0 z-10 bg-thead px-4 py-2.5 text-left font-semibold whitespace-nowrap min-w-[300px] sticky-col-shadow"
                             >
                                 {headerLabels.join(' / ')}
                             </th>
                             {columns.map(col => (
-                                <th scope="col" key={col.header} className="px-2 py-2 text-right font-medium whitespace-nowrap min-w-[85px]">
+                                <th scope="col" key={col.header} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap min-w-[85px]">
                                     {col.header}
                                 </th>
                             ))}
-                            <th scope="col" className="px-2 py-2 text-right font-medium font-bold whitespace-nowrap min-w-[85px]">
+                            <th scope="col" className="px-3 py-2.5 text-right font-bold whitespace-nowrap min-w-[85px]">
                                 {totalHeader}
                             </th>
                         </tr>
@@ -58,8 +57,10 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                                 <tr
                                     key={idx}
                                     className={`border-b border-gray-100 transition-colors
-                                        ${isTotal ? 'bg-gray-50 font-bold' : 'hover:bg-blue-50/50'}
-                                        ${isRowSelected ? 'ring-1 ring-blue-400' : ''}`}
+                                        ${isTotal
+                                            ? 'bg-gray-100/80 font-bold border-t-2 border-t-gray-300'
+                                            : 'hover:bg-gray-50/70'}
+                                        ${isRowSelected ? 'ring-1 ring-accent-ring ring-inset' : ''}`}
                                 >
                                     <td
                                         colSpan={labelKeys.length}
@@ -68,23 +69,26 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                                             month: null,
                                             filterCol: isTotal ? null : filterCol,
                                             filterVal: rowFilterVal,
-                                            label: `${rowLabel} — Todo el periodo`,
+                                            label: `${rowLabel} \u2014 Todo el periodo`,
                                         })}
-                                        className={`sticky left-0 z-10 px-3 py-1.5 whitespace-nowrap cursor-pointer hover:underline
-                                            ${isTotal ? 'font-bold text-gray-900 bg-gray-50 hover:bg-gray-100' : 'text-gray-700 bg-white hover:bg-blue-50'}
-                                            ${isRowSelected ? 'bg-blue-100' : ''}`}
+                                        className={`sticky left-0 z-10 px-4 py-1.5 whitespace-nowrap cursor-pointer sticky-col-shadow
+                                            ${isTotal
+                                                ? 'font-bold text-gray-900 bg-gray-100/80 hover:bg-gray-200/70'
+                                                : 'text-gray-700 bg-white hover:bg-accent-light hover:text-accent'}
+                                            ${isRowSelected ? 'bg-accent-light' : ''}`}
                                     >
-                                        {labelKeys.map(key => row[key] ?? '').join(' — ')}
+                                        {isTotal
+                                            ? `\u2014 TOTAL`
+                                            : labelKeys.map(key => row[key] ?? '').join(' \u2014 ')}
                                     </td>
                                     {columns.map(col => {
                                         const val = getCellValue(row, col);
                                         const isNeg = val !== null && val !== undefined && val < 0;
                                         const hasValue = val !== null && val !== undefined && val !== 0;
 
-                                        // For drill-down: pass the source months so PLNoteView can filter
                                         const clickLabel = col.sourceMonths.length === 1
-                                            ? `${rowLabel} — ${col.sourceMonths[0]}`
-                                            : `${rowLabel} — ${col.header}`;
+                                            ? `${rowLabel} \u2014 ${col.sourceMonths[0]}`
+                                            : `${rowLabel} \u2014 ${col.header}`;
 
                                         const isClickable = hasValue;
                                         const isSelected = selection &&
@@ -97,17 +101,16 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                                                 key={col.header}
                                                 onClick={isClickable ? () => onCellClick({
                                                     partida,
-                                                    // Encode source months as comma-separated for quarterly
                                                     month: col.sourceMonths.join(','),
                                                     filterCol: isTotal ? null : filterCol,
                                                     filterVal: isTotal ? null : rowFilterVal,
-                                                    label: isTotal ? `TOTAL — ${col.header}` : clickLabel,
+                                                    label: isTotal ? `TOTAL \u2014 ${col.header}` : clickLabel,
                                                 }) : undefined}
-                                                className={`px-2 py-1.5 text-right whitespace-nowrap font-mono
+                                                className={`px-3 py-1.5 text-right whitespace-nowrap font-mono
                                                     ${isTotal ? 'font-bold' : ''}
-                                                    ${isNeg ? 'text-red-600' : 'text-gray-800'}
-                                                    ${isClickable ? 'cursor-pointer hover:bg-blue-100 hover:underline' : ''}
-                                                    ${isSelected ? 'bg-blue-200 ring-1 ring-blue-400' : ''}`}
+                                                    ${isNeg ? 'text-negative' : 'text-gray-800'}
+                                                    ${isClickable ? 'cursor-pointer hover:bg-accent-hover hover:text-accent' : ''}
+                                                    ${isSelected ? 'bg-accent-hover ring-1 ring-accent-ring ring-inset' : ''}`}
                                             >
                                                 {formatNumber(val)}
                                             </td>
@@ -131,12 +134,12 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, colu
                                                     month: null,
                                                     filterCol: isTotal ? null : filterCol,
                                                     filterVal: isTotal ? null : rowFilterVal,
-                                                    label: `${rowLabel} — Todo el periodo`,
+                                                    label: `${rowLabel} \u2014 Todo el periodo`,
                                                 }) : undefined}
-                                                className={`px-2 py-1.5 text-right whitespace-nowrap font-mono font-bold
-                                                    ${isNeg ? 'text-red-600' : 'text-gray-800'}
-                                                    ${hasValue ? 'cursor-pointer hover:bg-blue-100 hover:underline' : ''}
-                                                    ${isSelected ? 'bg-blue-200 ring-1 ring-blue-400' : ''}`}
+                                                className={`px-3 py-1.5 text-right whitespace-nowrap font-mono font-bold
+                                                    ${isNeg ? 'text-negative' : 'text-gray-800'}
+                                                    ${hasValue ? 'cursor-pointer hover:bg-accent-hover hover:text-accent' : ''}
+                                                    ${isSelected ? 'bg-accent-hover ring-1 ring-accent-ring ring-inset' : ''}`}
                                             >
                                                 {formatNumber(total)}
                                             </td>
