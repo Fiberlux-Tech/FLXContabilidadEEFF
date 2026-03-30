@@ -137,6 +137,16 @@ BS_RECLASSIFICATION_RULES: list[tuple[str, str, str, str]] = [
 
 BS_SECTION_ORDER = ["ACTIVO", "PASIVO", "PATRIMONIO"]
 
+# Maps account first character to its native BS section.
+# Used by _native_section() to determine default classification.
+BS_NATIVE_SECTION_MAP: dict[str, str] = {
+    "1": "ACTIVO",
+    "2": "ACTIVO",
+    "3": "ACTIVO",
+    "4": "PASIVO",
+    "5": "PATRIMONIO",
+}
+
 # Sub-section classification: partidas that belong to NO CORRIENTE.
 # Everything not listed here defaults to CORRIENTE for its section.
 # PATRIMONIO has no CORRIENTE / NO CORRIENTE split.

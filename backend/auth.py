@@ -69,7 +69,6 @@ _USERS_DDL = '''
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
-        salt TEXT NOT NULL,
         display_name TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
@@ -90,8 +89,8 @@ def init_db(app):
     app.teardown_appcontext(close_db)
 
 
-def hash_password(password: str, salt: str = None) -> str:
-    """Hash password using bcrypt. The salt parameter is ignored (bcrypt manages its own)."""
+def hash_password(password: str) -> str:
+    """Hash password using bcrypt."""
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 

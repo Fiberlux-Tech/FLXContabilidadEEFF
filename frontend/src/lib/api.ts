@@ -74,9 +74,11 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
 export const api = {
     get: <T>(url: string) => request<T>(url, { method: API_CONFIG.HTTP.METHOD_GET }),
 
-    post: <T>(url: string, data: any) => request<T>(url, { method: API_CONFIG.HTTP.METHOD_POST, body: data }),
+    post: <T>(url: string, data: Record<string, unknown>) =>
+        request<T>(url, { method: API_CONFIG.HTTP.METHOD_POST, body: data as unknown as BodyInit }),
 
     postForm: <T>(url: string, formData: FormData) => request<T>(url, { method: API_CONFIG.HTTP.METHOD_POST, body: formData }),
 
-    put: <T>(url: string, data: any) => request<T>(url, { method: 'PUT', body: data }),
+    put: <T>(url: string, data: Record<string, unknown>) =>
+        request<T>(url, { method: 'PUT', body: data as unknown as BodyInit }),
 };

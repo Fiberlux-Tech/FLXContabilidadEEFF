@@ -59,8 +59,8 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
                 force_refresh: force,
             });
             setReportData(data);
-        } catch (err: any) {
-            setError(err.message || 'Error al cargar datos');
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Error al cargar datos');
             setReportData(null);
         } finally {
             setIsLoading(false);
@@ -97,8 +97,8 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
                 const url = `${API_CONFIG.ENDPOINTS.EXPORT_DOWNLOAD}/${encodeURIComponent(filename)}`;
                 window.open(url, '_blank');
             }
-        } catch (err: any) {
-            setError(err.message || 'Error al exportar');
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Error al exportar');
         } finally {
             setIsExporting(false);
         }

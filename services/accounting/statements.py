@@ -8,6 +8,7 @@ from accounting.rules import (
     BS_SECTION_ORDER, BS_RECLASSIFICATION_RULES,
     BS_PARTIDA_ORDER,
     BS_ACTIVO_NO_CORRIENTE, BS_PASIVO_NO_CORRIENTE,
+    BS_NATIVE_SECTION_MAP,
 )
 from accounting.aggregation import TOTAL_COL, pivot_by_month, _apply_bs_cumsum
 from config.exceptions import DataValidationError
@@ -248,12 +249,7 @@ def _build_bs_rows(partida_lookup, cuenta_detail, val_cols, section_map, *, incl
 
 def _native_section(cuenta_code):
     """Return the native BS section based on account first character."""
-    first = cuenta_code[0]
-    if first in ("1", "2", "3"):
-        return "ACTIVO"
-    if first == "4":
-        return "PASIVO"
-    return "PATRIMONIO"
+    return BS_NATIVE_SECTION_MAP.get(cuenta_code[0], "PATRIMONIO")
 
 
 def _reclassify_bs_cuentas(cuenta_rows, val_cols):

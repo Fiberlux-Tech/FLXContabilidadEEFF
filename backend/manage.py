@@ -53,12 +53,11 @@ def create_user(args):
     db = _connect_db()
 
     password_hash = hash_password(args.password)
-    salt = 'bcrypt'  # bcrypt manages its own salt
 
     try:
         db.execute(
-            'INSERT INTO users (username, password_hash, salt, display_name) VALUES (?, ?, ?, ?)',
-            (args.username, password_hash, salt, args.display_name or args.username)
+            'INSERT INTO users (username, password_hash, display_name) VALUES (?, ?, ?)',
+            (args.username, password_hash, args.display_name or args.username)
         )
         db.commit()
         print(f"User '{args.username}' created successfully.")
@@ -100,8 +99,8 @@ def reset_password(args):
     db = _connect_db()
     password_hash = hash_password(args.password)
     cursor = db.execute(
-        'UPDATE users SET password_hash = ?, salt = ? WHERE username = ?',
-        (password_hash, 'bcrypt', args.username)
+        'UPDATE users SET password_hash = ? WHERE username = ?',
+        (password_hash, args.username)
     )
     db.commit()
     if cursor.rowcount > 0:

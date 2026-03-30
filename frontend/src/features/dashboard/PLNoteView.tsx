@@ -19,6 +19,8 @@ const DETAIL_HEADERS: Record<string, string> = {
 };
 
 const DETAIL_COLS = Object.keys(DETAIL_HEADERS);
+const PAGE_SIZES: number[] = [25, 50, 100];
+const DEFAULT_PAGE_SIZE = PAGE_SIZES[0];
 
 interface DetailDataTableProps {
     detailRows: ReportRow[];
@@ -91,7 +93,7 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
             <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
                 <div className="flex items-center gap-2">
                     <span>Filas por pagina:</span>
-                    {[25, 50, 100].map(size => (
+                    {PAGE_SIZES.map(size => (
                         <button
                             key={size}
                             onClick={() => { setPageSize(size); setPage(() => 0); }}
@@ -140,7 +142,7 @@ export default function PLNoteView({ tables, months, year }: PLNoteViewProps) {
     const [isLoadingDetail, setIsLoadingDetail] = useState(false);
     const [detailError, setDetailError] = useState<string | null>(null);
     const [page, setPage] = useState(0);
-    const [pageSize, setPageSize] = useState(25);
+    const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
     const [filters, setFilters] = useState<Record<string, string>>({});
     const detailRef = useRef<HTMLDivElement>(null);
 
@@ -174,7 +176,7 @@ export default function PLNoteView({ tables, months, year }: PLNoteViewProps) {
         setFilters({});
 
         try {
-            const body: Record<string, any> = {
+            const body: Record<string, unknown> = {
                 company: companyRef.current,
                 year: yearRef.current,
                 partida: sel.partida,

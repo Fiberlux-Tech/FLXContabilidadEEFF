@@ -60,7 +60,8 @@ export default function Sidebar() {
 
     const companyKeys = Object.keys(companies);
     const currentYear = new Date().getFullYear();
-    const years = Array.from({ length: currentYear - 2024 }, (_, i) => currentYear - i);
+    const START_YEAR = 2025;
+    const years = Array.from({ length: currentYear - START_YEAR + 1 }, (_, i) => currentYear - i);
 
     return (
         <aside className="w-64 bg-gray-900 text-white flex flex-col min-h-screen shrink-0">
