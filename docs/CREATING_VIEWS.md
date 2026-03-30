@@ -283,7 +283,7 @@ export interface ReportData {
 
 `ReportRow` is a generic `Record<string, string | number | null>`. Every row has:
 - A **label column** (e.g., `PARTIDA_PL`, `CUENTA_CONTABLE`, `NIT`) — your view decides which key to use
-- **Month columns** (`ENE`, `FEB`, ..., `DIC`) with numeric values
+- **Month columns** (`JAN`, `FEB`, ..., `DEC`) with numeric values
 - Optionally a **TOTAL** column
 
 You do NOT need a custom type for most views — `ReportRow[]` handles it.

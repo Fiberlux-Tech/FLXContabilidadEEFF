@@ -63,7 +63,10 @@ Nginx (port 80)
 | POST   | /auth/logout                     | End session                              |
 | GET    | /api/companies                   | Company list with metadata               |
 | GET    | /api/health                      | Health check                             |
+| GET    | /api/cache-stats                 | Cache hit/miss counters and entry counts |
 | POST   | /api/data/load                   | Fetch + transform report data            |
+| POST   | /api/data/load-pl                | Fetch P&L only (BS pre-fetched in background) |
+| POST   | /api/data/load-bs                | Fetch BS only (requires P&L loaded first) |
 | POST   | /api/data/detail                 | Drill-down into journal entries           |
 | POST   | /api/export/excel                | Generate Excel report                    |
 | POST   | /api/export/pdf                  | Generate PDF report                      |
@@ -141,8 +144,6 @@ The accounting transformation pipeline is **sacred** — it must not be modified
 **Backend owns all accounting logic** — transforms, classification, subtotals, sign rules, reclassification, balance validation. See `docs/CODING_PATTERNS.md` section "Accounting Logic — SACRED, DO NOT MODIFY" for the full list of protected modules and invariants.
 
 **Frontend is presentation-only** — it may sum pre-computed monthly values for quarterly display, merge rows for trailing 12M, format numbers, and paginate. It must never compute accounting subtotals, reclassify accounts, or override backend values.
-
-Full data pipeline details: `docs/DATA_PIPELINE_AUDIT.md`
 
 ## Infrastructure
 - **Server**: Ubuntu Linux at 10.100.50.4
