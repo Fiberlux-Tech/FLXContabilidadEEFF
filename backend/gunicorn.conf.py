@@ -6,7 +6,7 @@ worker_class = os.environ.get("GUNICORN_WORKER_CLASS", "sync")
 worker_connections = int(os.environ.get("GUNICORN_WORKER_CONNECTIONS", "1000"))
 max_requests = int(os.environ.get("GUNICORN_MAX_REQUESTS", "1000"))
 max_requests_jitter = int(os.environ.get("GUNICORN_MAX_REQUESTS_JITTER", "50"))
-timeout = int(os.environ.get("GUNICORN_TIMEOUT", "120"))
+timeout = int(os.environ.get("GUNICORN_TIMEOUT", "300"))
 keepalive = int(os.environ.get("GUNICORN_KEEPALIVE", "5"))
 
 log_dir = os.path.join(os.path.dirname(__file__), 'logs')

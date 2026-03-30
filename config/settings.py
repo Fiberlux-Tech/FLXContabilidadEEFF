@@ -28,7 +28,7 @@ class DatabaseConfig:
     uid: str = ""
     pwd: str = ""
     connect_timeout: int = 30
-    query_timeout: int = 120
+    query_timeout: int = 240
     pool_size: int = 8
     fetch_max_workers: int = 5
     encrypt: str = "yes"
@@ -65,7 +65,7 @@ def get_config() -> Config:
             uid=os.environ.get("DB_UID", ""),
             pwd=os.environ.get("DB_PWD", ""),
             connect_timeout=_parse_positive_int(os.environ.get("DB_CONNECT_TIMEOUT", "30"), "DB_CONNECT_TIMEOUT"),
-            query_timeout=_parse_positive_int(os.environ.get("DB_QUERY_TIMEOUT", "120"), "DB_QUERY_TIMEOUT"),
+            query_timeout=_parse_positive_int(os.environ.get("DB_QUERY_TIMEOUT", "240"), "DB_QUERY_TIMEOUT"),
             pool_size=_parse_positive_int(os.environ.get("DB_POOL_SIZE", "8"), "DB_POOL_SIZE"),
             fetch_max_workers=_parse_positive_int(os.environ.get("FETCH_MAX_WORKERS", "5"), "FETCH_MAX_WORKERS"),
             encrypt=os.environ.get("DB_ENCRYPT", "yes"),

@@ -106,14 +106,17 @@ def fetch_all_data(company: str, year: int, month: int | None, conn_factory=None
         if need_pdf and prev_year >= MIN_YEAR and cached_prev_bs is None:
             futures["raw_bs_prev"] = pool.submit(_fetch_with_own_conn, fetch_bs_data, conn_factory, company, prev_year, month)
 
-    # Collect results — 120s timeout prevents hung DB connections from blocking
-    _FUTURE_TIMEOUT = 120
+    # Collect results — per-query timeout prevents hung DB connections from blocking.
+    # fut.result(timeout) measures from submission, so each query gets its own budget.
+    _PER_QUERY_TIMEOUT = 240
     results = {}
     for name, fut in futures.items():
         try:
-            results[name] = fut.result(timeout=_FUTURE_TIMEOUT)
+            t_wait = time.perf_counter()
+            results[name] = fut.result(timeout=_PER_QUERY_TIMEOUT)
+            logger.info("Query '%s': %.2fs, %d rows", name, time.perf_counter() - t_wait, len(results[name]))
         except FuturesTimeoutError:
-            raise RuntimeError(f"DB query '{name}' timed out after {_FUTURE_TIMEOUT}s")
+            raise RuntimeError(f"DB query '{name}' timed out after {_PER_QUERY_TIMEOUT}s")
         except Exception:
             logger.exception("DB query '%s' failed", name)
             raise

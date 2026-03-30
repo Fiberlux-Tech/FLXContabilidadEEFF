@@ -174,7 +174,7 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
         company, year, None, need_pdf=False,
     )
 
-    logger.info("Data fetch: %.2fs", time.perf_counter() - t0)
+    logger.info("Data fetch: %.2fs (%d PnL rows, %d BS rows)", time.perf_counter() - t0, len(raw_current_full), len(raw_bs))
 
     t1 = time.perf_counter()
 

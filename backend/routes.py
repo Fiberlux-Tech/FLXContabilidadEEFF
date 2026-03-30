@@ -2,6 +2,7 @@
 
 import os
 import logging
+import time
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request, send_file
@@ -86,9 +87,11 @@ def load_data():
     company, year = _validate_company_year(body)
 
     try:
+        t0 = time.perf_counter()
         data = load_report_data(company, year, force_refresh=force_refresh)
         # Remove internal cache metadata
         result = {k: v for k, v in data.items() if not k.startswith('_')}
+        result['_timing_ms'] = round((time.perf_counter() - t0) * 1000)
         return _ok(result)
     except (ValueError, KeyError) as exc:
         return jsonify({'status': 'error', 'error': str(exc)}), 400
