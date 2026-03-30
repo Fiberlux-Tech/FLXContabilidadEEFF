@@ -2,9 +2,11 @@ import { useReducer, useRef, useEffect, useMemo, useCallback } from 'react';
 import { api } from '@/lib/api';
 import { API_CONFIG } from '@/config';
 import { useReport } from '@/contexts/ReportContext';
-import type { ReportRow, CellSelection, TableConfig } from '@/types';
+import type { ReportRow, CellSelection, TableConfig, DisplayColumn } from '@/types';
 import { formatNumber } from '@/utils/format';
+import { exportDetailToExcel } from '@/utils/exportDetailExcel';
 import DetailTable from './DetailTable';
+import Modal from '@/components/Modal';
 
 const DETAIL_HEADERS: Record<string, string> = {
     ASIENTO: 'Asiento',
@@ -131,7 +133,7 @@ function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page
 
 interface PLNoteViewProps {
     tables: TableConfig[];
-    months: string[];
+    columns: DisplayColumn[];
     year: number;
 }
 
@@ -183,10 +185,15 @@ function detailReducer(state: DetailState, action: DetailAction): DetailState {
     }
 }
 
-export default function PLNoteView({ tables, months, year }: PLNoteViewProps) {
-    const { selectedCompany, selectedYear } = useReport();
+// Month name to number mapping for date filtering
+const MONTH_NUM: Record<string, number> = {
+    JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6,
+    JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12,
+};
+
+export default function PLNoteView({ tables, columns, year }: PLNoteViewProps) {
+    const { selectedCompany, selectedYear, periodRange, trailingMonthSources } = useReport();
     const [state, dispatch] = useReducer(detailReducer, detailInitialState);
-    const detailRef = useRef<HTMLDivElement>(null);
 
     const companyRef = useRef(selectedCompany);
     const yearRef = useRef(selectedYear);
@@ -212,28 +219,86 @@ export default function PLNoteView({ tables, months, year }: PLNoteViewProps) {
         dispatch({ type: 'SELECT', selection: sel });
 
         try {
-            const body: Record<string, unknown> = {
-                company: companyRef.current,
-                year: yearRef.current,
-                partida: sel.partida,
-            };
-            if (sel.month) body.month = sel.month;
-            if (sel.filterCol && sel.filterVal != null) {
-                body.filter_col = sel.filterCol;
-                body.filter_val = sel.filterVal;
+            // Parse months from selection (could be "JAN" or "JAN,FEB,MAR" for quarterly)
+            const selMonths = sel.month ? sel.month.split(',') : null;
+
+            if (periodRange === 'trailing12' && selMonths) {
+                // For trailing 12M, we may need to fetch from two different years
+                // Determine which year each month belongs to
+                const monthYearMap = new Map<string, number>();
+                for (const src of trailingMonthSources) {
+                    monthYearMap.set(src.month, src.year);
+                }
+
+                // Group months by year
+                const byYear = new Map<number, string[]>();
+                for (const m of selMonths) {
+                    const y = monthYearMap.get(m) ?? yearRef.current;
+                    if (!byYear.has(y)) byYear.set(y, []);
+                    byYear.get(y)!.push(m);
+                }
+
+                // Fetch from each year and merge
+                const allRows: ReportRow[] = [];
+                for (const [fetchYear, months] of byYear) {
+                    for (const month of months) {
+                        const body: Record<string, unknown> = {
+                            company: companyRef.current,
+                            year: fetchYear,
+                            partida: sel.partida,
+                            month,
+                        };
+                        if (sel.filterCol && sel.filterVal != null) {
+                            body.filter_col = sel.filterCol;
+                            body.filter_val = sel.filterVal;
+                        }
+                        const resp = await api.post<{ records: ReportRow[] }>(API_CONFIG.ENDPOINTS.DATA_DETAIL, body);
+                        allRows.push(...resp.records);
+                    }
+                }
+                dispatch({ type: 'LOAD_SUCCESS', rows: allRows });
+            } else if (selMonths && selMonths.length > 1) {
+                // Quarterly in YTD mode: fetch each month separately and merge
+                const allRows: ReportRow[] = [];
+                for (const month of selMonths) {
+                    const body: Record<string, unknown> = {
+                        company: companyRef.current,
+                        year: yearRef.current,
+                        partida: sel.partida,
+                        month,
+                    };
+                    if (sel.filterCol && sel.filterVal != null) {
+                        body.filter_col = sel.filterCol;
+                        body.filter_val = sel.filterVal;
+                    }
+                    const resp = await api.post<{ records: ReportRow[] }>(API_CONFIG.ENDPOINTS.DATA_DETAIL, body);
+                    allRows.push(...resp.records);
+                }
+                dispatch({ type: 'LOAD_SUCCESS', rows: allRows });
+            } else {
+                // Single month or full period — existing behavior
+                const body: Record<string, unknown> = {
+                    company: companyRef.current,
+                    year: yearRef.current,
+                    partida: sel.partida,
+                };
+                if (selMonths && selMonths.length === 1) body.month = selMonths[0];
+                if (sel.filterCol && sel.filterVal != null) {
+                    body.filter_col = sel.filterCol;
+                    body.filter_val = sel.filterVal;
+                }
+                const resp = await api.post<{ records: ReportRow[] }>(API_CONFIG.ENDPOINTS.DATA_DETAIL, body);
+                dispatch({ type: 'LOAD_SUCCESS', rows: resp.records });
             }
-            const resp = await api.post<{ records: ReportRow[] }>(API_CONFIG.ENDPOINTS.DATA_DETAIL, body);
-            dispatch({ type: 'LOAD_SUCCESS', rows: resp.records });
         } catch (err) {
             dispatch({ type: 'LOAD_ERROR', error: err instanceof Error ? err.message : 'Error al cargar detalle' });
         }
-    }, []);
+    }, [periodRange, trailingMonthSources]);
 
-    useEffect(() => {
-        if (state.selection && detailRef.current) {
-            detailRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-    }, [state.selection, state.detailRows]);
+    const handleExportDetail = useCallback(() => {
+        if (filteredRows.length === 0 || !state.selection) return;
+        exportDetailToExcel(filteredRows, state.selection.label, companyRef.current, yearRef.current);
+    }, [filteredRows, state.selection]);
 
     const renderDetailContent = () => {
         if (state.isLoadingDetail) {
@@ -270,29 +335,36 @@ export default function PLNoteView({ tables, months, year }: PLNoteViewProps) {
                 <DetailTable
                     key={idx}
                     {...table}
-                    months={months}
+                    columns={columns}
                     year={year}
                     selection={state.selection}
                     onCellClick={handleCellClick}
                 />
             ))}
 
-            {state.selection && (
-                <div ref={detailRef}>
-                    <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-base font-semibold text-gray-700">
-                            Detalle: {state.selection.label}
-                        </h3>
-                        <button
-                            onClick={() => dispatch({ type: 'CLEAR_SELECTION' })}
-                            className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100"
-                        >
-                            Cerrar
-                        </button>
-                    </div>
-                    {renderDetailContent()}
-                </div>
-            )}
+            <Modal
+                isOpen={state.selection !== null}
+                onClose={() => dispatch({ type: 'CLEAR_SELECTION' })}
+                title={`Detalle: ${state.selection?.label ?? ''}`}
+                headerActions={
+                    <button
+                        onClick={handleExportDetail}
+                        disabled={filteredRows.length === 0 || state.isLoadingDetail}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium
+                                   bg-green-600 text-white rounded-md hover:bg-green-700
+                                   disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        title="Exportar detalle filtrado a Excel"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Exportar Excel
+                    </button>
+                }
+            >
+                {renderDetailContent()}
+            </Modal>
         </div>
     );
 }

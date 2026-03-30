@@ -48,3 +48,21 @@ export interface ReportData {
   year: number;
   months: string[];
 }
+
+export type Granularity = 'monthly' | 'quarterly';
+export type PeriodRange = 'ytd' | 'trailing12';
+
+/** A display column: the header shown in the table + the source month keys to aggregate */
+export interface DisplayColumn {
+  header: string;
+  /** For monthly: single month key (e.g. "JAN"). For quarterly: 3 month keys (e.g. ["JAN","FEB","MAR"]) */
+  sourceMonths: string[];
+  /** For quarterly BS: only use the last month (end-of-quarter balance), not sum */
+  useLastOnly?: boolean;
+}
+
+/** Metadata about which year each source month belongs to (for trailing 12M drill-down) */
+export interface MonthSource {
+  month: string;   // e.g. "APR"
+  year: number;    // e.g. 2025
+}

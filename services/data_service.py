@@ -52,6 +52,11 @@ _STORES: dict[str, OrderedDict[tuple[str, int], tuple[float, object]]] = {
     "raw": OrderedDict(),
 }
 
+# Cache observability — simple hit/miss counters per store
+_cache_stats: dict[str, dict[str, int]] = {
+    store: {"hits": 0, "misses": 0} for store in _STORES
+}
+
 
 def _get_from_cache(store: str, company: str, year: int):
     """Return cached value from *store* or None if missing/expired."""
@@ -59,10 +64,13 @@ def _get_from_cache(store: str, company: str, year: int):
     with _cache_lock:
         entry = _STORES[store].get(key)
         if entry is None:
+            _cache_stats[store]["misses"] += 1
             return None
         if (time.time() - entry[0]) < MEMORY_CACHE_TTL:
             _STORES[store].move_to_end(key)  # mark as recently used
+            _cache_stats[store]["hits"] += 1
             return entry[1]
+        _cache_stats[store]["misses"] += 1  # expired = miss
         del _STORES[store][key]
     return None
 
@@ -87,6 +95,19 @@ def get_bs_cached(company: str, year: int) -> pd.DataFrame | None:
 def get_raw_cached(company: str, year: int) -> tuple | None:
     """Return cached raw DataFrames or None."""
     return _get_from_cache("raw", company, year)
+
+
+def get_cache_stats() -> dict:
+    """Return cache hit/miss counters and current entry counts per store."""
+    with _cache_lock:
+        return {
+            store: {
+                "hits": _cache_stats[store]["hits"],
+                "misses": _cache_stats[store]["misses"],
+                "entries": len(_STORES[store]),
+            }
+            for store in _STORES
+        }
 
 
 def invalidate_cache(company: str | None = None, year: int | None = None) -> None:

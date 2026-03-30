@@ -16,7 +16,7 @@ from accounting.rules import (
 from config.exceptions import DataValidationError
 from config.fields import (
     CUENTA_CONTABLE, CENTRO_COSTO, FECHA, DESCRIPCION,
-    NIT, RAZON_SOCIAL, DESC_CECO, SALDO, FIRST_CHAR, MONTH,
+    NIT, RAZON_SOCIAL, DESC_CECO, SALDO, FIRST_CHAR,
     PARTIDA_PL, PARTIDA_BS, SECCION_BS, MES,
 )
 

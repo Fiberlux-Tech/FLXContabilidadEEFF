@@ -52,63 +52,16 @@ function ExportButton({ onClick, disabled, svgPath, label }: {
 export default function Sidebar() {
     const { user, logout } = useAuth();
     const {
-        companies, selectedCompany, setSelectedCompany,
-        selectedYear, setSelectedYear,
         currentView, setCurrentView,
-        loadData, isLoading, reportData,
-        exportFile, isExporting,
+        reportData, exportFile, isExporting,
     } = useReport();
 
-    const companyKeys = Object.keys(companies);
-    const currentYear = new Date().getFullYear();
-    const START_YEAR = 2025;
-    const years = Array.from({ length: currentYear - START_YEAR + 1 }, (_, i) => currentYear - i);
-
     return (
-        <aside className="w-64 bg-gray-900 text-white flex flex-col min-h-screen shrink-0">
+        <aside className="w-56 bg-gray-900 text-white flex flex-col min-h-screen shrink-0">
             {/* Header */}
             <div className="p-5 border-b border-gray-700">
                 <h1 className="text-lg font-bold tracking-wide">FLX Contabilidad</h1>
                 <p className="text-xs text-gray-400 mt-1">Estados Financieros</p>
-            </div>
-
-            {/* Selectors */}
-            <div className="p-4 space-y-3 border-b border-gray-700">
-                <div>
-                    <label htmlFor="company-select" className="block text-[10px] uppercase tracking-wider text-gray-400 mb-1">Empresa</label>
-                    <select
-                        id="company-select"
-                        value={selectedCompany}
-                        onChange={e => setSelectedCompany(e.target.value)}
-                        className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
-                    >
-                        <option value="">Seleccionar...</option>
-                        {companyKeys.map(key => (
-                            <option key={key} value={key}>{key}</option>
-                        ))}
-                    </select>
-                </div>
-                <div>
-                    <label htmlFor="year-select" className="block text-[10px] uppercase tracking-wider text-gray-400 mb-1">Ano</label>
-                    <select
-                        id="year-select"
-                        value={selectedYear}
-                        onChange={e => setSelectedYear(Number(e.target.value))}
-                        className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
-                    >
-                        {years.map(y => (
-                            <option key={y} value={y}>{y}</option>
-                        ))}
-                    </select>
-                </div>
-                <button
-                    onClick={() => loadData(false)}
-                    disabled={!selectedCompany || isLoading}
-                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed
-                               text-white text-sm font-medium py-2 px-3 rounded transition-colors"
-                >
-                    {isLoading ? 'Cargando...' : 'Cargar Datos'}
-                </button>
             </div>
 
             {/* Navigation */}

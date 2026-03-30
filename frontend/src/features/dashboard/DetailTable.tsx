@@ -1,16 +1,23 @@
-import type { CellSelection, TableConfig } from '@/types';
+import type { CellSelection, DisplayColumn, ReportRow } from '@/types';
 import { formatNumber } from '@/utils/format';
+import { getCellValue, getDetailTotal } from '@/utils/cellValue';
 
-interface DetailTableProps extends TableConfig {
-    months: string[];
+interface DetailTableProps {
+    title: string;
+    rows: ReportRow[];
+    labelKeys: string[];
+    headerLabels: string[];
+    columns: DisplayColumn[];
     year: number;
+    partida: string;
+    filterCol: string;
     selection: CellSelection | null;
     onCellClick: (sel: CellSelection) => void;
 }
 
-export default function DetailTable({ title, rows, labelKeys, headerLabels, months, year, partida, filterCol, selection, onCellClick }: DetailTableProps) {
-    const valueCols = [...months, 'TOTAL'];
-    const valueHeaders = [...months, String(year)];
+export default function DetailTable({ title, rows, labelKeys, headerLabels, columns, year, partida, filterCol, selection, onCellClick }: DetailTableProps) {
+    // Value columns: display columns + TOTAL (year)
+    const totalHeader = String(year);
 
     return (
         <div>
@@ -26,11 +33,14 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, mont
                             >
                                 {headerLabels.join(' / ')}
                             </th>
-                            {valueHeaders.map((col, i) => (
-                                <th scope="col" key={col} className={`px-2 py-2 text-right font-medium whitespace-nowrap min-w-[85px] ${i === valueHeaders.length - 1 ? 'font-bold' : ''}`}>
-                                    {col}
+                            {columns.map(col => (
+                                <th scope="col" key={col.header} className="px-2 py-2 text-right font-medium whitespace-nowrap min-w-[85px]">
+                                    {col.header}
                                 </th>
                             ))}
+                            <th scope="col" className="px-2 py-2 text-right font-medium font-bold whitespace-nowrap min-w-[85px]">
+                                {totalHeader}
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
@@ -66,41 +76,35 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, mont
                                     >
                                         {labelKeys.map(key => row[key] ?? '').join(' — ')}
                                     </td>
-                                    {valueCols.map((col, i) => {
-                                        const val = row[col] as number | null;
+                                    {columns.map(col => {
+                                        const val = getCellValue(row, col);
                                         const isNeg = val !== null && val !== undefined && val < 0;
-                                        const isYearCol = i === valueCols.length - 1;
-                                        const isMonth = i < months.length;
-                                        const monthName = isMonth ? months[i] : null;
                                         const hasValue = val !== null && val !== undefined && val !== 0;
 
-                                        const clickMonth = isYearCol ? null : monthName;
-                                        const clickFilterCol = isTotal ? null : filterCol;
-                                        const clickFilterVal = isTotal ? null : rowFilterVal;
-                                        const clickLabel = isYearCol
-                                            ? `${rowLabel} — Todo el periodo`
-                                            : isTotal
-                                                ? `TOTAL — ${monthName}`
-                                                : `${rowLabel} — ${monthName}`;
+                                        // For drill-down: pass the source months so PLNoteView can filter
+                                        const clickLabel = col.sourceMonths.length === 1
+                                            ? `${rowLabel} — ${col.sourceMonths[0]}`
+                                            : `${rowLabel} — ${col.header}`;
 
                                         const isClickable = hasValue;
                                         const isSelected = selection &&
                                             selection.partida === partida &&
-                                            selection.month === clickMonth &&
-                                            selection.filterVal === clickFilterVal;
+                                            selection.month === col.sourceMonths.join(',') &&
+                                            selection.filterVal === (isTotal ? null : rowFilterVal);
 
                                         return (
                                             <td
-                                                key={col}
+                                                key={col.header}
                                                 onClick={isClickable ? () => onCellClick({
                                                     partida,
-                                                    month: clickMonth,
-                                                    filterCol: clickFilterCol,
-                                                    filterVal: clickFilterVal,
-                                                    label: clickLabel,
+                                                    // Encode source months as comma-separated for quarterly
+                                                    month: col.sourceMonths.join(','),
+                                                    filterCol: isTotal ? null : filterCol,
+                                                    filterVal: isTotal ? null : rowFilterVal,
+                                                    label: isTotal ? `TOTAL — ${col.header}` : clickLabel,
                                                 }) : undefined}
                                                 className={`px-2 py-1.5 text-right whitespace-nowrap font-mono
-                                                    ${isTotal || isYearCol ? 'font-bold' : ''}
+                                                    ${isTotal ? 'font-bold' : ''}
                                                     ${isNeg ? 'text-red-600' : 'text-gray-800'}
                                                     ${isClickable ? 'cursor-pointer hover:bg-blue-100 hover:underline' : ''}
                                                     ${isSelected ? 'bg-blue-200 ring-1 ring-blue-400' : ''}`}
@@ -109,6 +113,35 @@ export default function DetailTable({ title, rows, labelKeys, headerLabels, mont
                                             </td>
                                         );
                                     })}
+                                    {/* Year total column */}
+                                    {(() => {
+                                        const total = getDetailTotal(row, columns);
+                                        const isNeg = total !== null && total !== undefined && total < 0;
+                                        const hasValue = total !== null && total !== undefined && total !== 0;
+
+                                        const isSelected = selection &&
+                                            selection.partida === partida &&
+                                            selection.month === null &&
+                                            selection.filterVal === (isTotal ? null : rowFilterVal);
+
+                                        return (
+                                            <td
+                                                onClick={hasValue ? () => onCellClick({
+                                                    partida,
+                                                    month: null,
+                                                    filterCol: isTotal ? null : filterCol,
+                                                    filterVal: isTotal ? null : rowFilterVal,
+                                                    label: `${rowLabel} — Todo el periodo`,
+                                                }) : undefined}
+                                                className={`px-2 py-1.5 text-right whitespace-nowrap font-mono font-bold
+                                                    ${isNeg ? 'text-red-600' : 'text-gray-800'}
+                                                    ${hasValue ? 'cursor-pointer hover:bg-blue-100 hover:underline' : ''}
+                                                    ${isSelected ? 'bg-blue-200 ring-1 ring-blue-400' : ''}`}
+                                            >
+                                                {formatNumber(total)}
+                                            </td>
+                                        );
+                                    })()}
                                 </tr>
                             );
                         })}

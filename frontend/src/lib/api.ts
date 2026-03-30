@@ -74,8 +74,8 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
 export const api = {
     get: <T>(url: string) => request<T>(url, { method: API_CONFIG.HTTP.METHOD_GET }),
 
-    post: <T>(url: string, data: Record<string, unknown>) =>
-        request<T>(url, { method: API_CONFIG.HTTP.METHOD_POST, body: data as unknown as BodyInit }),
+    post: <T>(url: string, data: Record<string, unknown>, options?: { signal?: AbortSignal }) =>
+        request<T>(url, { method: API_CONFIG.HTTP.METHOD_POST, body: data as unknown as BodyInit, ...options }),
 
     postForm: <T>(url: string, formData: FormData) => request<T>(url, { method: API_CONFIG.HTTP.METHOD_POST, body: formData }),
 

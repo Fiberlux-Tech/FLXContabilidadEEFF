@@ -15,12 +15,13 @@ This replaces a CLI-only Python tool (`python main.py --company FIBERLUX --year 
 
 ### Core Workflow
 1. User logs in to `http://10.100.50.4`
-2. Selects company and year from the sidebar
-3. Clicks "Refresh" to pull latest data from SQL Server
-4. Views P&L and Balance Sheet summaries (12-month columns) in the dashboard
-5. Switches between views: P&L, Balance Sheet, Ingresos Ordinarios, Proyectos Especiales
-6. Drills down into any cell to see underlying journal entries (account, NIT, cost center, date, amount)
-7. Exports to Excel, PDF, or both when a downloadable report is needed
+2. Selects company and year from the top bar
+3. Chooses granularity (monthly / quarterly) and period range (YTD / trailing 12 months)
+4. Data auto-loads from SQL Server (debounced, with 30-min caching)
+5. Views P&L and Balance Sheet summaries in the dashboard
+6. Switches between views: P&L, Balance Sheet, Ingresos, Costo, Gastos (Venta/Admin), D&A, Resultado Financiero
+7. Drills down into any cell to see underlying journal entries (account, NIT, cost center, date, amount)
+8. Exports to Excel, PDF, or both when a downloadable report is needed
 
 ### Key Capabilities
 - **View everything in-browser**: No need to generate files just to see the numbers. The dashboard shows P&L summaries, BS summaries, and revenue breakdowns directly.

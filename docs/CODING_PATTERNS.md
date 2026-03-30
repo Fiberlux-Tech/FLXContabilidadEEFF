@@ -83,10 +83,44 @@ Three cache layers, each with a specific role:
 - BS classification maps account prefixes → statement line items, with per-account overrides
 - Account prefix parsing uses `_cuenta_digits()` (dot-removal for numeric comparison) and `_cuenta_prefix(s, n)` (first n chars of dotted code) in `transforms.py`
 
+### Accounting Logic — SACRED, DO NOT MODIFY
+
+The accounting transformation pipeline is the core of this system. Its logic must NEVER be altered by UI changes, refactoring, or "improvements" unless explicitly requested for accounting correctness reasons.
+
+**Protected modules** (changes require explicit accounting justification):
+- `services/accounting/rules.py` — Account classification constants, BS mappings, display order, reclassification rules
+- `services/accounting/transforms.py` — SALDO computation (P&L: CREDITO−DEBITO; BS: sign by account class), account filtering (prefix ≥ 619), partida assignment (np.select priority order)
+- `services/accounting/statements.py` — P&L row structure (subtotal formulas: UTILIDAD BRUTA, OPERATIVA, NETA), BS row structure (CORRIENTE/NO CORRIENTE split, reclassification, Resultados del Ejercicio injection), balance validation (ACTIVO = PASIVO + PATRIMONIO)
+- `services/accounting/aggregation.py` — Pivot logic (monthly sums, cumsum for BS), period aggregation, resultado financiero split (prefix "77" = ingresos)
+- `data/queries.py` — SQL query construction, account prefix filtering, date range logic, closing entry exclusion
+
+**Sacred invariants** (must hold true at all times):
+1. P&L SALDO = CREDITO_LOCAL − DEBITO_LOCAL (never reversed)
+2. BS SALDO: Assets (1,2,3) = DEBITO − CREDITO; Liabilities/Equity (4,5) = CREDITO − DEBITO
+3. BS accounts with negative cumulative balance are reclassified per BS_RECLASSIFICATION_RULES (sign flipped on section change)
+4. Cross-section overrides (native section ≠ assigned section) flip sign automatically
+5. `assign_partida_pl()` uses np.select — first matching condition wins; rule order is intentional
+6. Year-end closing entries (FUENTE LIKE 'CIERRE%') are always excluded from both P&L and BS
+7. P&L shows monthly flows; BS shows cumulative balances (cumsum applied)
+8. "Resultados del Ejercicio" in PATRIMONIO = cumulative UTILIDAD NETA from P&L
+9. BS must balance: TOTAL ACTIVO = TOTAL PASIVO + TOTAL PATRIMONIO
+
+**What the frontend may do** (presentation-only):
+- Sum pre-computed monthly values for quarterly display
+- Use last month's balance for quarterly BS (not sum)
+- Merge current + previous year rows for trailing 12M display
+- Format numbers, apply styles, filter/paginate
+
+**What the frontend must NEVER do**:
+- Compute gross profit, operating profit, net income, or any accounting subtotals
+- Reclassify accounts or change signs
+- Apply cumulative sums or balance sheet logic
+- Override or modify backend-computed values
+
 ### Security Patterns
 - **Path traversal defense**: Download endpoint uses `os.path.basename()` + `os.path.realpath()` to ensure resolved path stays within `output_dir`
 - **Input validation**: `_validate_company_year()` shared helper validates company against allowlist and year range
-- **Column filtering allowlist**: Detail drill-down only allows filtering on explicitly listed columns (`_ALLOWED_FILTER_COLS`)
+- **Column filtering allowlist**: Detail drill-down only allows filtering on explicitly listed columns (`_FILTERABLE_COLUMNS` in `data_service.py`)
 - **Rate limiting**: Failed login attempts are rate-limited per IP
 - **Session cookies**: HttpOnly, SameSite=Lax
 
@@ -106,9 +140,14 @@ Three cache layers, each with a specific role:
 
 ### State Management
 - `AuthContext`: user state + logout callback
-- `ReportContext`: selected company/year, report data, loading/error states, export function
-- `useState` / `useEffect` for local component state
-- `useCallback` for stable function references passed as props (loadData, exportFile)
+- `ReportContext`: `useReducer`-based state machine managing:
+  - Selection state: company, year, granularity (`monthly` | `quarterly`), periodRange (`ytd` | `trailing12`)
+  - Data state: reportData (current year), prevYearData (for trailing 12M), loading/error
+  - View state: currentView (which report panel is active)
+  - Export state: isExporting, export errors
+  - Display helpers: `getDisplayColumns(variant)`, `getMergedRows()`, `getMergedDetailRows()`
+- `useMemo` / `useCallback` for computed values (display columns, trailing month sources)
+- Debounced auto-load (300ms) with `AbortController` cancellation on rapid changes
 - No Redux, no Zustand — keep it simple
 
 ### API Calls
@@ -129,10 +168,12 @@ App.tsx (auth check → login or dashboard)
 ├── AuthProvider
 │   └── ReportProvider
 │       └── DashboardShell
-│           ├── Sidebar (company/year selectors, export buttons, nav)
-│           └── MainContent (tab switching)
-│               ├── FinancialTable (P&L or BS summary)
-│               └── PLNoteView (P&L note drill-down: ingresos, costo, etc.)
+│           ├── TopBar (company selector, year selector, granularity toggle, period range toggle)
+│           ├── Sidebar (view navigation, export buttons)
+│           └── MainContent (view switching)
+│               ├── FinancialTable (P&L or BS summary — shared component)
+│               ├── DetailTable (detail rows by CECO/cuenta with drill-down)
+│               └── PLNoteView (P&L detail views: ingresos, costo, gasto, D&A, resultado financiero)
 ```
 
 ### File Organization
@@ -143,12 +184,13 @@ src/
 ├── index.css            # Tailwind imports
 ├── lib/                 # Utilities (api client)
 ├── config/              # Constants, endpoints
-├── types/               # TypeScript interfaces
-├── contexts/            # AuthContext, ReportContext
+├── types/               # TypeScript interfaces (ReportData, DisplayColumn, MonthSource, etc.)
+├── contexts/            # AuthContext, ReportContext (useReducer + display logic)
 ├── components/          # Shared components (ErrorBoundary)
 └── features/
     ├── auth/            # Login page + auth service
-    └── dashboard/       # Sidebar, MainContent, FinancialTable, PLNoteView
+    └── dashboard/       # DashboardShell, TopBar, Sidebar, MainContent,
+                         # FinancialTable, DetailTable, PLNoteView
 ```
 
 ### Export/Download Pattern

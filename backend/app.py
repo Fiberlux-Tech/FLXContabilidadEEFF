@@ -14,7 +14,7 @@ from config.env_loader import load_env_config
 # Load layered .env → .env.{APP_ENV} configuration
 _app_env = load_env_config(_monorepo_root)
 
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS
 
 from auth import auth_bp, init_db
@@ -73,6 +73,19 @@ def create_app():
 
     from routes import api_bp
     app.register_blueprint(api_bp, url_prefix='/api')
+
+    # Response size logging for API endpoints
+    _api_logger = logging.getLogger('flxcontabilidad.response')
+
+    @app.after_request
+    def log_response_size(response):
+        if request.path.startswith('/api/'):
+            size = response.content_length or len(response.get_data())
+            _api_logger.info(
+                "%s %s — %d bytes, status %d",
+                request.method, request.path, size, response.status_code,
+            )
+        return response
 
     return app
 

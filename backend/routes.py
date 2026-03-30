@@ -18,7 +18,7 @@ from config.exceptions import (
     ExportError, DataValidationError,
 )
 from config.settings import get_config
-from data_service import load_report_data, get_detail_records, get_raw_cached, get_bs_cached
+from data_service import load_report_data, get_detail_records, get_raw_cached, get_bs_cached, get_cache_stats
 from pipeline import run_report
 
 api_bp = Blueprint('api', __name__)
@@ -61,6 +61,13 @@ def get_companies():
 @api_bp.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
+
+
+@api_bp.route('/cache-stats', methods=['GET'])
+@login_required
+def cache_stats():
+    """Return cache hit/miss counters and entry counts per store."""
+    return _ok(get_cache_stats())
 
 
 # ── Data loading ────────────────────────────────────────────────────────

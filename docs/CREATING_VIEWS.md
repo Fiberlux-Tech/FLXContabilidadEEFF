@@ -24,7 +24,8 @@ Step-by-step guide for adding new detailed views to the dashboard. Every view fo
 In `frontend/src/contexts/ReportContext.tsx`, extend the `View` type union:
 
 ```typescript
-type View = 'pl' | 'bs' | 'ingresos' | 'your_view';
+// Current views:
+type View = 'pl' | 'bs' | 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'dya' | 'resultado_financiero' | 'your_view';
 ```
 
 This key is used everywhere: sidebar active state, MainContent rendering, and any view-specific logic.
@@ -264,6 +265,13 @@ export interface ReportData {
   bs_summary: ReportRow[];
   ingresos_ordinarios: ReportRow[];
   ingresos_proyectos: ReportRow[];
+  costo: ReportRow[];
+  gasto_venta: ReportRow[];
+  gasto_admin: ReportRow[];
+  dya_costo: ReportRow[];
+  dya_gasto: ReportRow[];
+  resultado_financiero_ingresos: ReportRow[];
+  resultado_financiero_gastos: ReportRow[];
   your_data: ReportRow[];              // ← add
   company: string;
   year: number;

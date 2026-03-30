@@ -18,24 +18,22 @@ FLXContabilidad/
 │   │   ├── lib/api.ts    # Centralized HTTP client (cookies, error handling)
 │   │   ├── config/       # Constants, API endpoints
 │   │   ├── types/        # TypeScript interfaces
-│   │   ├── contexts/     # AuthContext (user state) + ReportContext (data/export state)
+│   │   ├── contexts/     # AuthContext (user state) + ReportContext (data/export/display state)
 │   │   ├── components/   # Shared components (ErrorBoundary)
 │   │   └── features/
 │   │       ├── auth/     # Login page + auth service
-│   │       └── dashboard/  # Sidebar, MainContent, FinancialTable, IngresosView
+│   │       └── dashboard/  # DashboardShell, TopBar, Sidebar, MainContent,
+│   │                       # FinancialTable, DetailTable, PLNoteView
 │   └── dist/             # Production build (served by nginx)
 ├── services/             # Python data pipeline
 │   ├── data_service.py   # Single-fetch service with in-memory cache (30-min TTL)
 │   ├── pipeline.py       # Orchestrator: fetch → transform → export Excel/PDF
-│   ├── cli.py            # Legacy CLI argument parser (kept for reference)
-│   ├── data/             # DB connection (pyodbc), SQL queries, file-based prev-year cache
 │   ├── accounting/       # Transforms, aggregation, P&L/BS statement builders, rules
 │   ├── excel/            # Multi-sheet Excel generation (openpyxl)
 │   ├── pdf/              # PDF generation (fpdf2) — cover, tables, notes
-│   ├── config/           # Settings, company metadata, calendar, exceptions, nota config
 │   └── images/           # Company logo assets for PDF reports
-├── config/               # Shared config (also accessible as services/config via sys.path)
-├── data/                 # Shared data layer (also accessible as services/data)
+├── config/               # Shared config (settings, calendar, fields, company, nota, exceptions)
+├── data/                 # Shared data layer (db pool, SQL queries, fetcher, disk cache)
 ├── models/               # Data model classes (PeriodContext, PnLReportData, PdfReportData)
 ├── .env                  # Shared defaults
 ├── .env.development      # Dev-specific overrides
@@ -94,11 +92,16 @@ data_service.load_report_data()
     │
     ├── Transforms: prepare_pnl → filter_for_statements → assign_partida_pl → pl_summary
     ├── BS: prepare_bs_stmt → bs_summary
-    ├── Revenue: preaggregate → sales_details, proyectos_especiales
+    ├── Detail pivots: preaggregate → sales_details, proyectos_especiales,
+    │   detail_by_ceco (costo, gasto_venta, gasto_admin, dya_costo, dya_gasto),
+    │   detail_resultado_financiero (ingresos/gastos split)
     │
-    ├── Cache: result dict + raw DataFrames + prepared BS (for later export reuse)
+    ├── Cache: result dict + raw DataFrames + prepared BS + statement DataFrame
     │
-    └── Response: { pl_summary, bs_summary, ingresos_ordinarios, ingresos_proyectos, months }
+    └── Response: { pl_summary, bs_summary, ingresos_ordinarios, ingresos_proyectos,
+                    costo, gasto_venta, gasto_admin, dya_costo, dya_gasto,
+                    resultado_financiero_ingresos, resultado_financiero_gastos,
+                    company, year, months }
 ```
 
 ### Export Flow
@@ -130,6 +133,16 @@ Three layers, each serving a different purpose:
 | **File-based** | `data/.cache/` (CSV) | 30 days | Previous-year P&L/BS data (changes rarely) |
 
 All in-memory caches are keyed by `(company, year)` and protected by `threading.Lock`.
+
+## Accounting Logic Boundary
+
+The accounting transformation pipeline is **sacred** — it must not be modified by UI changes, refactoring, or coding improvements. Only intentional accounting corrections are allowed.
+
+**Backend owns all accounting logic** — transforms, classification, subtotals, sign rules, reclassification, balance validation. See `docs/CODING_PATTERNS.md` section "Accounting Logic — SACRED, DO NOT MODIFY" for the full list of protected modules and invariants.
+
+**Frontend is presentation-only** — it may sum pre-computed monthly values for quarterly display, merge rows for trailing 12M, format numbers, and paginate. It must never compute accounting subtotals, reclassify accounts, or override backend values.
+
+Full data pipeline details: `docs/DATA_PIPELINE_AUDIT.md`
 
 ## Infrastructure
 - **Server**: Ubuntu Linux at 10.100.50.4

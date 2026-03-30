@@ -1,51 +1,19 @@
+import { useMemo } from 'react';
 import { useReport } from '@/contexts/ReportContext';
 import FinancialTable from '@/features/dashboard/FinancialTable';
 import PLNoteView from '@/features/dashboard/PLNoteView';
-import type { ReportData, TableConfig } from '@/types';
-
-type NoteView = 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'dya' | 'resultado_financiero';
-
-const VIEW_TITLE_MAP: Record<string, string> = {
-    pl: 'Estado de Resultados',
-    bs: 'Balance General',
-    ingresos: 'Ingresos',
-    costo: 'Costo de Operaciones',
-    gasto_venta: 'Gastos de Ventas',
-    gasto_admin: 'Gastos de Administracion',
-    dya: 'Depreciacion y Amortizacion',
-    resultado_financiero: 'Resultado Financiero',
-};
-
-const VIEW_TABLE_CONFIGS: Record<NoteView, (d: ReportData) => TableConfig[]> = {
-    ingresos: (d) => [
-        { title: 'Ingresos Ordinarios', rows: d.ingresos_ordinarios, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'INGRESOS ORDINARIOS', filterCol: 'CUENTA_CONTABLE' },
-        { title: 'Ingresos de Proyectos', rows: d.ingresos_proyectos, labelKeys: ['NIT', 'RAZON_SOCIAL'], headerLabels: ['NIT', 'Razon Social'], partida: 'INGRESOS PROYECTOS', filterCol: 'NIT' },
-    ],
-    costo: (d) => [
-        { title: 'Costo de Operaciones', rows: d.costo, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'COSTO', filterCol: 'CENTRO_COSTO' },
-    ],
-    gasto_venta: (d) => [
-        { title: 'Gastos de Ventas', rows: d.gasto_venta, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'GASTO VENTA', filterCol: 'CENTRO_COSTO' },
-    ],
-    gasto_admin: (d) => [
-        { title: 'Gastos de Administracion', rows: d.gasto_admin, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'GASTO ADMIN', filterCol: 'CENTRO_COSTO' },
-    ],
-    dya: (d) => [
-        { title: 'Depreciacion y Amortizacion (Costo)', rows: d.dya_costo, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'D&A - COSTO', filterCol: 'CENTRO_COSTO' },
-        { title: 'Depreciacion y Amortizacion (Gasto)', rows: d.dya_gasto, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'D&A - GASTO', filterCol: 'CENTRO_COSTO' },
-    ],
-    resultado_financiero: (d) => [
-        { title: 'Ingresos Financieros', rows: d.resultado_financiero_ingresos, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
-        { title: 'Gastos Financieros', rows: d.resultado_financiero_gastos, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
-    ],
-};
+import type { ReportData, TableConfig, ReportRow, DisplayColumn } from '@/types';
+import { VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
 
 export default function MainContent() {
-    const { reportData, currentView, isLoading, error, companies, selectedCompany } = useReport();
+    const {
+        reportData, currentView, isLoading, error,
+        getDisplayColumns, periodRange, getMergedRows, getMergedDetailRows,
+    } = useReport();
 
-    const companyName = selectedCompany && companies[selectedCompany]
-        ? companies[selectedCompany].legal_name
-        : selectedCompany;
+    // Compute display columns for both variants
+    const plColumns = useMemo(() => getDisplayColumns('pl'), [getDisplayColumns]);
+    const bsColumns = useMemo(() => getDisplayColumns('bs'), [getDisplayColumns]);
 
     if (isLoading) {
         return (
@@ -76,45 +44,97 @@ export default function MainContent() {
                     <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    <p className="text-lg">Seleccione empresa y ano</p>
-                    <p className="text-sm mt-1">Luego presione "Cargar Datos"</p>
+                    <p className="text-lg">Seleccione una empresa para comenzar</p>
                 </div>
             </div>
         );
     }
 
-    const title = VIEW_TITLE_MAP[currentView] ?? currentView;
-
     const renderView = () => {
-        const configFactory = VIEW_TABLE_CONFIGS[currentView as NoteView];
-        if (configFactory) {
-            return <PLNoteView tables={configFactory(reportData)} months={reportData.months} year={reportData.year} />;
+        const noteConfig = VIEW_TABLE_CONFIGS[currentView as NoteView];
+        if (noteConfig) {
+            // Build tables, applying trailing merge if needed
+            let tables = noteConfig.tables(reportData);
+
+            if (periodRange === 'trailing12') {
+                // Merge each table's rows with prev year data
+                tables = tables.map(t => {
+                    const dataKey = getDataKeyForTable(t, reportData);
+                    if (dataKey) {
+                        return { ...t, rows: getMergedDetailRows(dataKey, t.labelKeys) };
+                    }
+                    return t;
+                });
+            }
+
+            // Filter out all-zero tables
+            tables = tables.filter(t => !isAllZeroTable(t.rows, ALL_MONTHS));
+
+            if (tables.length === 0) {
+                return (
+                    <div className="text-center py-12 text-gray-400">
+                        <p className="text-sm">Sin datos para mostrar en esta vista</p>
+                    </div>
+                );
+            }
+
+            return <PLNoteView tables={tables} columns={plColumns} year={reportData.year} />;
         }
-        if (currentView === 'pl' || currentView === 'bs') {
+
+        if (currentView === 'pl') {
+            const rows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
             return (
                 <FinancialTable
-                    rows={currentView === 'pl' ? reportData.pl_summary : reportData.bs_summary}
-                    months={reportData.months}
-                    labelKey={currentView === 'pl' ? 'PARTIDA_PL' : 'PARTIDA_BS'}
-                    showTotal={currentView === 'pl'}
-                    variant={currentView}
+                    rows={rows}
+                    columns={plColumns}
+                    labelKey="PARTIDA_PL"
+                    showTotal
+                    variant="pl"
                 />
             );
         }
+
+        if (currentView === 'bs') {
+            const rows = getMergedRows('bs_summary', 'PARTIDA_BS', 'bs');
+            return (
+                <FinancialTable
+                    rows={rows}
+                    columns={bsColumns}
+                    labelKey="PARTIDA_BS"
+                    showTotal={false}
+                    variant="bs"
+                />
+            );
+        }
+
         return null;
     };
 
     return (
         <main className="flex-1 p-6 overflow-auto">
             <div className="max-w-[1400px] mx-auto">
-                <div className="mb-4">
-                    <h2 className="text-xl font-bold text-gray-800">{title}</h2>
-                    <p className="text-sm text-gray-500">
-                        {companyName} — {reportData.year}
-                    </p>
-                </div>
                 {renderView()}
             </div>
         </main>
     );
+}
+
+/** Map a TableConfig back to the ReportData key so we can fetch merged rows */
+function getDataKeyForTable(table: TableConfig, data: ReportData): keyof ReportData | null {
+    // Match by checking if table.rows reference is the same as a known key
+    const mapping: [keyof ReportData, ReportRow[]][] = [
+        ['ingresos_ordinarios', data.ingresos_ordinarios],
+        ['ingresos_proyectos', data.ingresos_proyectos],
+        ['costo', data.costo],
+        ['gasto_venta', data.gasto_venta],
+        ['gasto_admin', data.gasto_admin],
+        ['dya_costo', data.dya_costo],
+        ['dya_gasto', data.dya_gasto],
+        ['resultado_financiero_ingresos', data.resultado_financiero_ingresos],
+        ['resultado_financiero_gastos', data.resultado_financiero_gastos],
+    ];
+    for (const [key, rows] of mapping) {
+        if (table.rows === rows) return key;
+    }
+    return null;
 }
