@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useReport, type View } from '@/contexts/ReportContext';
+import { useReport, isBsView, type View } from '@/contexts/ReportContext';
 
 function NavButton({ view, label, currentView, onClick }: {
     view: View;
@@ -75,6 +76,17 @@ export default function Sidebar() {
         reportData, exportFile, isExporting,
     } = useReport();
 
+    const isBs = isBsView(currentView);
+    const [plOpen, setPlOpen] = useState(true);
+    const [bsOpen, setBsOpen] = useState(isBs);
+
+    // Auto-expand the section containing the active view
+    const handleViewClick = (view: View) => {
+        if (isBsView(view)) setBsOpen(true);
+        else setPlOpen(true);
+        setCurrentView(view);
+    };
+
     return (
         <aside className="w-[280px] bg-nav border-r border-nav-border flex flex-col min-h-screen shrink-0 overflow-y-auto">
             {/* Header */}
@@ -91,23 +103,33 @@ export default function Sidebar() {
             <nav className="flex-1 px-2">
                 {/* Estado de Resultados section */}
                 <div className="mb-1">
-                    <div className="flex items-center gap-2.5 px-3 py-[7px] text-[13px] font-semibold text-nav-text">
-                        <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    <button
+                        onClick={() => setPlOpen(o => !o)}
+                        className="w-full flex items-center justify-between px-3 py-[7px] text-[13px] font-semibold text-nav-text hover:bg-nav-hover rounded-md transition-colors"
+                    >
+                        <span className="flex items-center gap-2.5">
+                            <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                            </svg>
+                            Estado de Resultados
+                        </span>
+                        <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${plOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                        Estado de Resultados
-                    </div>
-                    <div className="space-y-0.5">
-                        {PL_SUB_ITEMS.map(item => (
-                            <NavButton
-                                key={item.view}
-                                view={item.view}
-                                label={item.label}
-                                currentView={currentView}
-                                onClick={setCurrentView}
-                            />
-                        ))}
-                    </div>
+                    </button>
+                    {plOpen && (
+                        <div className="space-y-0.5">
+                            {PL_SUB_ITEMS.map(item => (
+                                <NavButton
+                                    key={item.view}
+                                    view={item.view}
+                                    label={item.label}
+                                    currentView={currentView}
+                                    onClick={handleViewClick}
+                                />
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Divider */}
@@ -115,23 +137,33 @@ export default function Sidebar() {
 
                 {/* Balance General section */}
                 <div className="mb-1">
-                    <div className="flex items-center gap-2.5 px-3 py-[7px] text-[13px] font-semibold text-nav-text">
-                        <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+                    <button
+                        onClick={() => setBsOpen(o => !o)}
+                        className="w-full flex items-center justify-between px-3 py-[7px] text-[13px] font-semibold text-nav-text hover:bg-nav-hover rounded-md transition-colors"
+                    >
+                        <span className="flex items-center gap-2.5">
+                            <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+                            </svg>
+                            Balance General
+                        </span>
+                        <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${bsOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                        Balance General
-                    </div>
-                    <div className="space-y-0.5">
-                        {BS_SUB_ITEMS.map(item => (
-                            <NavButton
-                                key={item.view}
-                                view={item.view}
-                                label={item.label}
-                                currentView={currentView}
-                                onClick={setCurrentView}
-                            />
-                        ))}
-                    </div>
+                    </button>
+                    {bsOpen && (
+                        <div className="space-y-0.5">
+                            {BS_SUB_ITEMS.map(item => (
+                                <NavButton
+                                    key={item.view}
+                                    view={item.view}
+                                    label={item.label}
+                                    currentView={currentView}
+                                    onClick={handleViewClick}
+                                />
+                            ))}
+                        </div>
+                    )}
                 </div>
             </nav>
 
