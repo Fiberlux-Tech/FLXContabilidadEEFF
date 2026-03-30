@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useReport, isBsView, type View } from '@/contexts/ReportContext';
+import { useReport, isBsView, isAnalysisView, type View } from '@/contexts/ReportContext';
 
 function NavButton({ view, label, currentView, onClick }: {
     view: View;
@@ -46,6 +46,10 @@ const BS_SUB_ITEMS = [
     { view: 'bs_tributos', label: 'Tributos' },
 ] as const;
 
+const ANALYSIS_SUB_ITEMS = [
+    { view: 'analysis_pl_finanzas', label: 'P&L - Finanzas' },
+] as const;
+
 function ExportButton({ onClick, disabled, svgPath, label }: {
     onClick: () => void;
     disabled: boolean;
@@ -77,12 +81,15 @@ export default function Sidebar() {
     } = useReport();
 
     const isBs = isBsView(currentView);
+    const isAnalysis = isAnalysisView(currentView);
     const [plOpen, setPlOpen] = useState(true);
     const [bsOpen, setBsOpen] = useState(isBs);
+    const [analysisOpen, setAnalysisOpen] = useState(isAnalysis);
 
     // Auto-expand the section containing the active view
     const handleViewClick = (view: View) => {
-        if (isBsView(view)) setBsOpen(true);
+        if (isAnalysisView(view)) setAnalysisOpen(true);
+        else if (isBsView(view)) setBsOpen(true);
         else setPlOpen(true);
         setCurrentView(view);
     };
@@ -154,6 +161,44 @@ export default function Sidebar() {
                     {bsOpen && (
                         <div className="space-y-0.5">
                             {BS_SUB_ITEMS.map(item => (
+                                <NavButton
+                                    key={item.view}
+                                    view={item.view}
+                                    label={item.label}
+                                    currentView={currentView}
+                                    onClick={handleViewClick}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* Divider */}
+                <div className="h-px bg-nav-border mx-3 my-2" />
+
+                <p className="text-[10px] uppercase font-semibold text-txt-muted px-5 pt-2 pb-1.5" style={{ letterSpacing: '1px' }}>
+                    Analisis
+                </p>
+
+                {/* Analysis section */}
+                <div className="mb-1">
+                    <button
+                        onClick={() => setAnalysisOpen(o => !o)}
+                        className="w-full flex items-center justify-between px-3 py-[7px] text-[13px] font-semibold text-nav-text hover:bg-nav-hover rounded-md transition-colors"
+                    >
+                        <span className="flex items-center gap-2.5">
+                            <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                            </svg>
+                            Analisis
+                        </span>
+                        <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${analysisOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                    </button>
+                    {analysisOpen && (
+                        <div className="space-y-0.5">
+                            {ANALYSIS_SUB_ITEMS.map(item => (
                                 <NavButton
                                     key={item.view}
                                     view={item.view}

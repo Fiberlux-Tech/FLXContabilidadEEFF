@@ -117,7 +117,7 @@ export default function MainContent() {
             return <PLNoteView tables={tables} columns={columns} year={reportData.year} />;
         }
 
-        if (currentView === 'pl') {
+        if (currentView === 'pl' || currentView === 'analysis_pl_finanzas') {
             const rows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
             return (
                 <FinancialTable

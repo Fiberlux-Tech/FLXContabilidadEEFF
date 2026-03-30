@@ -33,7 +33,7 @@ from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MONTH_NAMES_SET
 from config.company import VALID_COMPANIES
 from config.fields import (
     ASIENTO, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL,
-    CENTRO_COSTO, DESC_CECO, FECHA, SALDO, PARTIDA_PL, MES,
+    CENTRO_COSTO, DESC_CECO, FECHA, SALDO, PARTIDA_PL, PARTIDA_BS, MES,
 )
 
 logger = logging.getLogger("flxcontabilidad.data_service")
@@ -480,16 +480,30 @@ def get_detail_records(
 
     If month is None, returns records for all months (full period).
     If the data hasn't been loaded yet, triggers a load first.
+    Checks P&L data first; if no match, falls back to BS data.
     """
+    # Try P&L first
     df = _get_from_cache("df", company, year)
     if df is None:
-        # Force a P&L load to populate the df cache (BS not needed for detail)
         load_pl_data(company, year, force_refresh=True)
         df = _get_from_cache("df", company, year)
-        if df is None:
+
+    partida_col = PARTIDA_PL
+    if df is not None and (df[PARTIDA_PL] == partida).any():
+        pass  # use P&L df
+    else:
+        # Fall back to BS
+        df_bs = _get_from_cache("bs", company, year)
+        if df_bs is None:
+            load_bs_data(company, year, force_refresh=True)
+            df_bs = _get_from_cache("bs", company, year)
+        if df_bs is not None:
+            df = df_bs
+            partida_col = PARTIDA_BS
+        elif df is None:
             return []
 
-    mask = df[PARTIDA_PL] == partida
+    mask = df[partida_col] == partida
 
     if month is not None:
         month_num = _MONTH_NAME_TO_NUM.get(month)
