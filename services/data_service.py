@@ -23,7 +23,8 @@ from accounting.transforms import (
 )
 from accounting.aggregation import (
     preaggregate, sales_details, proyectos_especiales,
-    detail_by_ceco, detail_resultado_financiero,
+    detail_by_ceco, detail_by_cuenta, detail_ceco_by_cuenta,
+    detail_resultado_financiero,
     bs_detail_by_cuenta, bs_top20_by_nit, append_total_row,
 )
 from accounting.statements import pl_summary, bs_summary
@@ -211,13 +212,23 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
 
     # P&L note detail pivots (by CECO)
     costo = detail_by_ceco(df_stmt, ["COSTO"], with_total_row=True, preagg=preagg)
+    costo_by_cuenta = detail_ceco_by_cuenta(df_stmt, ["COSTO"], preagg=preagg)
     gasto_venta = detail_by_ceco(df_stmt, ["GASTO VENTA"], with_total_row=True, preagg=preagg)
+    gasto_venta_by_cuenta = detail_by_cuenta(df_stmt, ["GASTO VENTA"], preagg=preagg)
     gasto_admin = detail_by_ceco(df_stmt, ["GASTO ADMIN"], with_total_row=True, preagg=preagg)
+    gasto_admin_by_cuenta = detail_by_cuenta(df_stmt, ["GASTO ADMIN"], preagg=preagg)
     dya_costo = detail_by_ceco(df_stmt, ["D&A - COSTO"], with_total_row=True, preagg=preagg)
+    dya_costo_by_cuenta = detail_by_cuenta(df_stmt, ["D&A - COSTO"], preagg=preagg)
     dya_gasto = detail_by_ceco(df_stmt, ["D&A - GASTO"], with_total_row=True, preagg=preagg)
+    dya_gasto_by_cuenta = detail_by_cuenta(df_stmt, ["D&A - GASTO"], preagg=preagg)
 
     # Resultado Financiero (split into ingresos/gastos by cuenta)
     res_fin = detail_resultado_financiero(df_stmt, preagg=preagg)
+    otros_ingresos_by_cuenta = detail_by_cuenta(df_stmt, ["OTROS INGRESOS"], preagg=preagg)
+    participacion_by_cuenta = detail_by_cuenta(df_stmt, ["PARTICIPACION DE TRABAJADORES"], preagg=preagg)
+    provision_by_cuenta = detail_by_cuenta(df_stmt, ["PROVISION INCOBRABLE"], preagg=preagg)
+    otros_egresos = detail_by_ceco(df_stmt, ["OTROS EGRESOS"], with_total_row=True, preagg=preagg)
+    otros_egresos_by_cuenta = detail_by_cuenta(df_stmt, ["OTROS EGRESOS"], preagg=preagg)
 
     logger.info("Transforms: %.2fs", time.perf_counter() - t1)
 
@@ -229,12 +240,22 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
         "ingresos_ordinarios": _df_to_records(sd),
         "ingresos_proyectos": _df_to_records(pe),
         "costo": _df_to_records(costo),
+        "costo_by_cuenta": _df_to_records(costo_by_cuenta),
         "gasto_venta": _df_to_records(gasto_venta),
+        "gasto_venta_by_cuenta": _df_to_records(gasto_venta_by_cuenta),
         "gasto_admin": _df_to_records(gasto_admin),
+        "gasto_admin_by_cuenta": _df_to_records(gasto_admin_by_cuenta),
         "dya_costo": _df_to_records(dya_costo),
+        "dya_costo_by_cuenta": _df_to_records(dya_costo_by_cuenta),
         "dya_gasto": _df_to_records(dya_gasto),
+        "dya_gasto_by_cuenta": _df_to_records(dya_gasto_by_cuenta),
         "resultado_financiero_ingresos": _df_to_records(res_fin.ingresos),
         "resultado_financiero_gastos": _df_to_records(res_fin.gastos),
+        "otros_ingresos_by_cuenta": _df_to_records(otros_ingresos_by_cuenta),
+        "participacion_by_cuenta": _df_to_records(participacion_by_cuenta),
+        "provision_by_cuenta": _df_to_records(provision_by_cuenta),
+        "otros_egresos": _df_to_records(otros_egresos),
+        "otros_egresos_by_cuenta": _df_to_records(otros_egresos_by_cuenta),
         "company": company,
         "year": year,
         "months": months,
@@ -274,23 +295,43 @@ def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd
     sd = sales_details(df_stmt, with_total_row=True, preagg=preagg)
     pe = proyectos_especiales(df_stmt, MONTH_NAMES_LIST, with_total_row=True)
     costo = detail_by_ceco(df_stmt, ["COSTO"], with_total_row=True, preagg=preagg)
+    costo_by_cuenta = detail_ceco_by_cuenta(df_stmt, ["COSTO"], preagg=preagg)
     gasto_venta = detail_by_ceco(df_stmt, ["GASTO VENTA"], with_total_row=True, preagg=preagg)
+    gasto_venta_by_cuenta = detail_by_cuenta(df_stmt, ["GASTO VENTA"], preagg=preagg)
     gasto_admin = detail_by_ceco(df_stmt, ["GASTO ADMIN"], with_total_row=True, preagg=preagg)
+    gasto_admin_by_cuenta = detail_by_cuenta(df_stmt, ["GASTO ADMIN"], preagg=preagg)
     dya_costo = detail_by_ceco(df_stmt, ["D&A - COSTO"], with_total_row=True, preagg=preagg)
+    dya_costo_by_cuenta = detail_by_cuenta(df_stmt, ["D&A - COSTO"], preagg=preagg)
     dya_gasto = detail_by_ceco(df_stmt, ["D&A - GASTO"], with_total_row=True, preagg=preagg)
+    dya_gasto_by_cuenta = detail_by_cuenta(df_stmt, ["D&A - GASTO"], preagg=preagg)
     res_fin = detail_resultado_financiero(df_stmt, preagg=preagg)
+    otros_ingresos_by_cuenta = detail_by_cuenta(df_stmt, ["OTROS INGRESOS"], preagg=preagg)
+    participacion_by_cuenta = detail_by_cuenta(df_stmt, ["PARTICIPACION DE TRABAJADORES"], preagg=preagg)
+    provision_by_cuenta = detail_by_cuenta(df_stmt, ["PROVISION INCOBRABLE"], preagg=preagg)
+    otros_egresos = detail_by_ceco(df_stmt, ["OTROS EGRESOS"], with_total_row=True, preagg=preagg)
+    otros_egresos_by_cuenta = detail_by_cuenta(df_stmt, ["OTROS EGRESOS"], preagg=preagg)
 
     records = {
         "pl_summary": _df_to_records(pl),
         "ingresos_ordinarios": _df_to_records(sd),
         "ingresos_proyectos": _df_to_records(pe),
         "costo": _df_to_records(costo),
+        "costo_by_cuenta": _df_to_records(costo_by_cuenta),
         "gasto_venta": _df_to_records(gasto_venta),
+        "gasto_venta_by_cuenta": _df_to_records(gasto_venta_by_cuenta),
         "gasto_admin": _df_to_records(gasto_admin),
+        "gasto_admin_by_cuenta": _df_to_records(gasto_admin_by_cuenta),
         "dya_costo": _df_to_records(dya_costo),
+        "dya_costo_by_cuenta": _df_to_records(dya_costo_by_cuenta),
         "dya_gasto": _df_to_records(dya_gasto),
+        "dya_gasto_by_cuenta": _df_to_records(dya_gasto_by_cuenta),
         "resultado_financiero_ingresos": _df_to_records(res_fin.ingresos),
         "resultado_financiero_gastos": _df_to_records(res_fin.gastos),
+        "otros_ingresos_by_cuenta": _df_to_records(otros_ingresos_by_cuenta),
+        "participacion_by_cuenta": _df_to_records(participacion_by_cuenta),
+        "provision_by_cuenta": _df_to_records(provision_by_cuenta),
+        "otros_egresos": _df_to_records(otros_egresos),
+        "otros_egresos_by_cuenta": _df_to_records(otros_egresos_by_cuenta),
     }
     return df_stmt, pl, records
 

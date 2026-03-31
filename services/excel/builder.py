@@ -180,6 +180,8 @@ def build_excel_data(raw: pd.DataFrame) -> PnLReportData:
         gasto_venta_expanded=results["gasto_venta_exp"],
         gasto_admin=results["gasto_admin"],
         gasto_admin_expanded=results["gasto_admin_exp"],
+        otros_egresos=results["otros_egresos"],
+        otros_egresos_expanded=results["otros_egresos_exp"],
         resultado_financiero_ingresos=results["res_fin"].ingresos,
         resultado_financiero_gastos=results["res_fin"].gastos,
         dya_costo=results["dya_costo"],

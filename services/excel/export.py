@@ -71,11 +71,12 @@ def _write_detalle_cc_x_cc(writer, data):
     """Write the five expanded CECO x CUENTA detail sections on one sheet."""
     sheet_name = "DETALLE_CC_x_CC"
     sections = [
-        ("xx. DETALLE DE COSTOS",      data.costo_expanded),
-        ("xx. DETALLE DE GASTO VENTA", data.gasto_venta_expanded),
-        ("xx. DETALLE DE GASTO ADMIN", data.gasto_admin_expanded),
-        ("xx. D&A - COSTO",            data.dya_costo_expanded),
-        ("xx. D&A - GASTO",            data.dya_gasto_expanded),
+        ("xx. DETALLE DE COSTOS",        data.costo_expanded),
+        ("xx. DETALLE DE GASTO VENTA",   data.gasto_venta_expanded),
+        ("xx. DETALLE DE GASTO ADMIN",   data.gasto_admin_expanded),
+        ("xx. DETALLE DE OTROS EGRESOS", data.otros_egresos_expanded),
+        ("xx. D&A - COSTO",             data.dya_costo_expanded),
+        ("xx. D&A - GASTO",             data.dya_gasto_expanded),
     ]
 
     first_label, first_df = sections[0]

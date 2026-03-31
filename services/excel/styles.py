@@ -258,8 +258,8 @@ def style_validator_sheets(writer):
 
 
 def style_detail_sheets(writer):
-    """Style COSTO_DETAIL, GASTO_VENTA_DETAIL, GASTO_ADMIN_DETAIL."""
-    for sheet_name in ("COSTO_DETAIL", "GASTO_VENTA_DETAIL", "GASTO_ADMIN_DETAIL"):
+    """Style COSTO_DETAIL, GASTO_VENTA_DETAIL, GASTO_ADMIN_DETAIL, OTROS_EGRESOS_DETAIL."""
+    for sheet_name in ("COSTO_DETAIL", "GASTO_VENTA_DETAIL", "GASTO_ADMIN_DETAIL", "OTROS_EGRESOS_DETAIL"):
         style_sheet(writer.sheets[sheet_name], "standard")
 
 

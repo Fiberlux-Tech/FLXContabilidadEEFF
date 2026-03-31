@@ -38,12 +38,22 @@ export interface ReportData {
   ingresos_ordinarios: ReportRow[];
   ingresos_proyectos: ReportRow[];
   costo: ReportRow[];
+  costo_by_cuenta: ReportRow[];
   gasto_venta: ReportRow[];
+  gasto_venta_by_cuenta: ReportRow[];
   gasto_admin: ReportRow[];
+  gasto_admin_by_cuenta: ReportRow[];
   dya_costo: ReportRow[];
+  dya_costo_by_cuenta: ReportRow[];
   dya_gasto: ReportRow[];
+  dya_gasto_by_cuenta: ReportRow[];
+  otros_egresos: ReportRow[];
+  otros_egresos_by_cuenta: ReportRow[];
   resultado_financiero_ingresos: ReportRow[];
   resultado_financiero_gastos: ReportRow[];
+  otros_ingresos_by_cuenta: ReportRow[];
+  participacion_by_cuenta: ReportRow[];
+  provision_by_cuenta: ReportRow[];
   // BS note detail tables
   bs_efectivo: ReportRow[];
   bs_cxc_comerciales: ReportRow[];

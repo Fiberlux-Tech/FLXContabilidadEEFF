@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useReport, isBsView } from '@/contexts/ReportContext';
 import FinancialTable from '@/features/dashboard/FinancialTable';
+import ExpandableFinancialTable from '@/features/dashboard/ExpandableFinancialTable';
 import PLNoteView from '@/features/dashboard/PLNoteView';
 import type { ReportData, TableConfig, ReportRow } from '@/types';
 import { VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
@@ -117,7 +118,28 @@ export default function MainContent() {
             return <PLNoteView tables={tables} columns={columns} year={reportData.year} />;
         }
 
-        if (currentView === 'pl' || currentView === 'analysis_pl_finanzas') {
+        if (currentView === 'analysis_pl_finanzas') {
+            const rows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
+            const cuentaKeys = ['CUENTA_CONTABLE', 'DESCRIPCION'];
+            const cecoKeys = ['CENTRO_COSTO', 'DESC_CECO', 'CUENTA_CONTABLE', 'DESCRIPCION'];
+            return (
+                <ExpandableFinancialTable
+                    rows={rows}
+                    columns={plColumns}
+                    costoByCuenta={getMergedDetailRows('costo_by_cuenta', cecoKeys)}
+                    gastoVentaByCuenta={getMergedDetailRows('gasto_venta_by_cuenta', cuentaKeys)}
+                    gastoAdminByCuenta={getMergedDetailRows('gasto_admin_by_cuenta', cuentaKeys)}
+                    dyaCostoByCuenta={getMergedDetailRows('dya_costo_by_cuenta', cuentaKeys)}
+                    dyaGastoByCuenta={getMergedDetailRows('dya_gasto_by_cuenta', cuentaKeys)}
+                    otrosIngresosByCuenta={getMergedDetailRows('otros_ingresos_by_cuenta', cuentaKeys)}
+                    otrosEgresosByCuenta={getMergedDetailRows('otros_egresos_by_cuenta', cuentaKeys)}
+                    participacionByCuenta={getMergedDetailRows('participacion_by_cuenta', cuentaKeys)}
+                    provisionByCuenta={getMergedDetailRows('provision_by_cuenta', cuentaKeys)}
+                />
+            );
+        }
+
+        if (currentView === 'pl') {
             const rows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
             return (
                 <FinancialTable
@@ -162,12 +184,22 @@ function getDataKeyForTable(table: TableConfig, data: ReportData): keyof ReportD
         ['ingresos_ordinarios', data.ingresos_ordinarios],
         ['ingresos_proyectos', data.ingresos_proyectos],
         ['costo', data.costo],
+        ['costo_by_cuenta', data.costo_by_cuenta],
         ['gasto_venta', data.gasto_venta],
+        ['gasto_venta_by_cuenta', data.gasto_venta_by_cuenta],
         ['gasto_admin', data.gasto_admin],
+        ['gasto_admin_by_cuenta', data.gasto_admin_by_cuenta],
         ['dya_costo', data.dya_costo],
+        ['dya_costo_by_cuenta', data.dya_costo_by_cuenta],
         ['dya_gasto', data.dya_gasto],
+        ['dya_gasto_by_cuenta', data.dya_gasto_by_cuenta],
+        ['otros_egresos', data.otros_egresos],
+        ['otros_egresos_by_cuenta', data.otros_egresos_by_cuenta],
         ['resultado_financiero_ingresos', data.resultado_financiero_ingresos],
         ['resultado_financiero_gastos', data.resultado_financiero_gastos],
+        ['otros_ingresos_by_cuenta', data.otros_ingresos_by_cuenta],
+        ['participacion_by_cuenta', data.participacion_by_cuenta],
+        ['provision_by_cuenta', data.provision_by_cuenta],
         // BS notes
         ['bs_efectivo', data.bs_efectivo],
         ['bs_cxc_comerciales', data.bs_cxc_comerciales],

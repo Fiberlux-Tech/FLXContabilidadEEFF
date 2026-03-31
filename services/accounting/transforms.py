@@ -11,6 +11,7 @@ from accounting.rules import (
     IMPUESTO_RENTA_FIRST_CHAR, EXCLUDED_CUENTA,
     CECO_PREFIX_DYA_COSTO, CECO_PREFIX_RESULTADO_FINANCIERO,
     CECO_PREFIX_COSTO, CECO_PREFIX_GASTO_VENTA, CECO_PREFIX_GASTO_ADMIN,
+    CECO_PREFIX_OTROS_EGRESOS,
     BS_CLASSIFICATION, BS_CLASSIFICATION_OVERRIDES,
 )
 from config.exceptions import DataValidationError
@@ -119,6 +120,7 @@ def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
         ceco1.isin(CECO_PREFIX_COSTO),
         ceco1 == CECO_PREFIX_GASTO_VENTA,
         ceco1 == CECO_PREFIX_GASTO_ADMIN,
+        ceco1 == CECO_PREFIX_OTROS_EGRESOS,
     ]
     choices = [
         "PROVISION INCOBRABLE",
@@ -135,6 +137,7 @@ def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
         "COSTO",
         "GASTO VENTA",
         "GASTO ADMIN",
+        "OTROS EGRESOS",
     ]
 
     df[PARTIDA_PL] = pd.Categorical(np.select(conditions, choices, default="POR CLASIFICAR"))

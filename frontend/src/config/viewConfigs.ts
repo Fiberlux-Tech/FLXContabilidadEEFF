@@ -10,6 +10,7 @@ export const VIEW_TITLE_MAP: Record<View, string> = {
     costo: 'Costo de Operaciones',
     gasto_venta: 'Gastos de Ventas',
     gasto_admin: 'Gastos de Administracion',
+    otros_egresos: 'Otros Egresos',
     dya: 'Depreciacion y Amortizacion',
     resultado_financiero: 'Resultado Financiero',
     bs_efectivo: 'Efectivo y Equivalentes',
@@ -23,11 +24,12 @@ export const VIEW_TITLE_MAP: Record<View, string> = {
     bs_cxp_relacionadas: 'Cuentas por Pagar Relacionadas',
     bs_provisiones: 'Provisiones por Beneficios a Empleados',
     bs_tributos: 'Tributos por Pagar',
+    analysis_pl_finanzas: 'P&L - Finanzas',
 };
 
 // ── Note view table configs ──────────────────────────────────────────
 
-export type NoteView = 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'dya' | 'resultado_financiero'
+export type NoteView = 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'otros_egresos' | 'dya' | 'resultado_financiero'
     | 'bs_efectivo' | 'bs_cxc_comerciales' | 'bs_cxc_otras' | 'bs_cxc_relacionadas'
     | 'bs_ppe' | 'bs_otros_activos'
     | 'bs_cxp_comerciales' | 'bs_cxp_otras' | 'bs_cxp_relacionadas'
@@ -61,6 +63,12 @@ export const VIEW_TABLE_CONFIGS: Record<NoteView, NoteViewConfig> = {
     gasto_admin: {
         tables: (d) => [
             { title: 'Gastos de Administracion', rows: d.gasto_admin, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'GASTO ADMIN', filterCol: 'CENTRO_COSTO' },
+        ],
+        labelKeys: ['CENTRO_COSTO', 'DESC_CECO'],
+    },
+    otros_egresos: {
+        tables: (d) => [
+            { title: 'Otros Egresos', rows: d.otros_egresos, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'OTROS EGRESOS', filterCol: 'CENTRO_COSTO' },
         ],
         labelKeys: ['CENTRO_COSTO', 'DESC_CECO'],
     },

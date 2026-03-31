@@ -203,6 +203,11 @@ NOTA_GROUPS: tuple[NotaGroup, ...] = (
     )),
 
     NotaGroup(entries=(
+        _pl_ceco("Otros Egresos", "otros_egresos",
+                 partida_labels=("OTROS EGRESOS",)),
+    )),
+
+    NotaGroup(entries=(
         _pl_ceco("Depreciacion y Amortizacion (Costo)", "dya_costo",
                  partida_labels=("D&A - COSTO",)),
         _pl_ceco("Depreciacion y Amortizacion (Gasto)", "dya_gasto",

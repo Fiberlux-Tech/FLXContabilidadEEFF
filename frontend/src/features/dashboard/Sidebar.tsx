@@ -27,6 +27,7 @@ const PL_SUB_ITEMS = [
     { view: 'costo', label: 'Costo de Operaciones' },
     { view: 'gasto_venta', label: 'Gastos de Ventas' },
     { view: 'gasto_admin', label: 'Gastos de Administracion' },
+    { view: 'otros_egresos', label: 'Otros Egresos' },
     { view: 'dya', label: 'Depreciacion y Amortizacion' },
     { view: 'resultado_financiero', label: 'Resultado Financiero' },
 ] as const;
@@ -102,10 +103,6 @@ export default function Sidebar() {
                 <p className="text-[11px] text-txt-muted mt-0.5 font-medium">Estados Financieros</p>
             </div>
 
-            <p className="text-[10px] uppercase font-semibold text-txt-muted px-5 pt-2 pb-1.5" style={{ letterSpacing: '1px' }}>
-                Reportes
-            </p>
-
             {/* Navigation */}
             <nav className="flex-1 px-2">
                 {/* Estado de Resultados section */}
@@ -176,10 +173,6 @@ export default function Sidebar() {
                 {/* Divider */}
                 <div className="h-px bg-nav-border mx-3 my-2" />
 
-                <p className="text-[10px] uppercase font-semibold text-txt-muted px-5 pt-2 pb-1.5" style={{ letterSpacing: '1px' }}>
-                    Analisis
-                </p>
-
                 {/* Analysis section */}
                 <div className="mb-1">
                     <button
@@ -190,7 +183,7 @@ export default function Sidebar() {
                             <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
                             </svg>
-                            Analisis
+                            Analisis de Finanzas
                         </span>
                         <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${analysisOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

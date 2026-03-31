@@ -47,6 +47,7 @@ def build_pdf_data(raw_current_full: pd.DataFrame, raw_prev: pd.DataFrame,
     pdf_costo = detail_by_ceco_pdf(ctx, ["COSTO"], ascending=True, with_total_row=True)
     pdf_gasto_venta = detail_by_ceco_pdf(ctx, ["GASTO VENTA"], ascending=True, with_total_row=True)
     pdf_gasto_admin = detail_by_ceco_pdf(ctx, ["GASTO ADMIN"], ascending=True, with_total_row=True)
+    pdf_otros_egresos = detail_by_ceco_pdf(ctx, ["OTROS EGRESOS"], ascending=True, with_total_row=True)
 
     pdf_res_fin = detail_resultado_financiero_pdf(ctx)
 
@@ -114,6 +115,7 @@ def build_pdf_data(raw_current_full: pd.DataFrame, raw_prev: pd.DataFrame,
         costo=pdf_costo,
         gasto_venta=pdf_gasto_venta,
         gasto_admin=pdf_gasto_admin,
+        otros_egresos=pdf_otros_egresos,
         resultado_financiero_ingresos=pdf_res_fin.ingresos,
         resultado_financiero_gastos=pdf_res_fin.gastos,
         dya_costo=pdf_dya_costo,

@@ -50,7 +50,7 @@ def build_pl_rows(lookup, val_cols):
     utilidad_bruta = ingresos_totales + sum_rows("COSTO", "D&A - COSTO")
     utilidad_op = utilidad_bruta + sum_rows(
         "GASTO VENTA", "GASTO ADMIN", "PARTICIPACION DE TRABAJADORES",
-        "D&A - GASTO", "PROVISION INCOBRABLE", "OTROS INGRESOS",
+        "D&A - GASTO", "PROVISION INCOBRABLE", "OTROS INGRESOS", "OTROS EGRESOS",
     )
     utilidad_air = utilidad_op + sum_rows("RESULTADO FINANCIERO", "DIFERENCIA DE CAMBIO")
     utilidad_neta = utilidad_air + sum_rows("IMPUESTO A LA RENTA")
@@ -70,6 +70,7 @@ def build_pl_rows(lookup, val_cols):
         data_row("D&A - GASTO"),
         data_row("PROVISION INCOBRABLE"),
         data_row("OTROS INGRESOS"),
+        data_row("OTROS EGRESOS"),
         ["UTILIDAD OPERATIVA"] + utilidad_op.tolist(),
         [""] + [None] * len(val_cols),
         data_row("RESULTADO FINANCIERO"),

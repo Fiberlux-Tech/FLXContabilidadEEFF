@@ -29,6 +29,8 @@ class PnLReportData:
     gasto_venta_expanded: pd.DataFrame      # was "gasto_venta_exp"
     gasto_admin: pd.DataFrame
     gasto_admin_expanded: pd.DataFrame      # was "gasto_admin_exp"
+    otros_egresos: pd.DataFrame
+    otros_egresos_expanded: pd.DataFrame
     resultado_financiero_ingresos: pd.DataFrame  # 77* accounts, with TOTAL row
     resultado_financiero_gastos: pd.DataFrame    # non-77* accounts, with TOTAL row
     dya_costo: pd.DataFrame                      # D&A - COSTO by CENTRO_COSTO, with TOTAL row
@@ -48,6 +50,7 @@ class PdfReportData:
     costo: pd.DataFrame                             # COSTO by CECO (summary)
     gasto_venta: pd.DataFrame                       # GASTO VENTA by CECO (summary)
     gasto_admin: pd.DataFrame                       # GASTO ADMIN by CECO (summary)
+    otros_egresos: pd.DataFrame                     # OTROS EGRESOS by CECO (summary)
     resultado_financiero_ingresos: pd.DataFrame     # 77* accounts by CUENTA
     resultado_financiero_gastos: pd.DataFrame       # non-77* accounts by CUENTA
     dya_costo: pd.DataFrame                         # D&A - COSTO by CECO
