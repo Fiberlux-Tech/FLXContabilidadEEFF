@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useReport } from '@/contexts/ReportContext';
-import { isBsView, isAnalysisView, PL_NAV_ITEMS, BS_NAV_ITEMS, ANALYSIS_NAV_ITEMS } from '@/config/viewRegistry';
+import { isBsView, isAnalysisView, isUploadsView, PL_NAV_ITEMS, BS_NAV_ITEMS, ANALYSIS_NAV_ITEMS, UPLOADS_NAV_ITEMS } from '@/config/viewRegistry';
 import type { View } from '@/config/viewRegistry';
 import ExportButton from '@/components/ExportButton';
 
@@ -35,13 +35,16 @@ export default function Sidebar() {
 
     const isBs = isBsView(currentView);
     const isAnalysis = isAnalysisView(currentView);
+    const isUploads = isUploadsView(currentView);
     const [plOpen, setPlOpen] = useState(true);
     const [bsOpen, setBsOpen] = useState(isBs);
     const [analysisOpen, setAnalysisOpen] = useState(isAnalysis);
+    const [uploadsOpen, setUploadsOpen] = useState(isUploads);
 
     // Auto-expand the section containing the active view
     const handleViewClick = (view: View) => {
-        if (isAnalysisView(view)) setAnalysisOpen(true);
+        if (isUploadsView(view)) setUploadsOpen(true);
+        else if (isAnalysisView(view)) setAnalysisOpen(true);
         else if (isBsView(view)) setBsOpen(true);
         else setPlOpen(true);
         setCurrentView(view);
@@ -144,6 +147,40 @@ export default function Sidebar() {
                     {analysisOpen && (
                         <div className="space-y-0.5">
                             {ANALYSIS_NAV_ITEMS.map(item => (
+                                <NavButton
+                                    key={item.view}
+                                    view={item.view}
+                                    label={item.label}
+                                    currentView={currentView}
+                                    onClick={handleViewClick}
+                                />
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* Divider */}
+                <div className="h-px bg-nav-border mx-3 my-2" />
+
+                {/* Carga de Datos section */}
+                <div className="mb-1">
+                    <button
+                        onClick={() => setUploadsOpen(o => !o)}
+                        className="w-full flex items-center justify-between px-3 py-[7px] text-[13px] font-semibold text-nav-text hover:bg-nav-hover rounded-md transition-colors"
+                    >
+                        <span className="flex items-center gap-2.5">
+                            <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                            </svg>
+                            Carga de Datos
+                        </span>
+                        <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${uploadsOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                    </button>
+                    {uploadsOpen && (
+                        <div className="space-y-0.5">
+                            {UPLOADS_NAV_ITEMS.map(item => (
                                 <NavButton
                                     key={item.view}
                                     view={item.view}

@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import type { ReportRow, DisplayColumn } from '@/types';
+import type { HeadcountMap } from '@/features/dashboard/useHeadcount';
 import { formatNumber } from '@/utils/format';
 import { getCellValue } from '@/utils/cellValue';
 import { negClass } from '@/utils/classHelpers';
@@ -146,6 +147,20 @@ function formatPercent(value: number | null | undefined): string {
     return value.toFixed(1) + '%';
 }
 
+// ── Per-worker helpers ─────────────────────────────────────────────
+
+function perWorkerValue(costVal: number | null, headcount: number | null | undefined): number | null {
+    if (costVal === null || costVal === undefined) return null;
+    if (!headcount || headcount <= 0) return null;
+    return costVal / headcount;
+}
+
+function formatPerWorker(value: number | null | undefined): string {
+    if (value === null || value === undefined) return '';
+    if (value === 0) return '';
+    return formatNumber(value);
+}
+
 // ── Cell renderers ──────────────────────────────────────────────────
 
 function NumCells({ row, columns }: { row: Record<string, number> | ReportRow; columns: DisplayColumn[] }) {
@@ -189,6 +204,111 @@ function TotalCellPct({ costVal, revenueVal }: { costVal: number | null; revenue
     return <td className={pct !== null && pct < 0 ? 'rpt-neg' : ''}>{formatPercent(pct)}</td>;
 }
 
+function NumCellsPerWorker({
+    row, cecoCode, headcountMap, columns,
+}: {
+    row: Record<string, number> | ReportRow;
+    cecoCode: string | null;
+    headcountMap: HeadcountMap;
+    columns: DisplayColumn[];
+}) {
+    const cecoHc = cecoCode ? headcountMap[cecoCode] : null;
+    return (
+        <>
+            {columns.map(col => {
+                const costVal = getCellValue(row as ReportRow, col);
+                const hc = cecoHc ? cecoHc[col.sourceMonths[0]] ?? null : null;
+                const pw = perWorkerValue(costVal, hc);
+                return (
+                    <td key={col.header} className={negClass(pw)}>
+                        {pw !== null ? formatPerWorker(pw) : '\u2014'}
+                    </td>
+                );
+            })}
+        </>
+    );
+}
+
+function TotalCellPerWorker({ costVal, headcount }: { costVal: number | null; headcount: number | null }) {
+    const pw = perWorkerValue(costVal, headcount);
+    return <td className={negClass(pw)}>{pw !== null ? formatPerWorker(pw) : '\u2014'}</td>;
+}
+
+/** Compute weighted per-worker values for a partida (sum costs / sum headcounts). */
+function partidaPerWorkerCells({
+    partida, headcountMap, columns,
+}: {
+    partida: PlanillaPartida;
+    headcountMap: HeadcountMap;
+    columns: DisplayColumn[];
+}) {
+    // For each month column, sum costs and headcounts across CECOs that have headcount data
+    const cells = columns.map(col => {
+        let totalCost = 0;
+        let totalHc = 0;
+        for (const ceco of partida.cecos) {
+            const cecoHc = headcountMap[ceco.code];
+            if (!cecoHc) continue;
+            const hc = cecoHc[col.sourceMonths[0]];
+            if (!hc || hc <= 0) continue;
+            totalCost += (ceco.totals[col.sourceMonths[0]] ?? 0);
+            totalHc += hc;
+        }
+        const pw = totalHc > 0 ? totalCost / totalHc : null;
+        return { key: col.header, pw };
+    });
+
+    // TOTAL column: weighted average
+    let totalCost = 0;
+    let totalHc = 0;
+    for (const ceco of partida.cecos) {
+        const cecoHc = headcountMap[ceco.code];
+        if (!cecoHc?.['TOTAL_AVG'] || cecoHc['TOTAL_AVG'] <= 0) continue;
+        totalCost += (ceco.totals['TOTAL'] ?? 0);
+        totalHc += cecoHc['TOTAL_AVG'];
+    }
+    const totalPw = totalHc > 0 ? totalCost / totalHc : null;
+
+    return { cells, totalPw };
+}
+
+/** Compute grand-total per-worker (weighted across all CECOs with headcount). */
+function grandTotalPerWorker({
+    partidas, headcountMap, columns,
+}: {
+    partidas: PlanillaPartida[];
+    headcountMap: HeadcountMap;
+    columns: DisplayColumn[];
+}) {
+    const cells = columns.map(col => {
+        let totalCost = 0;
+        let totalHc = 0;
+        for (const p of partidas) {
+            for (const ceco of p.cecos) {
+                const cecoHc = headcountMap[ceco.code];
+                if (!cecoHc) continue;
+                const hc = cecoHc[col.sourceMonths[0]];
+                if (!hc || hc <= 0) continue;
+                totalCost += (ceco.totals[col.sourceMonths[0]] ?? 0);
+                totalHc += hc;
+            }
+        }
+        return { key: col.header, pw: totalHc > 0 ? totalCost / totalHc : null };
+    });
+
+    let totalCost = 0;
+    let totalHc = 0;
+    for (const p of partidas) {
+        for (const ceco of p.cecos) {
+            const cecoHc = headcountMap[ceco.code];
+            if (!cecoHc?.['TOTAL_AVG'] || cecoHc['TOTAL_AVG'] <= 0) continue;
+            totalCost += (ceco.totals['TOTAL'] ?? 0);
+            totalHc += cecoHc['TOTAL_AVG'];
+        }
+    }
+    return { cells, totalPw: totalHc > 0 ? totalCost / totalHc : null };
+}
+
 // ── Table header ────────────────────────────────────────────────────
 
 function TableHead({ columns }: { columns: DisplayColumn[] }) {
@@ -211,12 +331,14 @@ interface PlanillaTableProps {
     rows: ReportRow[];
     columns: DisplayColumn[];
     revenueRow: ReportRow | null;
+    headcountMap?: HeadcountMap | null;
 }
 
-export default function PlanillaTable({ rows, columns, revenueRow }: PlanillaTableProps) {
+export default function PlanillaTable({ rows, columns, revenueRow, headcountMap }: PlanillaTableProps) {
     const [expandedPartidas, setExpandedPartidas] = useState<Set<string>>(new Set());
     const [expandedCecos, setExpandedCecos] = useState<Set<string>>(new Set());
     const [expandedPctPartidas, setExpandedPctPartidas] = useState<Set<string>>(new Set());
+    const [expandedPwPartidas, setExpandedPwPartidas] = useState<Set<string>>(new Set());
     const [planillaFilter, setPlanillaFilter] = useState<PlanillaFilter>('all');
 
     const filteredRows = useMemo(() => {
@@ -263,6 +385,17 @@ export default function PlanillaTable({ rows, columns, revenueRow }: PlanillaTab
             return next;
         });
     };
+
+    const togglePwPartida = (name: string) => {
+        setExpandedPwPartidas(prev => {
+            const next = new Set(prev);
+            if (next.has(name)) next.delete(name);
+            else next.add(name);
+            return next;
+        });
+    };
+
+    const hasHeadcount = headcountMap && Object.keys(headcountMap).length > 0;
 
     const revTotal = (revenueRow?.['TOTAL'] as number | null) ?? null;
 
@@ -411,6 +544,84 @@ export default function PlanillaTable({ rows, columns, revenueRow }: PlanillaTab
                                 <NumCellsPct row={grandTotal as ReportRow} revenueRow={revenueRow} columns={columns} />
                                 <TotalCellPct costVal={grandTotal['TOTAL'] ?? null} revenueVal={revTotal} />
                             </tr>
+                        </tbody>
+                    </table>
+                </>
+            )}
+
+            {/* ═══ TABLE 3: COST PER WORKER ═══ */}
+            {hasHeadcount && (
+                <>
+                    <div className="rpt-separator">
+                        <div className="sep-line"></div>
+                        <span className="sep-label">Costo por Trabajador</span>
+                        <div className="sep-line"></div>
+                    </div>
+
+                    <table className="rpt-table">
+                        <TableHead columns={columns} />
+                        <tbody>
+                            {partidas.map((partida) => {
+                                const isPwExpanded = expandedPwPartidas.has(partida.name);
+                                const { cells: partidaCells, totalPw: partidaTotalPw } =
+                                    partidaPerWorkerCells({ partida, headcountMap: headcountMap!, columns });
+
+                                return (
+                                    <Fragment key={partida.name}>
+                                        <tr className="rpt-row-l0" onClick={() => togglePwPartida(partida.name)}>
+                                            <td>
+                                                <span className="rpt-chevron">{isPwExpanded ? '\u25BE' : '\u25B8'}</span>
+                                                {partida.name}
+                                            </td>
+                                            {partidaCells.map(c => (
+                                                <td key={c.key} className={negClass(c.pw)}>
+                                                    {c.pw !== null ? formatPerWorker(c.pw) : '\u2014'}
+                                                </td>
+                                            ))}
+                                            <td className={negClass(partidaTotalPw)}>
+                                                {partidaTotalPw !== null ? formatPerWorker(partidaTotalPw) : '\u2014'}
+                                            </td>
+                                        </tr>
+
+                                        {isPwExpanded && partida.cecos.map((ceco) => (
+                                            <tr key={`${partida.name}|${ceco.code}`} className="rpt-row-l1">
+                                                <td style={{ cursor: 'default' }}>
+                                                    {ceco.code} {ceco.desc}
+                                                </td>
+                                                <NumCellsPerWorker
+                                                    row={ceco.totals as ReportRow}
+                                                    cecoCode={ceco.code}
+                                                    headcountMap={headcountMap!}
+                                                    columns={columns}
+                                                />
+                                                <TotalCellPerWorker
+                                                    costVal={ceco.totals['TOTAL'] ?? null}
+                                                    headcount={headcountMap![ceco.code]?.['TOTAL_AVG'] ?? null}
+                                                />
+                                            </tr>
+                                        ))}
+                                    </Fragment>
+                                );
+                            })}
+
+                            {/* Per-worker grand total */}
+                            {(() => {
+                                const { cells: gtCells, totalPw: gtTotalPw } =
+                                    grandTotalPerWorker({ partidas, headcountMap: headcountMap!, columns });
+                                return (
+                                    <tr className="rpt-row-total">
+                                        <td>{TOTAL_LABELS[planillaFilter]}</td>
+                                        {gtCells.map(c => (
+                                            <td key={c.key} className={negClass(c.pw)}>
+                                                {c.pw !== null ? formatPerWorker(c.pw) : '\u2014'}
+                                            </td>
+                                        ))}
+                                        <td className={negClass(gtTotalPw)}>
+                                            {gtTotalPw !== null ? formatPerWorker(gtTotalPw) : '\u2014'}
+                                        </td>
+                                    </tr>
+                                );
+                            })()}
                         </tbody>
                     </table>
                 </>

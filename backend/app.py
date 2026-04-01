@@ -61,6 +61,14 @@ def create_app():
     # Initialize auth DB
     init_db(app)
 
+    # Initialize headcount DB (SQLite, separate from auth)
+    from data.headcount_db import init_headcount_db
+    hc_db_path = os.environ.get(
+        'HEADCOUNT_DB_PATH',
+        os.path.join(_monorepo_root, 'data', 'headcount.db'),
+    )
+    app.config['HEADCOUNT_DB_PATH'] = init_headcount_db(hc_db_path)
+
     # Register blueprints
     app.register_blueprint(auth_bp, url_prefix='/auth')
 

@@ -5,6 +5,8 @@ import ExpandableFinancialTable from '@/features/dashboard/ExpandableFinancialTa
 import PlanillaTable from '@/features/dashboard/PlanillaTable';
 import ProveedoresTable from '@/features/dashboard/ProveedoresTable';
 import PLNoteView from '@/features/dashboard/PLNoteView';
+import { useHeadcount } from '@/features/dashboard/useHeadcount';
+import UploadPlanilla from '@/features/dashboard/UploadPlanilla';
 import type { ReportData, TableConfig, ReportRow } from '@/types';
 import { VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
 import { getDataKeyForTable } from '@/utils/dataKeyMapping';
@@ -13,12 +15,19 @@ export default function MainContent() {
     const {
         reportData, currentView, isLoading, error,
         getDisplayColumns, periodRange, getMergedRows, getMergedDetailRows,
-        isBsLoading, bsError,
+        isBsLoading, bsError, selectedCompany, selectedYear,
     } = useReport();
+
+    const { headcount: headcountMap } = useHeadcount(selectedCompany, selectedYear);
 
     // Compute display columns for both variants
     const plColumns = useMemo(() => getDisplayColumns('pl'), [getDisplayColumns]);
     const bsColumns = useMemo(() => getDisplayColumns('bs'), [getDisplayColumns]);
+
+    // Upload views don't need report data — render before loading/error checks
+    if (currentView === 'upload_planilla') {
+        return <UploadPlanilla />;
+    }
 
     if (isLoading) {
         return (
@@ -147,7 +156,7 @@ export default function MainContent() {
             const planillaRows = getMergedDetailRows('planilla_by_cuenta', planillaKeys);
             const plSummaryRows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
             const revenueRow = plSummaryRows.find(r => r['PARTIDA_PL'] === 'INGRESOS ORDINARIOS') ?? null;
-            return <PlanillaTable rows={planillaRows} columns={plColumns} revenueRow={revenueRow} />;
+            return <PlanillaTable rows={planillaRows} columns={plColumns} revenueRow={revenueRow} headcountMap={headcountMap} />;
         }
 
         if (currentView === 'analysis_proveedores') {

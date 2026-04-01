@@ -10,7 +10,7 @@
  * from this registry — no other file needs manual updates for metadata.
  */
 
-export type ViewCategory = 'pl' | 'bs' | 'analysis';
+export type ViewCategory = 'pl' | 'bs' | 'analysis' | 'uploads';
 
 export interface ViewEntry {
     id: string;
@@ -48,6 +48,9 @@ const VIEW_REGISTRY = [
     { id: 'analysis_pl_finanzas',   title: 'P&L - Finanzas',                     navLabel: 'P&L - Finanzas',              category: 'analysis' },
     { id: 'analysis_planilla',      title: 'Analisis de Planilla',               navLabel: 'Analisis de Planilla',        category: 'analysis' },
     { id: 'analysis_proveedores',   title: 'Analisis de Proveedores',            navLabel: 'Analisis de Proveedores',     category: 'analysis' },
+
+    // ── Carga de Datos ─────────────────────────────────────────
+    { id: 'upload_planilla',        title: 'Cargar Planilla',                    navLabel: 'Cargar Planilla',             category: 'uploads' },
 ] as const satisfies readonly ViewEntry[];
 
 // ── Derived types ───────────────────────────────────────────────────────
@@ -68,11 +71,13 @@ export const VIEW_TITLE_MAP: Record<View, string> =
 export const PL_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'pl').map(v => ({ view: v.id as View, label: v.navLabel }));
 export const BS_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'bs').map(v => ({ view: v.id as View, label: v.navLabel }));
 export const ANALYSIS_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'analysis').map(v => ({ view: v.id as View, label: v.navLabel }));
+export const UPLOADS_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'uploads').map(v => ({ view: v.id as View, label: v.navLabel }));
 
 // ── Category helpers ────────────────────────────────────────────────────
 
 const _BS_IDS = new Set(VIEW_REGISTRY.filter(v => v.category === 'bs').map(v => v.id));
 const _ANALYSIS_IDS = new Set(VIEW_REGISTRY.filter(v => v.category === 'analysis').map(v => v.id));
+const _UPLOADS_IDS = new Set(VIEW_REGISTRY.filter(v => v.category === 'uploads').map(v => v.id));
 
 export function isBsView(view: View): boolean {
     return _BS_IDS.has(view);
@@ -80,4 +85,8 @@ export function isBsView(view: View): boolean {
 
 export function isAnalysisView(view: View): boolean {
     return _ANALYSIS_IDS.has(view);
+}
+
+export function isUploadsView(view: View): boolean {
+    return _UPLOADS_IDS.has(view);
 }
