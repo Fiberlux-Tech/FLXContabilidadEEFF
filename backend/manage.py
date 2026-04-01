@@ -12,13 +12,14 @@ if _monorepo_root not in sys.path:
 
 from config.env_loader import load_env_config
 from auth import hash_password, ensure_users_table
+from constants import DEFAULT_DB_PATH
 
 load_env_config(_monorepo_root)
 
 
 def _resolve_db_path():
     monorepo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    db_path = os.environ.get('SQLITE_DB_PATH', './backend/users.db')
+    db_path = os.environ.get('SQLITE_DB_PATH', DEFAULT_DB_PATH)
     if not os.path.isabs(db_path):
         db_path = os.path.join(monorepo_root, db_path)
     return db_path

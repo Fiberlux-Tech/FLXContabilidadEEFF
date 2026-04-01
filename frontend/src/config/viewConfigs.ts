@@ -1,33 +1,7 @@
-import type { View } from '@/contexts/ReportContext';
 import { ALL_MONTHS } from '@/types';
 import type { ReportData, TableConfig, ReportRow, Month } from '@/types';
-
-// ── View title map ───────────────────────────────────────────────────
-
-export const VIEW_TITLE_MAP: Record<View, string> = {
-    pl: 'Estado de Resultados',
-    bs: 'Balance General',
-    ingresos: 'Ingresos',
-    costo: 'Costo de Operaciones',
-    gasto_venta: 'Gastos de Ventas',
-    gasto_admin: 'Gastos de Administracion',
-    otros_egresos: 'Otros Egresos',
-    dya: 'Depreciacion y Amortizacion',
-    resultado_financiero: 'Resultado Financiero',
-    bs_efectivo: 'Efectivo y Equivalentes',
-    bs_cxc_comerciales: 'Cuentas por Cobrar Comerciales',
-    bs_cxc_otras: 'Otras Cuentas por Cobrar',
-    bs_cxc_relacionadas: 'Cuentas por Cobrar Relacionadas',
-    bs_ppe: 'Propiedad, Planta, Equipo e Intangibles',
-    bs_otros_activos: 'Otros Activos',
-    bs_cxp_comerciales: 'Cuentas por Pagar Comerciales',
-    bs_cxp_otras: 'Otras Cuentas por Pagar',
-    bs_cxp_relacionadas: 'Cuentas por Pagar Relacionadas',
-    bs_provisiones: 'Provisiones por Beneficios a Empleados',
-    bs_tributos: 'Tributos por Pagar',
-    analysis_pl_finanzas: 'P&L - Finanzas',
-    analysis_planilla: 'Analisis de Planilla',
-};
+import type { View } from '@/config/viewRegistry';
+export { VIEW_TITLE_MAP } from '@/config/viewRegistry';
 
 // ── Note view table configs ──────────────────────────────────────────
 

@@ -11,7 +11,7 @@ from accounting.aggregation import (
     bs_cxp_relacionadas_by_nit,
 )
 from accounting.statements import pl_summary
-from accounting.notes import BS_PDF_DETAIL_NOTES
+from accounting.notes import BS_PDF_DETAIL_NOTES, BS_NIT_RANKING_ENTRIES
 from pdf.reports import (
     build_column_names, build_bs_column_names,
     pl_summary_pdf, bs_summary_pdf, bs_detail_by_cuenta_pdf,
@@ -96,13 +96,7 @@ def build_pdf_data(raw_current_full: pd.DataFrame, raw_prev: pd.DataFrame,
 
     # Top-N NIT ranking tables for CxC and CxP notas (PDF: top 5)
     nit_rankings = {}
-    PDF_NIT_RANKING_SHEETS = [
-        ("bs_cxc_comerciales_nit_top20", ["Cuentas por cobrar comerciales (neto)"]),
-        ("bs_cxc_otras_nit_top20",       ["Otras cuentas por cobrar (neto)"]),
-        ("bs_cxp_comerciales_nit_top20", ["Cuentas por pagar comerciales"]),
-        ("bs_cxp_otras_nit_top20",       ["Otras cuentas por pagar"]),
-    ]
-    for key, partidas in PDF_NIT_RANKING_SHEETS:
+    for key, partidas in BS_NIT_RANKING_ENTRIES:
         nit_rankings[key] = bs_top_by_nit_pdf(
             df_bs_current, df_bs_prev, year, period_type, period_num,
             partidas, top_n=5,

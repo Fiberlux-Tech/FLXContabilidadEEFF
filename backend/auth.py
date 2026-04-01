@@ -9,7 +9,8 @@ from threading import Lock
 
 import bcrypt
 
-from flask import Blueprint, request, jsonify, session, current_app, g
+from flask import Blueprint, request, session, current_app, g
+from helpers import ok, error, user_dict
 
 
 auth_bp = Blueprint('auth', __name__)
@@ -104,7 +105,7 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
-            return jsonify({'status': 'error', 'error': 'Authentication required'}), 401
+            return error('Authentication required', 401)
         return f(*args, **kwargs)
     return decorated
 
@@ -114,69 +115,52 @@ def login():
     client_ip = request.remote_addr or '0.0.0.0'
 
     if _is_rate_limited(client_ip):
-        return jsonify({'status': 'error', 'error': 'Too many failed login attempts. Please try again later.'}), 429
+        return error('Too many failed login attempts. Please try again later.', 429)
 
     data = request.get_json()
     if not data:
-        return jsonify({'status': 'error', 'error': 'Missing request body'}), 400
+        return error('Missing request body', 400)
 
     username = data.get('username', '').strip()
     password = data.get('password', '')
 
     if not username or not password:
-        return jsonify({'status': 'error', 'error': 'Username and password are required'}), 400
+        return error('Username and password are required', 400)
 
     db = get_db()
     user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
 
     if user is None:
         _record_failed_attempt(client_ip)
-        return jsonify({'status': 'error', 'error': 'Invalid credentials'}), 401
+        return error('Invalid credentials', 401)
 
     if not check_password(password, user['password_hash']):
         _record_failed_attempt(client_ip)
-        return jsonify({'status': 'error', 'error': 'Invalid credentials'}), 401
+        return error('Invalid credentials', 401)
 
     _clear_attempts(client_ip)
     session['user_id'] = user['id']
     session['username'] = user['username']
 
-    return jsonify({
-        'status': 'ok',
-        'data': {
-            'id': user['id'],
-            'username': user['username'],
-            'display_name': user['display_name'] or user['username'],
-        },
-    })
+    return ok(user_dict(user))
 
 
 @auth_bp.route('/logout', methods=['POST'])
 def logout():
     session.clear()
-    return jsonify({'status': 'ok', 'data': {'message': 'Logged out'}})
+    return ok({'message': 'Logged out'})
 
 
 @auth_bp.route('/me', methods=['GET'])
 def me():
     if 'user_id' not in session:
-        return jsonify({'status': 'error', 'error': 'Not authenticated'}), 401
+        return error('Not authenticated', 401)
 
     db = get_db()
     user = db.execute('SELECT * FROM users WHERE id = ?', (session['user_id'],)).fetchone()
 
     if user is None:
         session.clear()
-        return jsonify({'status': 'error', 'error': 'User not found'}), 401
+        return error('User not found', 401)
 
-    return jsonify({
-        'status': 'ok',
-        'data': {
-            'is_authenticated': True,
-            'user': {
-                'id': user['id'],
-                'username': user['username'],
-                'display_name': user['display_name'] or user['username'],
-            },
-        },
-    })
+    return ok({'is_authenticated': True, 'user': user_dict(user)})

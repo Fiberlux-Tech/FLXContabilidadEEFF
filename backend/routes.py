@@ -11,6 +11,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request, send_file
 
 from auth import login_required
+from helpers import ok, error
 from config.calendar import MONTH_NAMES_SET, MIN_YEAR
 from config.company import VALID_COMPANIES, COMPANY_META
 from config.fields import (
@@ -32,14 +33,9 @@ api_bp = Blueprint('api', __name__)
 logger = logging.getLogger('flxcontabilidad.routes')
 
 
-def _ok(data):
-    """Wrap a successful response in a standard envelope."""
-    return jsonify({'status': 'ok', 'data': data})
-
-
 @api_bp.errorhandler(RequestValidationError)
 def handle_validation_error(exc):
-    return jsonify({'status': 'error', 'error': str(exc)}), exc.status_code
+    return error(str(exc), exc.status_code)
 
 
 def _validate_company_year(body: dict) -> tuple[str, int]:
@@ -62,7 +58,7 @@ def _validate_company_year(body: dict) -> tuple[str, int]:
 @login_required
 def get_companies():
     """Return list of valid companies with metadata."""
-    return _ok(COMPANY_META)
+    return ok(COMPANY_META)
 
 
 @api_bp.route('/health', methods=['GET'])
@@ -74,7 +70,7 @@ def health():
 @login_required
 def cache_stats():
     """Return cache hit/miss counters and entry counts per store."""
-    return _ok(get_cache_stats())
+    return ok(get_cache_stats())
 
 
 # ── Shared error handling ──────────────────────────────────────────────
@@ -94,13 +90,13 @@ def _handle_data_errors(label: str):
             try:
                 return fn(body, company, year)
             except (ValueError, KeyError) as exc:
-                return jsonify({'status': 'error', 'error': str(exc)}), 400
+                return error(str(exc), 400)
             except (QueryError, DataValidationError) as exc:
                 logger.exception("Data error %s %s/%s", label, company, year)
-                return jsonify({'status': 'error', 'error': str(exc)}), 500
+                return error(str(exc), 500)
             except PlantillasError as exc:
                 logger.exception("Error %s %s/%s", label, company, year)
-                return jsonify({'status': 'error', 'error': 'Error interno del servidor'}), 500
+                return error('Error interno del servidor', 500)
         return wrapper
     return decorator
 
@@ -112,7 +108,7 @@ def _timed_load(service_fn, body, company, year):
     data = service_fn(company, year, force_refresh=force_refresh)
     result = {k: v for k, v in data.items() if not k.startswith('_')}
     result['_timing_ms'] = round((time.perf_counter() - t0) * 1000)
-    return _ok(result)
+    return ok(result)
 
 
 # ── Data loading ────────────────────────────────────────────────────────
@@ -187,7 +183,7 @@ def get_detail(body, company, year):
 
     records = get_detail_records(company, year, partida, month,
                                  filter_col=filter_col, filter_val=filter_val)
-    return _ok({'records': records})
+    return ok({'records': records})
 
 
 # ── Exports ─────────────────────────────────────────────────────────────
@@ -236,18 +232,18 @@ def _export_handler(export_type: str):
 
     try:
         result = _run_export(company, year, excel_only=_EXPORT_TYPE_MAP[export_type])
-        return _ok(result)
+        return ok(result)
     except FileNotFoundError:
-        return jsonify({'status': 'error', 'error': 'Archivo de reporte no encontrado'}), 404
+        return error('Archivo de reporte no encontrado', 404)
     except ExportError as exc:
         logger.exception("Export error during %s for %s/%s", export_type, company, year)
-        return jsonify({'status': 'error', 'error': str(exc)}), 500
+        return error(str(exc), 500)
     except OSError as exc:
         logger.exception("OS error during %s export for %s/%s", export_type, company, year)
-        return jsonify({'status': 'error', 'error': 'Error de sistema de archivos'}), 500
+        return error('Error de sistema de archivos', 500)
     except PlantillasError as exc:
         logger.exception("Error exporting %s for %s/%s", export_type, company, year)
-        return jsonify({'status': 'error', 'error': 'Error interno del servidor'}), 500
+        return error('Error interno del servidor', 500)
 
 
 @api_bp.route('/export/excel', methods=['POST'])
@@ -285,9 +281,9 @@ def download_file(filename):
     real_output = os.path.realpath(cfg.output_dir)
     real_file = os.path.realpath(filepath)
     if not real_file.startswith(real_output + os.sep):
-        return jsonify({'status': 'error', 'error': 'Acceso denegado'}), 403
+        return error('Acceso denegado', 403)
 
     if not os.path.isfile(filepath):
-        return jsonify({'status': 'error', 'error': 'Archivo no encontrado'}), 404
+        return error('Archivo no encontrado', 404)
 
     return send_file(filepath, as_attachment=True, download_name=safe_name)

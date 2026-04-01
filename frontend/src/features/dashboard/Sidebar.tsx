@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useReport, isBsView, isAnalysisView, type View } from '@/contexts/ReportContext';
+import { useReport } from '@/contexts/ReportContext';
+import { isBsView, isAnalysisView, PL_NAV_ITEMS, BS_NAV_ITEMS, ANALYSIS_NAV_ITEMS } from '@/config/viewRegistry';
+import type { View } from '@/config/viewRegistry';
 import ExportButton from '@/components/ExportButton';
 
 function NavButton({ view, label, currentView, onClick }: {
@@ -22,36 +24,6 @@ function NavButton({ view, label, currentView, onClick }: {
     );
 }
 
-const PL_SUB_ITEMS = [
-    { view: 'pl', label: 'Resumen' },
-    { view: 'ingresos', label: 'Ingresos' },
-    { view: 'costo', label: 'Costo de Operaciones' },
-    { view: 'gasto_venta', label: 'Gastos de Ventas' },
-    { view: 'gasto_admin', label: 'Gastos de Administracion' },
-    { view: 'otros_egresos', label: 'Otros Egresos' },
-    { view: 'dya', label: 'Depreciacion y Amortizacion' },
-    { view: 'resultado_financiero', label: 'Resultado Financiero' },
-] as const;
-
-const BS_SUB_ITEMS = [
-    { view: 'bs', label: 'Resumen' },
-    { view: 'bs_efectivo', label: 'Efectivo y Equivalentes' },
-    { view: 'bs_cxc_comerciales', label: 'CxC Comerciales' },
-    { view: 'bs_cxc_otras', label: 'Otras CxC' },
-    { view: 'bs_cxc_relacionadas', label: 'CxC Relacionadas' },
-    { view: 'bs_ppe', label: 'PPE e Intangibles' },
-    { view: 'bs_otros_activos', label: 'Otros Activos' },
-    { view: 'bs_cxp_comerciales', label: 'CxP Comerciales' },
-    { view: 'bs_cxp_otras', label: 'Otras CxP' },
-    { view: 'bs_cxp_relacionadas', label: 'CxP Relacionadas' },
-    { view: 'bs_provisiones', label: 'Provisiones' },
-    { view: 'bs_tributos', label: 'Tributos' },
-] as const;
-
-const ANALYSIS_SUB_ITEMS = [
-    { view: 'analysis_pl_finanzas', label: 'P&L - Finanzas' },
-    { view: 'analysis_planilla', label: 'Analisis de Planilla' },
-] as const;
 
 
 export default function Sidebar() {
@@ -103,7 +75,7 @@ export default function Sidebar() {
                     </button>
                     {plOpen && (
                         <div className="space-y-0.5">
-                            {PL_SUB_ITEMS.map(item => (
+                            {PL_NAV_ITEMS.map(item => (
                                 <NavButton
                                     key={item.view}
                                     view={item.view}
@@ -137,7 +109,7 @@ export default function Sidebar() {
                     </button>
                     {bsOpen && (
                         <div className="space-y-0.5">
-                            {BS_SUB_ITEMS.map(item => (
+                            {BS_NAV_ITEMS.map(item => (
                                 <NavButton
                                     key={item.view}
                                     view={item.view}
@@ -171,7 +143,7 @@ export default function Sidebar() {
                     </button>
                     {analysisOpen && (
                         <div className="space-y-0.5">
-                            {ANALYSIS_SUB_ITEMS.map(item => (
+                            {ANALYSIS_NAV_ITEMS.map(item => (
                                 <NavButton
                                     key={item.view}
                                     view={item.view}

@@ -18,6 +18,7 @@ from flask import Flask, request
 from flask_cors import CORS
 
 from auth import auth_bp, init_db
+from constants import DEFAULT_DB_PATH
 
 
 def create_app():
@@ -48,7 +49,7 @@ def create_app():
     CORS(app, origins=origins, supports_credentials=True)
 
     # SQLite DB path — resolve relative paths from monorepo root
-    db_path = os.environ.get('SQLITE_DB_PATH', '/var/lib/flxcontabilidad/users.db')
+    db_path = os.environ.get('SQLITE_DB_PATH', DEFAULT_DB_PATH)
     if not os.path.isabs(db_path):
         db_path = os.path.join(_monorepo_root, db_path)
     # Ensure the directory for the SQLite DB exists

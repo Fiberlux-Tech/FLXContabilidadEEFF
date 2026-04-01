@@ -61,3 +61,13 @@ def _build_pdf_detail_notes():
 
 
 BS_PDF_DETAIL_NOTES = _build_pdf_detail_notes()
+
+# ── NIT ranking entries (shared by Excel and PDF builders) ───────────────
+# (key, partidas) — Excel uses top-20; PDF uses top-5.
+
+BS_NIT_RANKING_ENTRIES = [
+    ("bs_cxc_comerciales_nit_top20", ["Cuentas por cobrar comerciales (neto)"]),
+    ("bs_cxc_otras_nit_top20",       ["Otras cuentas por cobrar (neto)"]),
+    ("bs_cxp_comerciales_nit_top20", ["Cuentas por pagar comerciales"]),
+    ("bs_cxp_otras_nit_top20",       ["Otras cuentas por pagar"]),
+]

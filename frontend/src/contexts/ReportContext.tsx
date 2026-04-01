@@ -3,22 +3,11 @@ import { api } from '@/lib/api';
 import { API_CONFIG } from '@/config';
 import { ALL_MONTHS } from '@/types';
 import type { ReportData, PLReportData, BSReportData, CompanyMap, Granularity, PeriodRange, DisplayColumn, MonthSource, ReportRow, Month } from '@/types';
+import { isBsView, isAnalysisView } from '@/config/viewRegistry';
+import type { View } from '@/config/viewRegistry';
 
-export type View = 'pl' | 'bs' | 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'otros_egresos' | 'dya' | 'resultado_financiero'
-    | 'bs_efectivo' | 'bs_cxc_comerciales' | 'bs_cxc_otras' | 'bs_cxc_relacionadas'
-    | 'bs_ppe' | 'bs_otros_activos'
-    | 'bs_cxp_comerciales' | 'bs_cxp_otras' | 'bs_cxp_relacionadas'
-    | 'bs_provisiones' | 'bs_tributos'
-    | 'analysis_pl_finanzas'
-    | 'analysis_planilla';
-
-export function isBsView(view: View): boolean {
-    return view === 'bs' || view.startsWith('bs_');
-}
-
-export function isAnalysisView(view: View): boolean {
-    return view.startsWith('analysis_');
-}
+export type { View };
+export { isBsView, isAnalysisView };
 
 const QUARTER_MONTHS: [Month, Month, Month][] = [
     ['JAN', 'FEB', 'MAR'],

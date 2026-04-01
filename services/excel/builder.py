@@ -28,7 +28,7 @@ from accounting.aggregation import (
 )
 from accounting.statements import pl_summary, bs_summary
 from models.models import PnLReportData
-from accounting.notes import BS_DETAIL_SHEETS
+from accounting.notes import BS_DETAIL_SHEETS, BS_NIT_RANKING_ENTRIES
 
 
 logger = logging.getLogger("plantillas.excel_builder")
@@ -90,13 +90,7 @@ def build_bs_data(raw_bs: pd.DataFrame, pl_summary_df: pd.DataFrame, report_data
         )
 
     # Top-20 NIT ranking tables for CxC and CxP notas
-    BS_NIT_RANKING_SHEETS = [
-        ("bs_cxc_comerciales_nit_top20", ["Cuentas por cobrar comerciales (neto)"]),
-        ("bs_cxc_otras_nit_top20",       ["Otras cuentas por cobrar (neto)"]),
-        ("bs_cxp_comerciales_nit_top20", ["Cuentas por pagar comerciales"]),
-        ("bs_cxp_otras_nit_top20",       ["Otras cuentas por pagar"]),
-    ]
-    for key, partidas in BS_NIT_RANKING_SHEETS:
+    for key, partidas in BS_NIT_RANKING_ENTRIES:
         bs[key] = bs_top20_by_nit(df, partidas, keep_months=keep_months)
 
     # NIT x CUENTA cross-tabs for relacionadas
