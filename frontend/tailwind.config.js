@@ -9,10 +9,10 @@ export default {
       colors: {
         // Sidebar / chrome
         nav: {
-          DEFAULT: '#FAFAFA',
-          hover: '#F0F0F0',
+          DEFAULT: '#F3F2EF',
+          hover: '#E9E8E4',
           active: '#FFEFE5',
-          border: '#EAEAEA',
+          border: '#E0DFDB',
           muted: '#808080',
           text: '#333333',
         },

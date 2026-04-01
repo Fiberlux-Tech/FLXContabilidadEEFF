@@ -179,9 +179,7 @@ export default function MainContent() {
 
     return (
         <main className="flex-1 px-8 py-6 overflow-auto">
-            <div className="max-w-[1500px]">
-                {renderView()}
-            </div>
+            {renderView()}
         </main>
     );
 }
