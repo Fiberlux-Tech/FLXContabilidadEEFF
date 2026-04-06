@@ -20,7 +20,7 @@ from accounting.aggregation import (
     preaggregate, pivot_by_month,
     detail_by_ceco, detail_ceco_by_cuenta,
     detail_resultado_financiero,
-    sales_details, intercompany_details, proyectos_especiales,
+    sales_details, proyectos_especiales,
     bs_detail_by_cuenta,
     bs_top20_by_nit,
     bs_cxc_relacionadas_by_nit,
@@ -142,9 +142,6 @@ def build_excel_data(raw: pd.DataFrame) -> PnLReportData:
         futures["sales"] = pool.submit(
             sales_details, df_stmt, with_total_row=True, preagg=preagg,
         )
-        futures["intercompany"] = pool.submit(
-            intercompany_details, df_stmt, with_total_row=True, preagg=preagg,
-        )
 
     # Collect results — 120s timeout prevents workers from blocking indefinitely
     _FUTURE_TIMEOUT = 120
@@ -170,7 +167,6 @@ def build_excel_data(raw: pd.DataFrame) -> PnLReportData:
         excluded_cuentas=excluded,
         pl_summary=pl,
         sales_details=sales,
-        intercompany_details=results["intercompany"],
         proyectos_especiales=proyectos,
         costo=results["costo"],
         costo_expanded=results["costo_exp"],

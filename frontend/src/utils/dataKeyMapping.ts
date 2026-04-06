@@ -6,7 +6,6 @@ export function getDataKeyForTable(table: TableConfig, data: ReportData): keyof 
         // P&L notes
         ['ingresos_ordinarios', data.ingresos_ordinarios],
         ['ingresos_proyectos', data.ingresos_proyectos],
-        ['ingresos_intercompany', data.ingresos_intercompany],
         ['costo', data.costo],
         ['costo_by_cuenta', data.costo_by_cuenta],
         ['gasto_venta', data.gasto_venta],

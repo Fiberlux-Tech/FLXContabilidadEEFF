@@ -21,7 +21,6 @@ export const VIEW_TABLE_CONFIGS: Record<NoteView, NoteViewConfig> = {
         tables: (d) => [
             { title: 'Ingresos Ordinarios', rows: d.ingresos_ordinarios, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'INGRESOS ORDINARIOS', filterCol: 'CUENTA_CONTABLE' },
             { title: 'Ingresos de Proyectos', rows: d.ingresos_proyectos, labelKeys: ['NIT', 'RAZON_SOCIAL'], headerLabels: ['NIT', 'Razon Social'], partida: 'INGRESOS PROYECTOS', filterCol: 'NIT' },
-            { title: 'Ingresos Intercompany', rows: d.ingresos_intercompany, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'INGRESOS INTERCOMPANY', filterCol: 'CUENTA_CONTABLE' },
         ],
         labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
     },

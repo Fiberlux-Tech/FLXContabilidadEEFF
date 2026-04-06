@@ -7,7 +7,7 @@ from accounting.rules import (
     PROVISION_INCOBRABLE_CUENTAS, DYA_GASTO_PREFIXES,
     PARTICIPACION_TRABAJADORES_CUENTA, DIFERENCIA_CAMBIO_PREFIXES,
     RESULTADO_FINANCIERO_PREFIXES, INGRESOS_ORDINARIOS_PREFIX,
-    INGRESOS_INTERCOMPANY_CUENTAS,
+    INGRESOS_INTERCOMPANY_CUENTAS, INTERCOMPANY_CECO_PATTERN,
     INGRESOS_PROYECTOS_CUENTA, OTROS_INGRESOS_PREFIXES,
     IMPUESTO_RENTA_FIRST_CHAR, EXCLUDED_CUENTA,
     CECO_PREFIX_DYA_COSTO, CECO_PREFIX_RESULTADO_FINANCIERO,
@@ -19,7 +19,7 @@ from config.exceptions import DataValidationError
 from config.fields import (
     CUENTA_CONTABLE, CENTRO_COSTO, FECHA, DESCRIPCION,
     NIT, RAZON_SOCIAL, DESC_CECO, SALDO, FIRST_CHAR,
-    PARTIDA_PL, PARTIDA_BS, SECCION_BS, MES,
+    PARTIDA_PL, PARTIDA_BS, SECCION_BS, MES, IS_INTERCOMPANY,
 )
 
 
@@ -106,6 +106,9 @@ def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
     ceco1 = df[CENTRO_COSTO].str[0]
 
     # Rules in priority order — np.select picks the first match
+    # Note: INGRESOS_INTERCOMPANY_CUENTAS are 70.x accounts — they now fall
+    # through to the INGRESOS_ORDINARIOS_PREFIX rule (cuenta2 == "70").
+    # Intercompany is tracked via the IS_INTERCOMPANY flag instead.
     conditions = [
         cuenta.isin(PROVISION_INCOBRABLE_CUENTAS),
         cuenta4.isin(DYA_GASTO_PREFIXES) & ceco1.isin(CECO_PREFIX_DYA_COSTO),
@@ -113,7 +116,6 @@ def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
         cuenta == PARTICIPACION_TRABAJADORES_CUENTA,
         cuenta4.isin(DIFERENCIA_CAMBIO_PREFIXES),
         cuenta2.isin(RESULTADO_FINANCIERO_PREFIXES),
-        cuenta.isin(INGRESOS_INTERCOMPANY_CUENTAS),
         cuenta2 == INGRESOS_ORDINARIOS_PREFIX,
         cuenta == INGRESOS_PROYECTOS_CUENTA,
         cuenta2.isin(OTROS_INGRESOS_PREFIXES),
@@ -131,7 +133,6 @@ def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
         "PARTICIPACION DE TRABAJADORES",
         "DIFERENCIA DE CAMBIO",
         "RESULTADO FINANCIERO",
-        "INGRESOS INTERCOMPANY",
         "INGRESOS ORDINARIOS",
         "INGRESOS PROYECTOS",
         "OTROS INGRESOS",
@@ -144,6 +145,14 @@ def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     df[PARTIDA_PL] = pd.Categorical(np.select(conditions, choices, default="POR CLASIFICAR"))
+
+    # IS_INTERCOMPANY flag: True for intercompany income accounts OR
+    # any row whose CENTRO_COSTO contains the ".121." pattern.
+    ceco = df[CENTRO_COSTO].astype(str)
+    df[IS_INTERCOMPANY] = (
+        cuenta.isin(INGRESOS_INTERCOMPANY_CUENTAS)
+        | ceco.str.contains(INTERCOMPANY_CECO_PATTERN, regex=False)
+    )
 
     n_unclassified = (df[PARTIDA_PL] == "POR CLASIFICAR").sum()
     if n_unclassified > 0:

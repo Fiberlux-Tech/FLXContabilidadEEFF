@@ -1,5 +1,6 @@
 import { useReport } from '@/contexts/ReportContext';
 import { VIEW_TITLE_MAP } from '@/config/viewConfigs';
+import { isBsView } from '@/config/viewRegistry';
 import { useViewExport } from './useViewExport';
 import ExportButton from '@/components/ExportButton';
 
@@ -29,6 +30,7 @@ export default function TopBar() {
         selectedYear, setSelectedYear,
         granularity, setGranularity,
         periodRange, setPeriodRange,
+        excludeIntercompany, setExcludeIntercompany,
         currentView,
         loadData, isLoading,
         trailingMonthSources,
@@ -131,6 +133,24 @@ export default function TopBar() {
                                 {trailingLabel}
                             </div>
                         </div>
+                    )}
+
+                    {/* Intercompany toggle — only on P&L views */}
+                    {!isBsView(currentView) && (
+                        <>
+                            <div className="w-px h-8 bg-border self-end mb-0.5" />
+                            <div>
+                                <label className="filter-label">Intercompany</label>
+                                <ToggleGroup
+                                    value={excludeIntercompany ? 'off' : 'on'}
+                                    options={[
+                                        { value: 'on', label: 'On' },
+                                        { value: 'off', label: 'Off' },
+                                    ]}
+                                    onChange={v => setExcludeIntercompany(v === 'off')}
+                                />
+                            </div>
+                        </>
                     )}
 
                     <div className="flex items-center gap-1.5">

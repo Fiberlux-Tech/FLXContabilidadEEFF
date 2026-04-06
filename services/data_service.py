@@ -19,7 +19,7 @@ import pandas as pd
 from data.fetcher import fetch_all_data, fetch_pnl_only, fetch_bs_only
 from accounting.transforms import prepare_stmt, prepare_bs_stmt
 from accounting.aggregation import (
-    ensure_month_columns, preaggregate, sales_details, intercompany_details,
+    ensure_month_columns, preaggregate, sales_details,
     proyectos_especiales,
     detail_by_ceco, detail_by_cuenta, detail_ceco_by_cuenta,
     detail_resultado_financiero, detail_planilla,
@@ -34,6 +34,7 @@ from config.company import VALID_COMPANIES
 from config.fields import (
     ASIENTO, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL,
     CENTRO_COSTO, DESC_CECO, FECHA, SALDO, PARTIDA_PL, PARTIDA_BS, MES,
+    IS_INTERCOMPANY,
 )
 
 logger = logging.getLogger("flxcontabilidad.data_service")
@@ -236,12 +237,14 @@ def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd
     """Run P&L transform pipeline.  Returns (df_stmt, pl_df, pl_records_dict)."""
     df_stmt = prepare_stmt(raw_current_full)
     pl = pl_summary(df_stmt)
+    # Excluding-intercompany summary: filter out IS_INTERCOMPANY rows and re-pivot
+    pl_ex_ic = pl_summary(df_stmt[~df_stmt[IS_INTERCOMPANY]])
 
     pl = ensure_month_columns(pl)
+    pl_ex_ic = ensure_month_columns(pl_ex_ic)
 
     preagg = preaggregate(df_stmt)
     sd = sales_details(df_stmt, with_total_row=True, preagg=preagg)
-    ic = intercompany_details(df_stmt, with_total_row=True, preagg=preagg)
     pe = proyectos_especiales(df_stmt, MONTH_NAMES_LIST, with_total_row=True)
     costo = detail_by_ceco(df_stmt, ["COSTO"], with_total_row=True, preagg=preagg)
     costo_by_cuenta = detail_ceco_by_cuenta(df_stmt, ["COSTO"], preagg=preagg)
@@ -265,8 +268,8 @@ def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd
 
     records = {
         "pl_summary": _df_to_records(pl),
+        "pl_summary_ex_ic": _df_to_records(pl_ex_ic),
         "ingresos_ordinarios": _df_to_records(sd),
-        "ingresos_intercompany": _df_to_records(ic),
         "ingresos_proyectos": _df_to_records(pe),
         "costo": _df_to_records(costo),
         "costo_by_cuenta": _df_to_records(costo_by_cuenta),

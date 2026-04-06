@@ -175,12 +175,6 @@ def sales_details(df: pd.DataFrame, with_total_row: bool = False,
                          with_total_row=with_total_row, preagg=preagg)
 
 
-def intercompany_details(df: pd.DataFrame, with_total_row: bool = False,
-                         preagg: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Pivot INGRESOS INTERCOMPANY by CUENTA_CONTABLE + DESCRIPCION."""
-    return _detail_pivot(df, ["INGRESOS INTERCOMPANY"], [CUENTA_CONTABLE, DESCRIPCION],
-                         with_total_row=with_total_row, preagg=preagg)
-
 
 # ── BS detail helpers ────────────────────────────────────────────────────────
 

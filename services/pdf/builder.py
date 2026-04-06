@@ -15,7 +15,7 @@ from accounting.notes import BS_PDF_DETAIL_NOTES, BS_NIT_RANKING_ENTRIES
 from pdf.reports import (
     build_column_names, build_bs_column_names,
     pl_summary_pdf, bs_summary_pdf, bs_detail_by_cuenta_pdf,
-    sales_details_pdf, intercompany_details_pdf, proyectos_especiales_pdf,
+    sales_details_pdf, proyectos_especiales_pdf,
     detail_by_ceco_pdf, detail_resultado_financiero_pdf,
     bs_relacionadas_nit_pdf, bs_top_by_nit_pdf,
 )
@@ -42,7 +42,6 @@ def build_pdf_data(raw_current_full: pd.DataFrame, raw_prev: pd.DataFrame,
 
     pdf_pl = pl_summary_pdf(ctx)
     pdf_sd = sales_details_pdf(ctx, with_total_row=True)
-    pdf_ic = intercompany_details_pdf(ctx, with_total_row=True)
     pdf_pe = proyectos_especiales_pdf(ctx, with_total_row=True)
 
     pdf_costo = detail_by_ceco_pdf(ctx, ["COSTO"], ascending=True, with_total_row=True)
@@ -106,7 +105,6 @@ def build_pdf_data(raw_current_full: pd.DataFrame, raw_prev: pd.DataFrame,
     return PdfReportData(
         pl_summary=pdf_pl,
         sales_details=pdf_sd,
-        intercompany_details=pdf_ic,
         proyectos_especiales=pdf_pe,
         costo=pdf_costo,
         gasto_venta=pdf_gasto_venta,

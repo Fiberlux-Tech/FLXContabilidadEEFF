@@ -22,7 +22,6 @@ class PnLReportData:
     excluded_cuentas: set                   # was "excluded"
     pl_summary: pd.DataFrame                # was "pl"
     sales_details: pd.DataFrame             # was "sd"
-    intercompany_details: pd.DataFrame      # INGRESOS INTERCOMPANY by CUENTA
     proyectos_especiales: pd.DataFrame      # was "pe"
     costo: pd.DataFrame
     costo_expanded: pd.DataFrame            # was "costo_exp"
@@ -47,7 +46,6 @@ class PnLReportData:
 class PdfReportData:
     pl_summary: pd.DataFrame                        # Income statement (4 or 2 value columns)
     sales_details: pd.DataFrame                     # INGRESOS ORDINARIOS by CUENTA
-    intercompany_details: pd.DataFrame              # INGRESOS INTERCOMPANY by CUENTA
     proyectos_especiales: pd.DataFrame              # INGRESOS PROYECTOS by NIT
     costo: pd.DataFrame                             # COSTO by CECO (summary)
     gasto_venta: pd.DataFrame                       # GASTO VENTA by CECO (summary)

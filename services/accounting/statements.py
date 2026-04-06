@@ -46,7 +46,7 @@ def build_pl_rows(lookup, val_cols):
             total += get(n)
         return total
 
-    ingresos_totales = sum_rows("INGRESOS ORDINARIOS", "INGRESOS INTERCOMPANY", "INGRESOS PROYECTOS")
+    ingresos_totales = sum_rows("INGRESOS ORDINARIOS", "INGRESOS PROYECTOS")
     utilidad_bruta = ingresos_totales + sum_rows("COSTO", "D&A - COSTO")
     utilidad_op = utilidad_bruta + sum_rows(
         "GASTO VENTA", "GASTO ADMIN", "PARTICIPACION DE TRABAJADORES",
@@ -58,7 +58,6 @@ def build_pl_rows(lookup, val_cols):
     rows = [
         data_row("INGRESOS ORDINARIOS"),
         data_row("INGRESOS PROYECTOS"),
-        data_row("INGRESOS INTERCOMPANY"),
         ["INGRESOS TOTALES"] + ingresos_totales.tolist(),
         [""] + [None] * len(val_cols),
         data_row("COSTO"),

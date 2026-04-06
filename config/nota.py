@@ -185,11 +185,6 @@ NOTA_GROUPS: tuple[NotaGroup, ...] = (
                   excel_rename_total_to_year=True,
                   pdf_label_cols=_RAZON, pdf_header_labels=_RAZON_HDR,
                   partida_labels=("INGRESOS PROYECTOS",)),
-        NotaEntry(label="Ingresos Intercompany",
-                  pattern=RenderPattern.SALES_INGRESOS,
-                  domain=DataDomain.PL, data_attr="intercompany_details",
-                  excel_rename_total_to_year=True,
-                  partida_labels=("INGRESOS INTERCOMPANY",)),
     )),
 
     NotaGroup(entries=(

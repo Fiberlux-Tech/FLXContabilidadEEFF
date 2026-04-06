@@ -8,7 +8,7 @@ import { negClass } from '@/utils/classHelpers';
 // ── Canonical P&L partida ordering ──────────────────────────────────
 
 const PARTIDA_PL_ORDER = [
-    'INGRESOS ORDINARIOS', 'INGRESOS PROYECTOS', 'INGRESOS INTERCOMPANY',
+    'INGRESOS ORDINARIOS', 'INGRESOS PROYECTOS',
     'COSTO', 'D&A - COSTO',
     'GASTO VENTA', 'GASTO ADMIN',
     'PARTICIPACION DE TRABAJADORES', 'D&A - GASTO',

@@ -30,3 +30,4 @@ RAZON_SOCIAL = "RAZON_SOCIAL"
 # ── Derived columns (created during transforms) ────────────────────────
 FIRST_CHAR = "FIRST_CHAR"
 MES = "MES"
+IS_INTERCOMPANY = "IS_INTERCOMPANY"

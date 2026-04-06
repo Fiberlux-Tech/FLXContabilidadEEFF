@@ -29,6 +29,8 @@ interface ReportState {
     /** Whether BS data is being fetched separately */
     isBsLoading: boolean;
     bsError: string | null;
+    /** When true, pl_summary_ex_ic is used instead of pl_summary */
+    excludeIntercompany: boolean;
 }
 
 type ReportAction =
@@ -39,6 +41,7 @@ type ReportAction =
     | { type: 'SET_GRANULARITY'; granularity: Granularity }
     | { type: 'SET_PERIOD_RANGE'; periodRange: PeriodRange }
     | { type: 'SET_VIEW'; view: View }
+    | { type: 'SET_EXCLUDE_INTERCOMPANY'; exclude: boolean }
     | { type: 'LOAD_START' }
     | { type: 'LOAD_PL_SUCCESS'; data: PLReportData; prevYearData: PLReportData | null }
     | { type: 'LOAD_ERROR'; error: string }
@@ -64,6 +67,7 @@ const initialState: ReportState = {
     isExporting: false,
     isBsLoading: false,
     bsError: null,
+    excludeIntercompany: false,
 };
 
 function reportReducer(state: ReportState, action: ReportAction): ReportState {
@@ -82,6 +86,8 @@ function reportReducer(state: ReportState, action: ReportAction): ReportState {
             return { ...state, periodRange: action.periodRange };
         case 'SET_VIEW':
             return { ...state, currentView: action.view };
+        case 'SET_EXCLUDE_INTERCOMPANY':
+            return { ...state, excludeIntercompany: action.exclude };
         case 'LOAD_START':
             return { ...state, isLoading: true, error: null, bsError: null };
         case 'LOAD_PL_SUCCESS':
@@ -136,6 +142,8 @@ interface IReportContext {
     setGranularity: (g: Granularity) => void;
     periodRange: PeriodRange;
     setPeriodRange: (r: PeriodRange) => void;
+    excludeIntercompany: boolean;
+    setExcludeIntercompany: (v: boolean) => void;
     reportData: ReportData | null;
     prevYearData: ReportData | null;
     currentView: View;
@@ -324,15 +332,18 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
     const getMergedRows = useCallback(
         (key: keyof ReportData, labelKey: string, variant: 'pl' | 'bs'): ReportRow[] => {
             if (!state.reportData) return [];
-            const currentRows = state.reportData[key] as ReportRow[];
+            // When intercompany filter is active, swap pl_summary for pl_summary_ex_ic
+            const effectiveKey = (key === 'pl_summary' && state.excludeIntercompany)
+                ? 'pl_summary_ex_ic' : key;
+            const currentRows = state.reportData[effectiveKey] as ReportRow[];
             if (state.periodRange === 'ytd') return currentRows;
-            const prevRows = (state.prevYearData?.[key] as ReportRow[]) ?? [];
+            const prevRows = (state.prevYearData?.[effectiveKey] as ReportRow[]) ?? [];
             if (variant === 'bs') {
                 return mergeTrailingBSRows(currentRows, prevRows, labelKey, trailingMonthSources, state.selectedYear);
             }
             return mergeTrailingRows(currentRows, prevRows, labelKey, trailingMonthSources, state.selectedYear);
         },
-        [state.reportData, state.prevYearData, state.periodRange, trailingMonthSources, state.selectedYear],
+        [state.reportData, state.prevYearData, state.periodRange, trailingMonthSources, state.selectedYear, state.excludeIntercompany],
     );
 
     const getMergedDetailRows = useCallback(
@@ -357,6 +368,8 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             setGranularity: (g) => dispatch({ type: 'SET_GRANULARITY', granularity: g }),
             periodRange: state.periodRange,
             setPeriodRange: (r) => dispatch({ type: 'SET_PERIOD_RANGE', periodRange: r }),
+            excludeIntercompany: state.excludeIntercompany,
+            setExcludeIntercompany: (v) => dispatch({ type: 'SET_EXCLUDE_INTERCOMPANY', exclude: v }),
             reportData: state.reportData,
             prevYearData: state.prevYearData,
             currentView: state.currentView,
