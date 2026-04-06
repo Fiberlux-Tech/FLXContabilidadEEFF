@@ -197,15 +197,15 @@ export default function TopBar() {
 
                     {/* Intercompany filter — P&L views only */}
                     {!isBsView(currentView) && (
-                        <ToggleGroup
+                        <select
                             value={intercompanyFilter}
-                            options={[
-                                { value: 'all', label: 'Todos' },
-                                { value: 'only_ic', label: 'Solo IC' },
-                                { value: 'ex_ic', label: 'Sin IC' },
-                            ]}
-                            onChange={v => setIntercompanyFilter(v as 'all' | 'only_ic' | 'ex_ic')}
-                        />
+                            onChange={e => setIntercompanyFilter(e.target.value as 'all' | 'only_ic' | 'ex_ic')}
+                            className="select-base"
+                        >
+                            <option value="all">Todos</option>
+                            <option value="only_ic">Solo IC</option>
+                            <option value="ex_ic">Sin IC</option>
+                        </select>
                     )}
 
                     <div className="w-px h-6 bg-border" />

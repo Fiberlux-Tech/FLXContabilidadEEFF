@@ -36,15 +36,23 @@ const FILTER_OPTIONS: { value: PlanillaFilter; label: string }[] = [
 ];
 
 
-// ── Metric mode definitions ─────────────────────────────────────────
+// ── Metric type definitions ─────────────────────────────────────────
 
-type MetricMode = 'solo_gasto' | 'headcount' | 'gasto_hc';
+type MetricType = 'gasto' | 'headcount' | 'salario';
 
-const METRIC_OPTIONS: { value: MetricMode; label: string }[] = [
-    { value: 'solo_gasto', label: 'Solo Gasto' },
+const METRIC_OPTIONS: { value: MetricType; label: string }[] = [
+    { value: 'gasto', label: 'Gasto' },
     { value: 'headcount', label: 'Headcount' },
-    { value: 'gasto_hc', label: 'Gasto / HC' },
+    { value: 'salario', label: 'Salario Prom' },
 ];
+
+const SECONDARY_NONE = 'none' as const;
+
+const METRIC_LABEL: Record<MetricType, string> = {
+    gasto: '$',
+    headcount: 'HC',
+    salario: 'S//HC',
+};
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -287,13 +295,21 @@ function fmtPw(pw: number | null): string {
 
 // ── Cell renderers ──────────────────────────────────────────────────
 
-/** Standard numeric cells (no metric sub-column). */
-function NumCells({ row, columns, activeHeaders }: { row: Record<string, number> | ReportRow; columns: DisplayColumn[]; activeHeaders?: Set<string> }) {
+/** Standard numeric cells (no metric sub-column). getPrimary overrides the default row value. */
+function NumCells({ row, columns, activeHeaders, getPrimary }: {
+    row: Record<string, number> | ReportRow;
+    columns: DisplayColumn[];
+    activeHeaders?: Set<string>;
+    getPrimary?: (col: DisplayColumn) => React.ReactNode;
+}) {
     return (
         <>
             {columns.map(col => {
                 if (activeHeaders && !activeHeaders.has(col.header)) {
                     return <td key={col.header} className="rpt-inactive">{'\u2014'}</td>;
+                }
+                if (getPrimary) {
+                    return <td key={col.header}>{getPrimary(col)}</td>;
                 }
                 const val = getCellValue(row as ReportRow, col);
                 return (
@@ -306,14 +322,15 @@ function NumCells({ row, columns, activeHeaders }: { row: Record<string, number>
     );
 }
 
-/** Amount + metric sub-column pair, per column. getMetric returns content for the metric td. */
+/** Amount + metric sub-column pair, per column. */
 function NumCellsDual({
-    row, columns, activeHeaders, getMetric,
+    row, columns, activeHeaders, getMetric, getPrimary,
 }: {
     row: Record<string, number> | ReportRow;
     columns: DisplayColumn[];
     activeHeaders?: Set<string>;
     getMetric: (col: DisplayColumn) => React.ReactNode;
+    getPrimary?: (col: DisplayColumn) => React.ReactNode;
 }) {
     return (
         <>
@@ -323,6 +340,14 @@ function NumCellsDual({
                         <Fragment key={col.header}>
                             <td className="rpt-inactive">{'\u2014'}</td>
                             <td className="rpt-col-metric"></td>
+                        </Fragment>
+                    );
+                }
+                if (getPrimary) {
+                    return (
+                        <Fragment key={col.header}>
+                            <td>{getPrimary(col)}</td>
+                            <td className="rpt-col-metric">{getMetric(col)}</td>
                         </Fragment>
                     );
                 }
@@ -383,18 +408,18 @@ function TableHead({ columns }: { columns: DisplayColumn[] }) {
     );
 }
 
-function TableHeadDual({ columns, metricLabel }: { columns: DisplayColumn[]; metricLabel: string }) {
+function TableHeadDual({ columns, metricLabel, primaryLabel }: { columns: DisplayColumn[]; metricLabel: string; primaryLabel?: string }) {
     return (
         <thead>
             <tr>
                 <th className="rpt-sticky">Concepto</th>
                 {columns.map(col => (
                     <Fragment key={col.header}>
-                        <th>{col.header}</th>
+                        <th>{primaryLabel ? `${col.header}` : col.header}</th>
                         <th className="rpt-col-metric">{metricLabel}</th>
                     </Fragment>
                 ))}
-                <th className="rpt-col-total rpt-col-total-val">Total</th>
+                <th className="rpt-col-total rpt-col-total-val">{primaryLabel ? primaryLabel : 'Total'}</th>
                 <th className="rpt-col-metric">{metricLabel === 'HC' ? 'HC Prom' : metricLabel}</th>
             </tr>
         </thead>
@@ -426,7 +451,8 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
     const [expandedPctPartidas, setExpandedPctPartidas] = useState<Set<string>>(new Set());
     const [expandedPctCecos, setExpandedPctCecos] = useState<Set<string>>(new Set());
     const [planillaFilter, setPlanillaFilter] = useState<PlanillaFilter>('all');
-    const [metricMode, setMetricMode] = useState<MetricMode>('solo_gasto');
+    const [primaryMetric, setPrimaryMetric] = useState<MetricType>('gasto');
+    const [secondaryMetric, setSecondaryMetric] = useState<MetricType | typeof SECONDARY_NONE>('none');
     const [rosterModal, setRosterModal] = useState<RosterModalState | null>(null);
     const [rosterEmployees, setRosterEmployees] = useState<{ empleado: string; nombre: string }[]>([]);
     const [rosterLoading, setRosterLoading] = useState(false);
@@ -530,9 +556,16 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
     };
 
     const hasHeadcount = headcountMap && Object.keys(headcountMap).length > 0;
-    const isDual = metricMode !== 'solo_gasto' && hasHeadcount;
-    const metricLabel = metricMode === 'headcount' ? 'HC' : 'S//HC';
+
+    // If secondary requires HC data but it's unavailable, reset to none
+    const effectiveSecondary = (secondaryMetric !== SECONDARY_NONE && !hasHeadcount && secondaryMetric !== 'gasto')
+        ? SECONDARY_NONE : secondaryMetric;
+    const isDual = effectiveSecondary !== SECONDARY_NONE;
+    const metricLabel = isDual ? METRIC_LABEL[effectiveSecondary as MetricType] : '';
     const colSpanAll = isDual ? columns.length * 2 + 3 : columns.length + 2;
+
+    // Primary metric requires HC data for headcount/salario — fall back to gasto
+    const effectivePrimary = (!hasHeadcount && primaryMetric !== 'gasto') ? 'gasto' : primaryMetric;
 
     const revTotal = (revenueRow?.['TOTAL'] as number | null) ?? null;
 
@@ -552,6 +585,78 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
         );
     };
 
+    // ── Generic metric resolvers ──────────────────────────────────────
+    // These produce cell content for any MetricType at partida / ceco / cuenta level.
+
+    /** Resolve a metric value for a partida at a given column. */
+    const resolvePartidaMetric = (metric: MetricType, partida: PlanillaPartida, col: DisplayColumn): React.ReactNode => {
+        if (metric === 'gasto') {
+            const val = getCellValue(partida.totals as ReportRow, col);
+            return formatEmpty(val);
+        }
+        if (!headcountMap) return '';
+        if (metric === 'headcount') return fmtHc(partidaHcPerCol(partida, headcountMap, col, colYm));
+        // salario
+        return fmtPw(partidaPwPerCol(partida, headcountMap, col, colYm));
+    };
+
+    /** Resolve total/avg metric for a partida. */
+    const resolvePartidaTotal = (metric: MetricType, partida: PlanillaPartida): React.ReactNode => {
+        if (metric === 'gasto') return formatEmpty(partida.totals['TOTAL'] ?? null);
+        if (!headcountMap) return '';
+        if (metric === 'headcount') return fmtHc(partidaHcAvg(partida, headcountMap, colYm));
+        return fmtPw(partidaPwAvg(partida, headcountMap, colYm));
+    };
+
+    /** Resolve a metric value for a CECO at a given column. */
+    const resolveCecoMetric = (metric: MetricType, ceco: PlanillaCeco, col: DisplayColumn): React.ReactNode => {
+        const cecoHcData = headcountMap?.[ceco.code] ?? undefined;
+        if (metric === 'gasto') {
+            const val = getCellValue(ceco.totals as ReportRow, col);
+            return formatEmpty(val);
+        }
+        if (!cecoHcData) return '';
+        const hc = hcForCol(cecoHcData, col, colYm);
+        if (metric === 'headcount') return renderHcLink(hc, ceco.code, ceco.desc, col);
+        const val = getCellValue(ceco.totals as ReportRow, col);
+        return fmtPw(perWorkerValue(val, hc));
+    };
+
+    /** Resolve total/avg metric for a CECO. */
+    const resolveCecoTotal = (metric: MetricType, ceco: PlanillaCeco): React.ReactNode => {
+        const cecoHcData = headcountMap?.[ceco.code] ?? undefined;
+        const cecoHcAvgVal = hcAvg(cecoHcData, colYm);
+        if (metric === 'gasto') return formatEmpty(ceco.totals['TOTAL'] ?? null);
+        if (metric === 'headcount') return fmtHc(cecoHcAvgVal != null ? Math.round(cecoHcAvgVal) : null);
+        return fmtPw(perWorkerValue(ceco.totals['TOTAL'] ?? null, cecoHcAvgVal));
+    };
+
+    /** Resolve a metric value for a cuenta row at a given column (inherits CECO headcount). */
+    const resolveCuentaMetric = (metric: MetricType, cuenta: PlanillaCuenta, ceco: PlanillaCeco, col: DisplayColumn): React.ReactNode => {
+        const cecoHcData = headcountMap?.[ceco.code] ?? undefined;
+        if (metric === 'gasto') {
+            const val = getCellValue(cuenta.row, col);
+            return formatEmpty(val);
+        }
+        if (!cecoHcData) return '';
+        const hc = hcForCol(cecoHcData, col, colYm);
+        if (metric === 'headcount') return renderHcLink(hc, ceco.code, ceco.desc, col);
+        const val = getCellValue(cuenta.row, col);
+        return fmtPw(perWorkerValue(val, hc));
+    };
+
+    /** Resolve total/avg metric for a cuenta (inherits CECO headcount). */
+    const resolveCuentaTotal = (metric: MetricType, cuenta: PlanillaCuenta, ceco: PlanillaCeco): React.ReactNode => {
+        const cecoHcData = headcountMap?.[ceco.code] ?? undefined;
+        const cecoHcAvgVal = hcAvg(cecoHcData, colYm);
+        if (metric === 'gasto') return formatEmpty(cuenta.row['TOTAL'] as number | null);
+        if (metric === 'headcount') return fmtHc(cecoHcAvgVal != null ? Math.round(cecoHcAvgVal) : null);
+        return fmtPw(perWorkerValue(cuenta.row['TOTAL'] as number | null, cecoHcAvgVal));
+    };
+
+    // Whether the primary metric is the default (gasto from row data) or needs a custom getter
+    const needsPrimaryGetter = effectivePrimary !== 'gasto';
+
     /** Format a year_month like "202501" to "Ene 2025". */
     const fmtYm = (ym: string): string => {
         const y = ym.slice(0, 4);
@@ -562,49 +667,66 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
 
     return (
         <div>
-            {/* ── Filter Bar (TIPO + METRICA on one row) ── */}
+            {/* ── Filter Bar ── */}
             <nav className="flex items-center justify-between mb-10">
                 <div className="flex items-center gap-3">
                     <span className="filter-label !mb-0">Tipo</span>
-                    <div className="toggle-group">
+                    <select
+                        value={planillaFilter}
+                        onChange={e => setPlanillaFilter(e.target.value as PlanillaFilter)}
+                        className="select-base"
+                    >
                         {FILTER_OPTIONS.map(opt => (
-                            <button
-                                key={opt.value}
-                                onClick={() => setPlanillaFilter(opt.value)}
-                                className={`toggle-btn ${planillaFilter === opt.value ? 'toggle-active' : 'toggle-inactive'}`}
-                            >
-                                {opt.label}
-                            </button>
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
                         ))}
+                    </select>
+                </div>
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <span className="filter-label !mb-0">Principal</span>
+                        <select
+                            value={effectivePrimary}
+                            onChange={e => {
+                                const v = e.target.value as MetricType;
+                                setPrimaryMetric(v);
+                                if (secondaryMetric === v) setSecondaryMetric(SECONDARY_NONE);
+                            }}
+                            className="select-base"
+                        >
+                            {METRIC_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}
+                                    disabled={!hasHeadcount && opt.value !== 'gasto'}
+                                >{opt.label}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="filter-label !mb-0">Secundario</span>
+                        <select
+                            value={effectiveSecondary}
+                            onChange={e => setSecondaryMetric(e.target.value as MetricType | typeof SECONDARY_NONE)}
+                            className="select-base"
+                        >
+                            <option value="none">Ninguno</option>
+                            {METRIC_OPTIONS.filter(opt => opt.value !== effectivePrimary).map(opt => (
+                                <option key={opt.value} value={opt.value}
+                                    disabled={!hasHeadcount && opt.value !== 'gasto'}
+                                >{opt.label}</option>
+                            ))}
+                        </select>
                     </div>
                 </div>
-                {hasHeadcount && (
-                    <div className="flex items-center gap-3">
-                        <span className="filter-label !mb-0">Metrica</span>
-                        <div className="toggle-group">
-                            {METRIC_OPTIONS.map(opt => (
-                                <button
-                                    key={opt.value}
-                                    onClick={() => setMetricMode(opt.value)}
-                                    className={`toggle-btn ${metricMode === opt.value ? 'toggle-active' : 'toggle-inactive'}`}
-                                >
-                                    {opt.label}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                )}
             </nav>
 
             {/* ═══ TABLE 1: COSTS ═══ */}
             <div className="overflow-x-auto">
             <table className={isDual ? 'rpt-table-auto' : 'rpt-table'}>
                 {isDual
-                    ? <TableHeadDual columns={columns} metricLabel={metricLabel} />
+                    ? <TableHeadDual columns={columns} metricLabel={metricLabel} primaryLabel={needsPrimaryGetter ? METRIC_LABEL[effectivePrimary] : undefined} />
                     : <TableHead columns={columns} />
                 }
                 <tbody>
-                    {/* Revenue row */}
+                    {/* Revenue row — always shows gasto regardless of primary metric */}
                     {revenueRow && (
                         <>
                             <tr className="rpt-row-highlight">
@@ -630,17 +752,13 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
                     {partidas.map((partida) => {
                         const isExpanded = expandedPartidas.has(partida.name);
 
-                        const getPartidaMetric = (col: DisplayColumn): React.ReactNode => {
-                            if (!headcountMap) return '';
-                            if (metricMode === 'headcount') return fmtHc(partidaHcPerCol(partida, headcountMap, col, colYm));
-                            return fmtPw(partidaPwPerCol(partida, headcountMap, col, colYm));
-                        };
+                        const primaryGetter = needsPrimaryGetter
+                            ? (col: DisplayColumn) => resolvePartidaMetric(effectivePrimary, partida, col)
+                            : undefined;
 
-                        const partidaTotalMetric = (): React.ReactNode => {
-                            if (!headcountMap) return '';
-                            if (metricMode === 'headcount') return fmtHc(partidaHcAvg(partida, headcountMap, colYm));
-                            return fmtPw(partidaPwAvg(partida, headcountMap, colYm));
-                        };
+                        const secondaryGetter = isDual
+                            ? (col: DisplayColumn) => resolvePartidaMetric(effectiveSecondary as MetricType, partida, col)
+                            : undefined;
 
                         return (
                             <Fragment key={partida.name}>
@@ -652,14 +770,14 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
                                     </td>
                                     {isDual ? (
                                         <>
-                                            <NumCellsDual row={partida.totals as ReportRow} columns={columns} activeHeaders={activeHeaders} getMetric={getPartidaMetric} />
-                                            <TotalCell val={partida.totals['TOTAL'] ?? null} />
-                                            <td className="rpt-col-metric">{partidaTotalMetric()}</td>
+                                            <NumCellsDual row={partida.totals as ReportRow} columns={columns} activeHeaders={activeHeaders} getMetric={secondaryGetter!} getPrimary={primaryGetter} />
+                                            <td className={`rpt-col-total-val`}>{resolvePartidaTotal(effectivePrimary, partida)}</td>
+                                            <td className="rpt-col-metric">{resolvePartidaTotal(effectiveSecondary as MetricType, partida)}</td>
                                         </>
                                     ) : (
                                         <>
-                                            <NumCells row={partida.totals as ReportRow} columns={columns} activeHeaders={activeHeaders} />
-                                            <TotalCell val={partida.totals['TOTAL'] ?? null} />
+                                            <NumCells row={partida.totals as ReportRow} columns={columns} activeHeaders={activeHeaders} getPrimary={primaryGetter} />
+                                            <td className={`rpt-col-total-val`}>{resolvePartidaTotal(effectivePrimary, partida)}</td>
                                         </>
                                     )}
                                 </tr>
@@ -667,21 +785,14 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
                                 {/* L1: CECOs */}
                                 {isExpanded && partida.cecos.map((ceco) => {
                                     const cecoExpanded = expandedCecos.has(`${partida.name}|${ceco.code}`);
-                                    const cecoHcData = headcountMap?.[ceco.code] ?? undefined;
-                                    const cecoHcAvgVal = hcAvg(cecoHcData, colYm);
 
-                                    const getCecoMetric = (col: DisplayColumn): React.ReactNode => {
-                                        if (!cecoHcData) return '';
-                                        const hc = hcForCol(cecoHcData, col, colYm);
-                                        if (metricMode === 'headcount') return renderHcLink(hc, ceco.code, ceco.desc, col);
-                                        const val = getCellValue(ceco.totals as ReportRow, col);
-                                        return fmtPw(perWorkerValue(val, hc));
-                                    };
+                                    const cecoPrimaryGetter = needsPrimaryGetter
+                                        ? (col: DisplayColumn) => resolveCecoMetric(effectivePrimary, ceco, col)
+                                        : undefined;
 
-                                    const cecoTotalMetric = (): React.ReactNode => {
-                                        if (metricMode === 'headcount') return fmtHc(cecoHcAvgVal != null ? Math.round(cecoHcAvgVal) : null);
-                                        return fmtPw(perWorkerValue(ceco.totals['TOTAL'] ?? null, cecoHcAvgVal));
-                                    };
+                                    const cecoSecondaryGetter = isDual
+                                        ? (col: DisplayColumn) => resolveCecoMetric(effectiveSecondary as MetricType, ceco, col)
+                                        : undefined;
 
                                     return (
                                         <Fragment key={`${partida.name}|${ceco.code}`}>
@@ -696,39 +807,36 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
                                                 </td>
                                                 {isDual ? (
                                                     <>
-                                                        <NumCellsDual row={ceco.totals as ReportRow} columns={columns} activeHeaders={activeHeaders} getMetric={getCecoMetric} />
-                                                        <TotalCell val={ceco.totals['TOTAL'] ?? null} />
-                                                        <td className="rpt-col-metric">{cecoTotalMetric()}</td>
+                                                        <NumCellsDual row={ceco.totals as ReportRow} columns={columns} activeHeaders={activeHeaders} getMetric={cecoSecondaryGetter!} getPrimary={cecoPrimaryGetter} />
+                                                        <td className={`rpt-col-total-val`}>{resolveCecoTotal(effectivePrimary, ceco)}</td>
+                                                        <td className="rpt-col-metric">{resolveCecoTotal(effectiveSecondary as MetricType, ceco)}</td>
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <NumCells row={ceco.totals as ReportRow} columns={columns} activeHeaders={activeHeaders} />
-                                                        <TotalCell val={ceco.totals['TOTAL'] ?? null} />
+                                                        <NumCells row={ceco.totals as ReportRow} columns={columns} activeHeaders={activeHeaders} getPrimary={cecoPrimaryGetter} />
+                                                        <td className={`rpt-col-total-val`}>{resolveCecoTotal(effectivePrimary, ceco)}</td>
                                                     </>
                                                 )}
                                             </tr>
 
                                             {/* L2: Cuentas (only in dual mode, inheriting CECO headcount) */}
                                             {isDual && cecoExpanded && ceco.cuentas.map((cuenta, ci) => {
-                                                const getCuentaMetric = (col: DisplayColumn): React.ReactNode => {
-                                                    if (!cecoHcData) return '';
-                                                    const hc = hcForCol(cecoHcData, col, colYm);
-                                                    if (metricMode === 'headcount') return renderHcLink(hc, ceco.code, ceco.desc, col);
-                                                    const val = getCellValue(cuenta.row, col);
-                                                    return fmtPw(perWorkerValue(val, hc));
-                                                };
-
-                                                const cuentaTotalMetric = (): React.ReactNode => {
-                                                    if (metricMode === 'headcount') return fmtHc(cecoHcAvgVal != null ? Math.round(cecoHcAvgVal) : null);
-                                                    return fmtPw(perWorkerValue(cuenta.row['TOTAL'] as number | null, cecoHcAvgVal));
-                                                };
+                                                const cuentaPrimaryGetter = needsPrimaryGetter
+                                                    ? (col: DisplayColumn) => resolveCuentaMetric(effectivePrimary, cuenta, ceco, col)
+                                                    : undefined;
 
                                                 return (
                                                     <tr key={ci} className="rpt-row-l2">
                                                         <td className="rpt-sticky">{cuenta.row['CUENTA_CONTABLE']} {cuenta.row['DESCRIPCION']}</td>
-                                                        <NumCellsDual row={cuenta.row as unknown as Record<string, number>} columns={columns} activeHeaders={activeHeaders} getMetric={getCuentaMetric} />
-                                                        <TotalCell val={cuenta.row['TOTAL'] as number | null} />
-                                                        <td className="rpt-col-metric">{cuentaTotalMetric()}</td>
+                                                        <NumCellsDual
+                                                            row={cuenta.row as unknown as Record<string, number>}
+                                                            columns={columns}
+                                                            activeHeaders={activeHeaders}
+                                                            getMetric={(col) => resolveCuentaMetric(effectiveSecondary as MetricType, cuenta, ceco, col)}
+                                                            getPrimary={cuentaPrimaryGetter}
+                                                        />
+                                                        <td className={`rpt-col-total-val`}>{resolveCuentaTotal(effectivePrimary, cuenta, ceco)}</td>
+                                                        <td className="rpt-col-metric">{resolveCuentaTotal(effectiveSecondary as MetricType, cuenta, ceco)}</td>
                                                     </tr>
                                                 );
                                             })}
