@@ -36,6 +36,8 @@ export interface PlanillaSheetDef {
     flatRows: PlanillaExportRow[];
     columns: DisplayColumn[];
     year: number;
+    /** Override number format (default: standard accounting #,##0;-#,##0;"-") */
+    numFmt?: string;
 }
 
 export type ExportSheet = SummarySheetDef | DetailSheetDef | PlanillaSheetDef;
@@ -209,9 +211,16 @@ function buildDetailSheet(def: DetailSheetDef): XLSX.WorkSheet {
 // ── Planilla sheet builder ───────────────────────────────────────────
 
 function buildPlanillaSheet(def: PlanillaSheetDef): XLSX.WorkSheet {
-    const { flatRows, columns, year } = def;
+    const { flatRows, columns, year, numFmt: customFmt } = def;
     const dataCols = columns.length + 1; // +1 for year total
     const totalCols = 1 + dataCols;      // label + data
+
+    // Build level-specific num styles, applying custom format if provided
+    const mkNum = (base: XLSX.CellStyle): XLSX.CellStyle =>
+        customFmt ? { ...base, numFmt: customFmt } : base;
+    const l0Num = mkNum(PL_L0_NUM);
+    const l1Num = mkNum(PL_L1_NUM);
+    const l2Num = mkNum(PL_L2_NUM);
 
     const ws: XLSX.WorkSheet = {};
     let r = 0;
@@ -226,7 +235,7 @@ function buildPlanillaSheet(def: PlanillaSheetDef): XLSX.WorkSheet {
 
     for (const row of flatRows) {
         const lblStyle = row.level === 0 ? PL_L0_LABEL : row.level === 1 ? PL_L1_LABEL : PL_L2_LABEL;
-        const numStyle = row.level === 0 ? PL_L0_NUM : row.level === 1 ? PL_L1_NUM : PL_L2_NUM;
+        const numStyle = row.level === 0 ? l0Num : row.level === 1 ? l1Num : l2Num;
 
         const indent = row.level === 1 ? '    ' : row.level === 2 ? '        ' : '';
         ws[cellRef(r, 0)] = { v: indent + row.label, t: 's', s: lblStyle };
@@ -242,11 +251,10 @@ function buildPlanillaSheet(def: PlanillaSheetDef): XLSX.WorkSheet {
 
         // Total column
         const total = row.values['TOTAL'] ?? null;
-        const totalStyle = row.level === 0 ? PL_L0_NUM : row.level === 1 ? PL_L1_NUM : PL_L2_NUM;
         if (total !== null && total !== undefined) {
-            ws[cellRef(r, 1 + columns.length)] = { v: total, t: 'n', s: totalStyle };
+            ws[cellRef(r, 1 + columns.length)] = { v: total, t: 'n', s: numStyle };
         } else {
-            ws[cellRef(r, 1 + columns.length)] = { v: '', t: 's', s: totalStyle };
+            ws[cellRef(r, 1 + columns.length)] = { v: '', t: 's', s: numStyle };
         }
 
         r++;
