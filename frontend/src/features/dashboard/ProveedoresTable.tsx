@@ -28,11 +28,19 @@ export default function ProveedoresTable({ rows, columns }: ProveedoresTableProp
         );
     }
 
+    const provColStyle: React.CSSProperties = {
+        width: '280px',
+        maxWidth: '280px',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    };
+
     return (
-        <table className="rpt-table">
+        <table className="rpt-table" style={{ tableLayout: 'fixed' }}>
             <thead>
                 <tr>
-                    <th colSpan={2} className="text-left">NIT / Proveedor</th>
+                    <th className="text-left" style={provColStyle}>NIT / Proveedor</th>
                     {columns.map(col => (
                         <th key={col.header}>{col.header}</th>
                     ))}
@@ -43,7 +51,7 @@ export default function ProveedoresTable({ rows, columns }: ProveedoresTableProp
                 {/* Total row at top */}
                 {totalRow && (
                     <tr className="rpt-row-total">
-                        <td colSpan={2}>COSTO DE TRANSPORTE</td>
+                        <td style={provColStyle}>COSTO DE TRANSPORTE</td>
                         {columns.map(col => {
                             const val = getCellValue(totalRow, col);
                             return (
@@ -60,11 +68,13 @@ export default function ProveedoresTable({ rows, columns }: ProveedoresTableProp
 
                 {/* NIT detail rows */}
                 {detailRows.map((row, idx) => {
+                    const nit = String(row['NIT'] ?? '');
+                    const razon = String(row['RAZON_SOCIAL'] ?? '');
+                    const label = nit ? `${nit} - ${razon}` : razon;
                     const total = getDetailTotal(row, columns);
                     return (
                         <tr key={idx} className="rpt-row-data">
-                            <td style={{ width: '120px' }}>{String(row['NIT'] ?? '')}</td>
-                            <td className="text-left">{String(row['RAZON_SOCIAL'] ?? '')}</td>
+                            <td style={provColStyle} title={label}>{label}</td>
                             {columns.map(col => {
                                 const val = getCellValue(row, col);
                                 return (
