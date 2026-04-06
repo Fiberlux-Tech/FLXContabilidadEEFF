@@ -35,11 +35,9 @@
   /* ─── Base table ─── */
   .rpt-table {
     @apply min-w-full border-collapse;
-    table-layout: fixed;
   }
   .rpt-table-auto {
     @apply min-w-full border-collapse;
-    table-layout: auto;
   }
 
   /* ─── Table headers ─── */
@@ -48,18 +46,19 @@
     @apply text-[10px] font-semibold uppercase text-right whitespace-nowrap;
     color: #999;
     letter-spacing: 1px;
-    padding: 0 8px 14px;
+    padding: 0 12px 14px;
     border-bottom: 1px solid #ddd;
   }
   .rpt-table th:first-child,
   .rpt-table-auto th:first-child {
     @apply text-left;
     padding-left: 0;
-    width: 380px;
+    width: 260px;
+    min-width: 200px;
   }
   .rpt-table th:not(:first-child),
   .rpt-table-auto th:not(:first-child) {
-    min-width: 90px;
+    min-width: 100px;
   }
   .rpt-table th:last-child,
   .rpt-table-auto th:last-child { padding-right: 0; }
@@ -73,7 +72,7 @@
     font-size: 12px;
     font-weight: 400;
     color: #444;
-    padding: 10px 8px;
+    padding: 10px 12px;
     border-bottom: 1px dotted #e5e5e5;
   }
   .rpt-table td:first-child,
@@ -94,7 +93,7 @@
     font-size: 13px;
     font-weight: 600;
     color: #1a1a1a;
-    padding: 14px 8px;
+    padding: 14px 12px;
     border-bottom: none;
   }
   .rpt-row-highlight td:first-child { padding-left: 0; }
@@ -104,7 +103,7 @@
     font-size: 12px;
     font-weight: 400;
     color: #444;
-    padding: 10px 8px;
+    padding: 10px 12px;
     border-bottom: 1px dotted #e5e5e5;
   }
   .rpt-row-data td:first-child { padding-left: 0; }
@@ -114,7 +113,7 @@
     font-size: 13px;
     font-weight: 600;
     color: #1a1a1a;
-    padding: 12px 8px;
+    padding: 12px 12px;
     border-bottom: 1px dotted #ddd;
     background: #F5F4F0;
   }
@@ -125,7 +124,7 @@
     font-size: 12px;
     font-weight: 500;
     color: #666;
-    padding: 12px 8px;
+    padding: 12px 12px;
     border-bottom: 1px dotted #e5e5e5;
   }
   .rpt-row-section td:first-child { padding-left: 0; }
@@ -135,7 +134,7 @@
     font-size: 13px;
     font-weight: 600;
     color: #1a1a1a;
-    padding: 12px 8px;
+    padding: 12px 12px;
     border-bottom: 1px dotted #ddd;
   }
   .rpt-row-l0 td:first-child { padding-left: 0; cursor: pointer; }
@@ -152,7 +151,7 @@
     font-size: 12px;
     font-weight: 500;
     color: #666;
-    padding: 9px 8px;
+    padding: 9px 12px;
     border-bottom: 1px dotted #e8e8e8;
   }
   .rpt-row-l1 td:first-child { padding-left: 24px; cursor: pointer; }
@@ -169,7 +168,7 @@
     font-size: 11px;
     font-weight: 400;
     color: #888;
-    padding: 7px 8px;
+    padding: 7px 12px;
     border-bottom: 1px dotted #efefef;
   }
   .rpt-row-l2 td:first-child { padding-left: 48px; }
@@ -186,7 +185,7 @@
     font-size: 11px;
     font-weight: 400;
     color: #999;
-    padding: 7px 8px;
+    padding: 7px 12px;
     border-bottom: 1px dotted #f2f2f2;
   }
   .rpt-row-l3 td:first-child { padding-left: 72px; }
@@ -196,7 +195,7 @@
     font-size: 13px;
     font-weight: 700;
     color: #1a1a1a;
-    padding: 14px 8px 12px;
+    padding: 14px 12px 12px;
     border-top: 3px double #333;
     border-bottom: none;
     background: #F5F4F0;
@@ -318,6 +317,43 @@
     padding-right: 28px;
   }
   .select-base:hover { border-color: #ccc; }
+
+  /* ─── Dropdown chip (TopBar compact trigger) ─── */
+  .dropdown-chip {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium
+           text-txt bg-surface border border-border rounded-md cursor-pointer
+           transition-colors hover:border-txt-faint;
+  }
+
+  /* ─── Dropdown panel ─── */
+  .dropdown-panel {
+    @apply absolute right-0 top-full mt-1.5 bg-surface border border-border
+           rounded-lg shadow-lg p-3 z-40 space-y-2;
+  }
+
+  /* ─── Dropdown section label ─── */
+  .dropdown-section-label {
+    @apply block text-[10px] uppercase font-semibold text-txt-muted mb-1.5;
+    letter-spacing: 0.8px;
+  }
+
+  /* ─── Export chip (sidebar compact buttons) ─── */
+  .export-chip {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium
+           border border-nav-border rounded-md cursor-pointer bg-surface transition-colors;
+  }
+  .export-chip:hover {
+    @apply border-txt-faint bg-surface-alt;
+  }
+
+  /* ─── Export icon button (green, icon-only) ─── */
+  .btn-export-excel {
+    @apply flex items-center justify-center w-8 h-8 rounded-md
+           text-white transition-colors
+           disabled:opacity-40 disabled:cursor-not-allowed;
+    background-color: #058527;
+  }
+  .btn-export-excel:not(:disabled):hover { background-color: #046d20; }
 
   /* ─── Nav items ─── */
   .nav-item-base {

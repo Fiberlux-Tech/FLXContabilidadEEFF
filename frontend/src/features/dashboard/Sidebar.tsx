@@ -196,18 +196,21 @@ export default function Sidebar() {
 
             {/* Export */}
             {reportData && (
-                <div className="px-2 py-3 space-y-0.5">
-                    <p className="text-[10px] uppercase font-semibold text-txt-muted px-3 pb-1" style={{ letterSpacing: '1px' }}>
+                <div className="px-4 py-3 border-t border-nav-border">
+                    <p className="text-[10px] uppercase font-semibold text-txt-muted mb-2" style={{ letterSpacing: '0.8px' }}>
                         Exportar
                     </p>
-                    <ExportButton variant="excel" onClick={() => exportFile('excel')} disabled={isExporting} />
-                    <ExportButton variant="pdf" onClick={() => exportFile('pdf')} disabled={isExporting} />
-                    <ExportButton
-                        variant="all"
-                        onClick={() => exportFile('all')}
-                        disabled={isExporting}
-                        label={isExporting ? 'Generando...' : undefined}
-                    />
+                    <div className="flex gap-1.5">
+                        <ExportButton variant="excel" size="chip" onClick={() => exportFile('excel')} disabled={isExporting} />
+                        <ExportButton variant="pdf" size="chip" onClick={() => exportFile('pdf')} disabled={isExporting} />
+                        <ExportButton
+                            variant="all"
+                            size="chip"
+                            onClick={() => exportFile('all')}
+                            disabled={isExporting}
+                            label={isExporting ? 'Generando...' : undefined}
+                        />
+                    </div>
                 </div>
             )}
 

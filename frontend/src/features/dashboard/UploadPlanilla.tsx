@@ -43,7 +43,7 @@ export default function UploadPlanilla() {
     return (
         <div className="flex-1 flex items-center justify-center p-8">
             <div className="max-w-md w-full text-center">
-                <div className="border-2 border-dashed border-border rounded-xl p-10 hover:border-accent transition-colors">
+                <div className="border-2 border-dashed border-border rounded-lg p-10 hover:border-accent transition-colors">
                     <svg className="w-12 h-12 mx-auto mb-4 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                     </svg>
@@ -67,8 +67,8 @@ export default function UploadPlanilla() {
                     <button
                         onClick={handleClick}
                         disabled={status === 'uploading'}
-                        className="px-6 py-2.5 bg-accent text-white text-sm font-medium rounded-lg
-                            hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        className="px-6 py-2.5 bg-accent text-white text-sm font-medium rounded-md
+                            hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
                         {status === 'uploading' ? 'Cargando...' : 'Seleccionar Archivo'}
                     </button>
@@ -76,13 +76,13 @@ export default function UploadPlanilla() {
 
                 {/* Status message */}
                 {status === 'success' && (
-                    <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                        <p className="text-sm text-green-700">{message}</p>
+                    <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-md">
+                        <p className="text-sm text-positive">{message}</p>
                     </div>
                 )}
                 {status === 'error' && (
-                    <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                        <p className="text-sm text-red-700">{message}</p>
+                    <div className="mt-4 p-3 bg-accent-light border border-accent/30 rounded-md">
+                        <p className="text-sm text-negative">{message}</p>
                     </div>
                 )}
             </div>

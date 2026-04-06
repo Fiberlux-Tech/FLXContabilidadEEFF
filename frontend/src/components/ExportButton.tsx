@@ -4,16 +4,19 @@ const VARIANTS = {
     excel: {
         bg: 'bg-[#058527]',
         hover: 'hover:bg-[#046d20]',
+        chipColor: 'text-[#058527]',
         label: 'Excel',
     },
     pdf: {
-        bg: 'bg-[#D1453B]',
-        hover: 'hover:bg-[#B8352D]',
+        bg: 'bg-accent',
+        hover: 'hover:bg-accent-hover',
+        chipColor: 'text-accent',
         label: 'PDF',
     },
     all: {
         bg: 'bg-[#404040]',
         hover: 'hover:bg-[#333333]',
+        chipColor: 'text-txt-secondary',
         label: 'Todo',
     },
 } as const;
@@ -26,10 +29,30 @@ interface ExportButtonProps {
     disabled?: boolean;
     /** Override the default label */
     label?: string;
+    /** "default" = filled inline button, "chip" = outlined chip */
+    size?: 'default' | 'chip';
 }
 
-export default function ExportButton({ variant, onClick, disabled, label }: ExportButtonProps) {
+export default function ExportButton({ variant, onClick, disabled, label, size = 'default' }: ExportButtonProps) {
     const v = VARIANTS[variant];
+
+    if (size === 'chip') {
+        return (
+            <button
+                onClick={onClick}
+                disabled={disabled}
+                title={`Exportar ${v.label}`}
+                className={`export-chip ${v.chipColor}
+                            disabled:opacity-40 disabled:cursor-not-allowed`}
+            >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={DOWNLOAD_ICON} />
+                </svg>
+                {label ?? v.label}
+            </button>
+        );
+    }
+
     return (
         <button
             onClick={onClick}
