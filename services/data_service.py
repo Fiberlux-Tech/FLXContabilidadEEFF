@@ -239,9 +239,12 @@ def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd
     pl = pl_summary(df_stmt)
     # Excluding-intercompany summary: filter out IS_INTERCOMPANY rows and re-pivot
     pl_ex_ic = pl_summary(df_stmt[~df_stmt[IS_INTERCOMPANY]])
+    # Only-intercompany summary: keep only IS_INTERCOMPANY rows
+    pl_only_ic = pl_summary(df_stmt[df_stmt[IS_INTERCOMPANY]])
 
     pl = ensure_month_columns(pl)
     pl_ex_ic = ensure_month_columns(pl_ex_ic)
+    pl_only_ic = ensure_month_columns(pl_only_ic)
 
     preagg = preaggregate(df_stmt)
     sd = sales_details(df_stmt, with_total_row=True, preagg=preagg)
@@ -269,6 +272,7 @@ def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd
     records = {
         "pl_summary": _df_to_records(pl),
         "pl_summary_ex_ic": _df_to_records(pl_ex_ic),
+        "pl_summary_only_ic": _df_to_records(pl_only_ic),
         "ingresos_ordinarios": _df_to_records(sd),
         "ingresos_proyectos": _df_to_records(pe),
         "costo": _df_to_records(costo),

@@ -11,6 +11,7 @@ export const API_CONFIG = {
     EXPORT_ALL: '/api/export/all',
     EXPORT_DOWNLOAD: '/api/export/download',
     HEADCOUNT: '/api/headcount',
+    HEADCOUNT_YM: '/api/headcount/ym',
   },
 
   HTTP: {

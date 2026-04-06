@@ -16,9 +16,10 @@ export default function MainContent() {
         reportData, currentView, isLoading, error,
         getDisplayColumns, periodRange, getMergedRows, getMergedDetailRows,
         isBsLoading, bsError, selectedCompany, selectedYear,
+        trailingMonthSources,
     } = useReport();
 
-    const { headcount: headcountMap } = useHeadcount(selectedCompany, selectedYear);
+    const { headcount: headcountMap } = useHeadcount(selectedCompany, selectedYear, periodRange);
 
     // Compute display columns for both variants
     const plColumns = useMemo(() => getDisplayColumns('pl'), [getDisplayColumns]);
@@ -159,7 +160,16 @@ export default function MainContent() {
             const planillaRows = getMergedDetailRows('planilla_by_cuenta', planillaKeys);
             const plSummaryRows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
             const revenueRow = plSummaryRows.find(r => r['PARTIDA_PL'] === 'INGRESOS ORDINARIOS') ?? null;
-            return <PlanillaTable rows={planillaRows} columns={plColumns} revenueRow={revenueRow} headcountMap={headcountMap} />;
+            return (
+                <PlanillaTable
+                    rows={planillaRows}
+                    columns={plColumns}
+                    revenueRow={revenueRow}
+                    headcountMap={headcountMap}
+                    selectedYear={selectedYear}
+                    monthSources={periodRange === 'trailing12' ? trailingMonthSources : null}
+                />
+            );
         }
 
         if (currentView === 'analysis_proveedores') {

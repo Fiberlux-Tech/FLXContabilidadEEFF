@@ -57,6 +57,44 @@ def load_headcount(db_path: str, cia: str, year: int) -> dict:
     return result
 
 
+def load_headcount_ym(db_path: str, cia: str, years: list[int]) -> dict:
+    """Return headcount map keyed by CENTRO_COSTO → year_month integer → count.
+
+    Uses the database convention of year_month integers (e.g. 202501).
+
+    Example return::
+
+        {
+            "100.101.00": {202501: 22, 202502: 23, ...},
+        }
+    """
+    result: dict[str, dict[int, float]] = {}
+    for year in years:
+        cached = _cache.get(cia, year)
+        if cached is not None:
+            # Convert month-name cache back to year_month keys
+            name_to_num = {v: k for k, v in MONTH_NAMES.items()}
+            for ceco, months in cached.items():
+                if ceco not in result:
+                    result[ceco] = {}
+                for key, val in months.items():
+                    if key == "TOTAL_AVG":
+                        continue
+                    num = name_to_num.get(key)
+                    if num is not None:
+                        result[ceco][year * 100 + num] = val
+            continue
+
+        rows = fetch_headcount(db_path, cia, year)
+        for r in rows:
+            ceco = r["centro_costo"]
+            if ceco not in result:
+                result[ceco] = {}
+            result[ceco][r["year_month"]] = r["headcount"]
+
+    return result
+
+
 def save_headcount_csv(db_path: str, cia: str | None, csv_content: str) -> int:
     """Parse an employee-roster CSV and store raw rows in the database.
 

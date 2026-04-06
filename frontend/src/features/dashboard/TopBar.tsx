@@ -145,7 +145,7 @@ export default function TopBar() {
     const {
         companies, selectedCompany, setSelectedCompany,
         selectedYear,
-        excludeIntercompany, setExcludeIntercompany,
+        intercompanyFilter, setIntercompanyFilter,
         currentView,
         loadData, isLoading,
         periodRange,
@@ -195,15 +195,16 @@ export default function TopBar() {
                     {/* Display settings dropdown */}
                     <DisplayDropdown />
 
-                    {/* Intercompany toggle — P&L views only */}
+                    {/* Intercompany filter — P&L views only */}
                     {!isBsView(currentView) && (
                         <ToggleGroup
-                            value={excludeIntercompany ? 'off' : 'on'}
+                            value={intercompanyFilter}
                             options={[
-                                { value: 'on', label: 'IC' },
-                                { value: 'off', label: 'No IC' },
+                                { value: 'all', label: 'Todos' },
+                                { value: 'only_ic', label: 'Solo IC' },
+                                { value: 'ex_ic', label: 'Sin IC' },
                             ]}
-                            onChange={v => setExcludeIntercompany(v === 'off')}
+                            onChange={v => setIntercompanyFilter(v as 'all' | 'only_ic' | 'ex_ic')}
                         />
                     )}
 

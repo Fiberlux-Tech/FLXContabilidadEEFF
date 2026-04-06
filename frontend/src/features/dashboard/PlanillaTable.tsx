@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
-import type { ReportRow, DisplayColumn } from '@/types';
+import type { ReportRow, DisplayColumn, MonthSource, Month } from '@/types';
+import { ALL_MONTHS } from '@/types';
 import type { HeadcountMap } from '@/features/dashboard/useHeadcount';
 import { formatNumber } from '@/utils/format';
 import { getCellValue } from '@/utils/cellValue';
@@ -171,30 +172,95 @@ function formatPerWorker(value: number | null | undefined): string {
     return formatNumber(Math.round(value));
 }
 
+// ── year_month resolution (DB convention: 202501 = Jan 2025) ────────
+
+const MONTH_TO_NUM: Record<Month, number> = Object.fromEntries(
+    ALL_MONTHS.map((m, i) => [m, i + 1])
+) as Record<Month, number>;
+
+/**
+ * Build a lookup from DisplayColumn → year_month string ("202501").
+ * In trailing 12M mode, monthSources carries the year for each month.
+ * In YTD mode (monthSources is null), all months belong to selectedYear.
+ */
+function buildColYm(
+    columns: DisplayColumn[],
+    selectedYear: number,
+    monthSources: MonthSource[] | null,
+): Map<DisplayColumn, string> {
+    const map = new Map<DisplayColumn, string>();
+    if (monthSources) {
+        const srcMap = new Map<Month, string>();
+        for (const s of monthSources) {
+            srcMap.set(s.month, String(s.year * 100 + MONTH_TO_NUM[s.month]));
+        }
+        for (const col of columns) {
+            const ym = srcMap.get(col.sourceMonths[0]);
+            if (ym !== undefined) map.set(col, ym);
+        }
+    } else {
+        for (const col of columns) {
+            const num = MONTH_TO_NUM[col.sourceMonths[0]];
+            if (num !== undefined) map.set(col, String(selectedYear * 100 + num));
+        }
+    }
+    return map;
+}
+
+/** Get the headcount for a CECO at the year_month corresponding to a column. */
+function hcForCol(
+    cecoData: Record<string, number> | undefined,
+    col: DisplayColumn,
+    colYm: Map<DisplayColumn, string>,
+): number | null {
+    if (!cecoData) return null;
+    const ym = colYm.get(col);
+    if (ym === undefined) return null;
+    const hc = cecoData[ym];
+    return hc != null && hc > 0 ? hc : null;
+}
+
+/** Average headcount across all year_months present in the column set. */
+function hcAvg(
+    cecoData: Record<string, number> | undefined,
+    colYm: Map<DisplayColumn, string>,
+): number | null {
+    if (!cecoData) return null;
+    let sum = 0, count = 0;
+    const seen = new Set<string>();
+    for (const ym of colYm.values()) {
+        if (seen.has(ym)) continue;
+        seen.add(ym);
+        const hc = cecoData[ym];
+        if (hc != null && hc > 0) { sum += hc; count++; }
+    }
+    return count > 0 ? sum / count : null;
+}
+
 // ── Headcount / per-worker aggregation ──────────────────────────────
 
-function partidaHcPerCol(partida: PlanillaPartida, headcountMap: HeadcountMap, col: DisplayColumn): number | null {
+function partidaHcPerCol(partida: PlanillaPartida, headcountMap: HeadcountMap, col: DisplayColumn, colYm: Map<DisplayColumn, string>): number | null {
     let total = 0;
     for (const ceco of partida.cecos) {
-        const hc = headcountMap[ceco.code]?.[col.sourceMonths[0]];
+        const hc = hcForCol(headcountMap[ceco.code], col, colYm);
         if (hc && hc > 0) total += hc;
     }
     return total > 0 ? total : null;
 }
 
-function partidaHcAvg(partida: PlanillaPartida, headcountMap: HeadcountMap): number | null {
+function partidaHcAvg(partida: PlanillaPartida, headcountMap: HeadcountMap, colYm: Map<DisplayColumn, string>): number | null {
     let total = 0;
     for (const ceco of partida.cecos) {
-        const avg = headcountMap[ceco.code]?.['TOTAL_AVG'];
+        const avg = hcAvg(headcountMap[ceco.code], colYm);
         if (avg && avg > 0) total += avg;
     }
     return total > 0 ? Math.round(total) : null;
 }
 
-function partidaPwPerCol(partida: PlanillaPartida, headcountMap: HeadcountMap, col: DisplayColumn): number | null {
+function partidaPwPerCol(partida: PlanillaPartida, headcountMap: HeadcountMap, col: DisplayColumn, colYm: Map<DisplayColumn, string>): number | null {
     let costSum = 0, hcSum = 0;
     for (const ceco of partida.cecos) {
-        const hc = headcountMap[ceco.code]?.[col.sourceMonths[0]];
+        const hc = hcForCol(headcountMap[ceco.code], col, colYm);
         if (!hc || hc <= 0) continue;
         costSum += (ceco.totals[col.sourceMonths[0]] ?? 0);
         hcSum += hc;
@@ -202,10 +268,10 @@ function partidaPwPerCol(partida: PlanillaPartida, headcountMap: HeadcountMap, c
     return hcSum > 0 ? costSum / hcSum : null;
 }
 
-function partidaPwAvg(partida: PlanillaPartida, headcountMap: HeadcountMap): number | null {
+function partidaPwAvg(partida: PlanillaPartida, headcountMap: HeadcountMap, colYm: Map<DisplayColumn, string>): number | null {
     let costSum = 0, hcSum = 0;
     for (const ceco of partida.cecos) {
-        const avg = headcountMap[ceco.code]?.['TOTAL_AVG'];
+        const avg = hcAvg(headcountMap[ceco.code], colYm);
         if (!avg || avg <= 0) continue;
         costSum += (ceco.totals['TOTAL'] ?? 0);
         hcSum += avg;
@@ -213,29 +279,29 @@ function partidaPwAvg(partida: PlanillaPartida, headcountMap: HeadcountMap): num
     return hcSum > 0 ? costSum / hcSum : null;
 }
 
-function grandHcPerCol(partidas: PlanillaPartida[], headcountMap: HeadcountMap, col: DisplayColumn): number | null {
+function grandHcPerCol(partidas: PlanillaPartida[], headcountMap: HeadcountMap, col: DisplayColumn, colYm: Map<DisplayColumn, string>): number | null {
     let total = 0;
     for (const p of partidas) {
-        const v = partidaHcPerCol(p, headcountMap, col);
+        const v = partidaHcPerCol(p, headcountMap, col, colYm);
         if (v) total += v;
     }
     return total > 0 ? total : null;
 }
 
-function grandHcAvg(partidas: PlanillaPartida[], headcountMap: HeadcountMap): number | null {
+function grandHcAvg(partidas: PlanillaPartida[], headcountMap: HeadcountMap, colYm: Map<DisplayColumn, string>): number | null {
     let total = 0;
     for (const p of partidas) {
-        const v = partidaHcAvg(p, headcountMap);
+        const v = partidaHcAvg(p, headcountMap, colYm);
         if (v) total += v;
     }
     return total > 0 ? total : null;
 }
 
-function grandPwPerCol(partidas: PlanillaPartida[], headcountMap: HeadcountMap, col: DisplayColumn): number | null {
+function grandPwPerCol(partidas: PlanillaPartida[], headcountMap: HeadcountMap, col: DisplayColumn, colYm: Map<DisplayColumn, string>): number | null {
     let costSum = 0, hcSum = 0;
     for (const p of partidas) {
         for (const ceco of p.cecos) {
-            const hc = headcountMap[ceco.code]?.[col.sourceMonths[0]];
+            const hc = hcForCol(headcountMap[ceco.code], col, colYm);
             if (!hc || hc <= 0) continue;
             costSum += (ceco.totals[col.sourceMonths[0]] ?? 0);
             hcSum += hc;
@@ -244,11 +310,11 @@ function grandPwPerCol(partidas: PlanillaPartida[], headcountMap: HeadcountMap, 
     return hcSum > 0 ? costSum / hcSum : null;
 }
 
-function grandPwAvg(partidas: PlanillaPartida[], headcountMap: HeadcountMap): number | null {
+function grandPwAvg(partidas: PlanillaPartida[], headcountMap: HeadcountMap, colYm: Map<DisplayColumn, string>): number | null {
     let costSum = 0, hcSum = 0;
     for (const p of partidas) {
         for (const ceco of p.cecos) {
-            const avg = headcountMap[ceco.code]?.['TOTAL_AVG'];
+            const avg = hcAvg(headcountMap[ceco.code], colYm);
             if (!avg || avg <= 0) continue;
             costSum += (ceco.totals['TOTAL'] ?? 0);
             hcSum += avg;
@@ -390,9 +456,12 @@ interface PlanillaTableProps {
     columns: DisplayColumn[];
     revenueRow: ReportRow | null;
     headcountMap?: HeadcountMap | null;
+    selectedYear: number;
+    /** MonthSource[] for trailing 12M, null for YTD */
+    monthSources: MonthSource[] | null;
 }
 
-export default function PlanillaTable({ rows, columns, revenueRow, headcountMap }: PlanillaTableProps) {
+export default function PlanillaTable({ rows, columns, revenueRow, headcountMap, selectedYear, monthSources }: PlanillaTableProps) {
     const [expandedPartidas, setExpandedPartidas] = useState<Set<string>>(new Set());
     const [expandedCecos, setExpandedCecos] = useState<Set<string>>(new Set());
     const [expandedPctPartidas, setExpandedPctPartidas] = useState<Set<string>>(new Set());
@@ -408,6 +477,11 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap 
     }, [rows, planillaFilter]);
 
     const { partidas, grandTotal } = useMemo(() => buildHierarchy(filteredRows, columns), [filteredRows, columns]);
+
+    const colYm = useMemo(
+        () => buildColYm(columns, selectedYear, monthSources),
+        [columns, selectedYear, monthSources],
+    );
 
     const activeHeaders = useMemo(() => {
         const s = new Set<string>();
@@ -552,14 +626,14 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap 
 
                         const getPartidaMetric = (col: DisplayColumn): string => {
                             if (!headcountMap) return '';
-                            if (metricMode === 'headcount') return fmtHc(partidaHcPerCol(partida, headcountMap, col));
-                            return fmtPw(partidaPwPerCol(partida, headcountMap, col));
+                            if (metricMode === 'headcount') return fmtHc(partidaHcPerCol(partida, headcountMap, col, colYm));
+                            return fmtPw(partidaPwPerCol(partida, headcountMap, col, colYm));
                         };
 
                         const partidaTotalMetric = (): string => {
                             if (!headcountMap) return '';
-                            if (metricMode === 'headcount') return fmtHc(partidaHcAvg(partida, headcountMap));
-                            return fmtPw(partidaPwAvg(partida, headcountMap));
+                            if (metricMode === 'headcount') return fmtHc(partidaHcAvg(partida, headcountMap, colYm));
+                            return fmtPw(partidaPwAvg(partida, headcountMap, colYm));
                         };
 
                         return (
@@ -587,20 +661,20 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap 
                                 {/* L1: CECOs */}
                                 {isExpanded && partida.cecos.map((ceco) => {
                                     const cecoExpanded = expandedCecos.has(`${partida.name}|${ceco.code}`);
-                                    const cecoHcData = headcountMap?.[ceco.code] ?? null;
-                                    const cecoHcAvg = cecoHcData?.['TOTAL_AVG'] ?? null;
+                                    const cecoHcData = headcountMap?.[ceco.code] ?? undefined;
+                                    const cecoHcAvgVal = hcAvg(cecoHcData, colYm);
 
                                     const getCecoMetric = (col: DisplayColumn): string => {
                                         if (!cecoHcData) return '';
-                                        const hc = cecoHcData[col.sourceMonths[0]] ?? null;
+                                        const hc = hcForCol(cecoHcData, col, colYm);
                                         if (metricMode === 'headcount') return fmtHc(hc);
                                         const val = getCellValue(ceco.totals as ReportRow, col);
                                         return fmtPw(perWorkerValue(val, hc));
                                     };
 
                                     const cecoTotalMetric = (): string => {
-                                        if (metricMode === 'headcount') return fmtHc(cecoHcAvg != null ? Math.round(cecoHcAvg) : null);
-                                        return fmtPw(perWorkerValue(ceco.totals['TOTAL'] ?? null, cecoHcAvg));
+                                        if (metricMode === 'headcount') return fmtHc(cecoHcAvgVal != null ? Math.round(cecoHcAvgVal) : null);
+                                        return fmtPw(perWorkerValue(ceco.totals['TOTAL'] ?? null, cecoHcAvgVal));
                                     };
 
                                     return (
@@ -632,15 +706,15 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap 
                                             {isDual && cecoExpanded && ceco.cuentas.map((cuenta, ci) => {
                                                 const getCuentaMetric = (col: DisplayColumn): string => {
                                                     if (!cecoHcData) return '';
-                                                    const hc = cecoHcData[col.sourceMonths[0]] ?? null;
+                                                    const hc = hcForCol(cecoHcData, col, colYm);
                                                     if (metricMode === 'headcount') return fmtHc(hc);
                                                     const val = getCellValue(cuenta.row, col);
                                                     return fmtPw(perWorkerValue(val, hc));
                                                 };
 
                                                 const cuentaTotalMetric = (): string => {
-                                                    if (metricMode === 'headcount') return fmtHc(cecoHcAvg != null ? Math.round(cecoHcAvg) : null);
-                                                    return fmtPw(perWorkerValue(cuenta.row['TOTAL'] as number | null, cecoHcAvg));
+                                                    if (metricMode === 'headcount') return fmtHc(cecoHcAvgVal != null ? Math.round(cecoHcAvgVal) : null);
+                                                    return fmtPw(perWorkerValue(cuenta.row['TOTAL'] as number | null, cecoHcAvgVal));
                                                 };
 
                                                 return (
@@ -670,15 +744,15 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap 
                                     activeHeaders={activeHeaders}
                                     getMetric={(col) => {
                                         if (!headcountMap) return '';
-                                        if (metricMode === 'headcount') return fmtHc(grandHcPerCol(partidas, headcountMap, col));
-                                        return fmtPw(grandPwPerCol(partidas, headcountMap, col));
+                                        if (metricMode === 'headcount') return fmtHc(grandHcPerCol(partidas, headcountMap, col, colYm));
+                                        return fmtPw(grandPwPerCol(partidas, headcountMap, col, colYm));
                                     }}
                                 />
                                 <TotalCell val={grandTotal['TOTAL'] ?? null} />
                                 <td className="rpt-col-metric" style={{ fontWeight: 700 }}>
                                     {headcountMap && (metricMode === 'headcount'
-                                        ? fmtHc(grandHcAvg(partidas, headcountMap))
-                                        : fmtPw(grandPwAvg(partidas, headcountMap))
+                                        ? fmtHc(grandHcAvg(partidas, headcountMap, colYm))
+                                        : fmtPw(grandPwAvg(partidas, headcountMap, colYm))
                                     )}
                                 </td>
                             </>

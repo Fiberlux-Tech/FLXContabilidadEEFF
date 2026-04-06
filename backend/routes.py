@@ -29,7 +29,7 @@ from data_service import (
 )
 from pipeline import run_report
 from headcount_service import (
-    load_headcount, save_headcount_csv, get_roster_detail,
+    load_headcount, load_headcount_ym, save_headcount_csv, get_roster_detail,
 )
 
 api_bp = Blueprint('api', __name__)
@@ -322,6 +322,33 @@ def get_headcount():
     """
     company, year = _validate_company_query()
     data = load_headcount(_hc_db_path(), company, year)
+    return ok({'headcount': data})
+
+
+@api_bp.route('/headcount/ym', methods=['GET'])
+@login_required
+def get_headcount_ym():
+    """Return headcount map keyed by year_month integers.
+
+    Query: ?company=FIBERLINE&years=2025,2026
+    Returns: { headcount: { "100.101.00": { "202501": 22, ... } } }
+    """
+    company = (request.args.get('company') or '').strip().upper()
+    if company not in VALID_COMPANIES:
+        raise RequestValidationError(f'Empresa invalida: {company}')
+    years_raw = (request.args.get('years') or '').strip()
+    if not years_raw:
+        raise RequestValidationError('Parametro years es requerido')
+    try:
+        years = [int(y) for y in years_raw.split(',')]
+    except ValueError:
+        raise RequestValidationError('Formato de years invalido')
+    now_year = datetime.now().year
+    for y in years:
+        if y < MIN_YEAR or y > now_year + 1:
+            raise RequestValidationError(f'Ano invalido: {y}')
+
+    data = load_headcount_ym(_hc_db_path(), company, years)
     return ok({'headcount': data})
 
 
