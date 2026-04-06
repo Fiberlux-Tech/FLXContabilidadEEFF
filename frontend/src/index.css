@@ -235,6 +235,28 @@
     letter-spacing: 2px;
   }
 
+  /* ─── Metric sub-column (HC, Gasto/HC) in Planilla ─── */
+  .rpt-col-metric {
+    background: rgba(59, 130, 246, 0.04);
+    font-size: 11px;
+    color: #888;
+    min-width: 52px;
+    width: 56px;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  th.rpt-col-metric {
+    background: rgba(59, 130, 246, 0.06);
+    color: #2563EB;
+    font-weight: 600;
+  }
+  .rpt-row-total td.rpt-col-metric {
+    background: rgba(59, 130, 246, 0.06);
+  }
+  .rpt-row-highlight td.rpt-col-metric {
+    background: rgba(59, 130, 246, 0.04);
+  }
+
   /* ─── Sticky first column ─── */
   .rpt-sticky {
     @apply sticky left-0 z-10;
