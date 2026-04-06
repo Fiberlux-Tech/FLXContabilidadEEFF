@@ -1,6 +1,6 @@
 import { ALL_MONTHS } from '@/types';
 import type { ReportData, TableConfig, ReportRow, Month } from '@/types';
-import type { View } from '@/config/viewRegistry';
+
 export { VIEW_TITLE_MAP } from '@/config/viewRegistry';
 
 // ── Note view table configs ──────────────────────────────────────────

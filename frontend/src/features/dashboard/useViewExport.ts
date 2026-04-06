@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { useReport } from '@/contexts/ReportContext';
 import { VIEW_TITLE_MAP, VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
 import { exportToExcel, type ExportSheet, type SummarySheetDef, type DetailSheetDef } from '@/utils/exportExcel';
-import type { ReportData } from '@/types';
+
 import { getDataKeyForTable } from '@/utils/dataKeyMapping';
 
 export function useViewExport(): { handleExport: () => void; canExport: boolean } {
@@ -42,6 +42,19 @@ export function useViewExport(): { handleExport: () => void; canExport: boolean 
                 labelKey: 'PARTIDA_BS',
                 showTotal: false,
                 variant: 'bs',
+            };
+            sheets.push(sheet);
+        } else if (currentView === 'analysis_planilla') {
+            const planillaKeys = ['PARTIDA_PL', 'CENTRO_COSTO', 'DESC_CECO', 'CUENTA_CONTABLE', 'DESCRIPCION'];
+            const planillaRows = getMergedDetailRows('planilla_by_cuenta', planillaKeys);
+            const sheet: DetailSheetDef = {
+                kind: 'detail',
+                sheetName: viewTitle,
+                rows: planillaRows,
+                columns: getDisplayColumns('pl'),
+                headerLabels: ['Partida', 'Centro Costo', 'Desc. CECO', 'Cuenta', 'Descripción'],
+                labelKeys: planillaKeys,
+                year: selectedYear,
             };
             sheets.push(sheet);
         } else {

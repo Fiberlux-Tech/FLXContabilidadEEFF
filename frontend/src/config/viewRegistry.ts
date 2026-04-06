@@ -75,9 +75,9 @@ export const UPLOADS_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'uploa
 
 // ── Category helpers ────────────────────────────────────────────────────
 
-const _BS_IDS = new Set(VIEW_REGISTRY.filter(v => v.category === 'bs').map(v => v.id));
-const _ANALYSIS_IDS = new Set(VIEW_REGISTRY.filter(v => v.category === 'analysis').map(v => v.id));
-const _UPLOADS_IDS = new Set(VIEW_REGISTRY.filter(v => v.category === 'uploads').map(v => v.id));
+const _BS_IDS: Set<string> = new Set(VIEW_REGISTRY.filter(v => v.category === 'bs').map(v => v.id));
+const _ANALYSIS_IDS: Set<string> = new Set(VIEW_REGISTRY.filter(v => v.category === 'analysis').map(v => v.id));
+const _UPLOADS_IDS: Set<string> = new Set(VIEW_REGISTRY.filter(v => v.category === 'uploads').map(v => v.id));
 
 export function isBsView(view: View): boolean {
     return _BS_IDS.has(view);

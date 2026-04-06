@@ -7,7 +7,7 @@ import ProveedoresTable from '@/features/dashboard/ProveedoresTable';
 import PLNoteView from '@/features/dashboard/PLNoteView';
 import { useHeadcount } from '@/features/dashboard/useHeadcount';
 import UploadPlanilla from '@/features/dashboard/UploadPlanilla';
-import type { ReportData, TableConfig, ReportRow } from '@/types';
+
 import { VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
 import { getDataKeyForTable } from '@/utils/dataKeyMapping';
 
@@ -168,6 +168,7 @@ export default function MainContent() {
                     headcountMap={headcountMap}
                     selectedYear={selectedYear}
                     monthSources={periodRange === 'trailing12' ? trailingMonthSources : null}
+                    company={selectedCompany}
                 />
             );
         }
