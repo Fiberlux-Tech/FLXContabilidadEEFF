@@ -484,21 +484,14 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap 
         <div>
             {/* ── Filter Bar (TIPO + METRICA on one row) ── */}
             <nav className="flex items-center justify-between mb-10">
-                <div className="flex items-baseline gap-10">
-                    <span className="text-[11px] font-semibold uppercase text-txt-muted" style={{ letterSpacing: '1.2px' }}>
-                        Tipo
-                    </span>
-                    <div className="flex gap-8">
+                <div className="flex items-center gap-3">
+                    <span className="filter-label !mb-0">Tipo</span>
+                    <div className="toggle-group">
                         {FILTER_OPTIONS.map(opt => (
                             <button
                                 key={opt.value}
                                 onClick={() => setPlanillaFilter(opt.value)}
-                                className={`text-[13px] bg-transparent border-none cursor-pointer pb-1.5 transition-all
-                                    ${planillaFilter === opt.value
-                                        ? 'text-txt font-semibold border-b-[3px] border-b-txt'
-                                        : 'text-txt-muted font-normal border-b-2 border-b-transparent hover:text-txt-secondary'
-                                    }`}
-                                style={{ letterSpacing: '0.2px' }}
+                                className={`toggle-btn ${planillaFilter === opt.value ? 'toggle-active' : 'toggle-inactive'}`}
                             >
                                 {opt.label}
                             </button>
@@ -507,23 +500,13 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap 
                 </div>
                 {hasHeadcount && (
                     <div className="flex items-center gap-3">
-                        <span className="text-[11px] font-semibold uppercase text-txt-muted mr-1" style={{ letterSpacing: '1.2px' }}>
-                            Metrica
-                        </span>
-                        <div className="inline-flex rounded-md overflow-hidden" style={{ border: '1px solid #cbd5e1' }}>
+                        <span className="filter-label !mb-0">Metrica</span>
+                        <div className="toggle-group">
                             {METRIC_OPTIONS.map(opt => (
                                 <button
                                     key={opt.value}
                                     onClick={() => setMetricMode(opt.value)}
-                                    className={`px-3 py-1.5 text-[11px] font-medium transition-all whitespace-nowrap border-none cursor-pointer
-                                        ${metricMode === opt.value
-                                            ? 'text-white'
-                                            : 'bg-white hover:bg-blue-50'
-                                        }`}
-                                    style={metricMode === opt.value
-                                        ? { background: '#2563EB', color: '#fff' }
-                                        : { color: '#64748b' }
-                                    }
+                                    className={`toggle-btn ${metricMode === opt.value ? 'toggle-active' : 'toggle-inactive'}`}
                                 >
                                     {opt.label}
                                 </button>
