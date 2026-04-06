@@ -147,11 +147,11 @@ def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
     df[PARTIDA_PL] = pd.Categorical(np.select(conditions, choices, default="POR CLASIFICAR"))
 
     # IS_INTERCOMPANY flag: True for intercompany income accounts OR
-    # any row whose CENTRO_COSTO contains the ".121." pattern.
+    # any row whose CENTRO_COSTO has "121" as the middle segment (xxx.121.xx).
     ceco = df[CENTRO_COSTO].astype(str)
     df[IS_INTERCOMPANY] = (
         cuenta.isin(INGRESOS_INTERCOMPANY_CUENTAS)
-        | ceco.str.contains(INTERCOMPANY_CECO_PATTERN, regex=False)
+        | ceco.str.contains(INTERCOMPANY_CECO_PATTERN, regex=True)
     )
 
     n_unclassified = (df[PARTIDA_PL] == "POR CLASIFICAR").sum()
