@@ -242,7 +242,7 @@
   .rpt-col-metric {
     font-size: 10px;
     font-weight: 500;
-    color: #5b8dd9;
+    color: #5b8dd9 !important;
     text-align: left !important;
     min-width: 28px;
     width: 36px;
