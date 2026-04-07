@@ -62,7 +62,6 @@ export default function ExpandableFinancialTable(props: ExpandableFinancialTable
 
     const [expandedPartidas, setExpandedPartidas] = useState<Set<string>>(new Set());
     const [expandedCecoGroups, setExpandedCecoGroups] = useState<Set<string>>(new Set());
-    const [expandedCuentaCats, setExpandedCuentaCats] = useState<Set<string>>(new Set());
     const [cuentaFilter, setCuentaFilter] = useState<string>('all');
 
     const togglePartida = (partida: string) => {
@@ -71,11 +70,6 @@ export default function ExpandableFinancialTable(props: ExpandableFinancialTable
             if (next.has(partida)) {
                 next.delete(partida);
                 setExpandedCecoGroups(prev2 => {
-                    const next2 = new Set(prev2);
-                    for (const key of next2) if (key.startsWith(partida + '|')) next2.delete(key);
-                    return next2;
-                });
-                setExpandedCuentaCats(prev2 => {
                     const next2 = new Set(prev2);
                     for (const key of next2) if (key.startsWith(partida + '|')) next2.delete(key);
                     return next2;
@@ -90,23 +84,6 @@ export default function ExpandableFinancialTable(props: ExpandableFinancialTable
     const toggleCecoGroup = (partida: string, groupLabel: string) => {
         const key = `${partida}|${groupLabel}`;
         setExpandedCecoGroups(prev => {
-            const next = new Set(prev);
-            if (next.has(key)) {
-                next.delete(key);
-                setExpandedCuentaCats(prev2 => {
-                    const next2 = new Set(prev2);
-                    for (const k of next2) if (k.startsWith(`${partida}|${groupLabel}|`)) next2.delete(k);
-                    return next2;
-                });
-            } else {
-                next.add(key);
-            }
-            return next;
-        });
-    };
-
-    const toggleCuentaCat = (key: string) => {
-        setExpandedCuentaCats(prev => {
             const next = new Set(prev);
             if (next.has(key)) next.delete(key);
             else next.add(key);
@@ -247,7 +224,7 @@ export default function ExpandableFinancialTable(props: ExpandableFinancialTable
                                         })()}
                                     </tr>
 
-                                    {/* CECO → cuenta categories → cuentas */}
+                                    {/* CECO → cuenta categories */}
                                     {isExpanded && EXPANDABLE.has(label) && (() => {
                                         const data = partidaData.get(label);
                                         if (!data) return null;
@@ -257,9 +234,7 @@ export default function ExpandableFinancialTable(props: ExpandableFinancialTable
                                                 cecoGroups={data.cecoGroups}
                                                 cuentaEntriesByCecoGroup={data.cuentaEntriesByCeco}
                                                 expandedCecoGroups={expandedCecoGroups}
-                                                expandedCuentaCats={expandedCuentaCats}
                                                 toggleCecoGroup={toggleCecoGroup}
-                                                toggleCuentaCat={toggleCuentaCat}
                                                 columns={columns}
                                             />
                                         );
@@ -276,14 +251,12 @@ export default function ExpandableFinancialTable(props: ExpandableFinancialTable
 
 // ── CECO expansion (COSTO) ───────────────────────────────────────────
 
-function CecoExpansion({ partida, cecoGroups, cuentaEntriesByCecoGroup, expandedCecoGroups, expandedCuentaCats, toggleCecoGroup, toggleCuentaCat, columns }: {
+function CecoExpansion({ partida, cecoGroups, cuentaEntriesByCecoGroup, expandedCecoGroups, toggleCecoGroup, columns }: {
     partida: string;
     cecoGroups: CecoGroup[];
     cuentaEntriesByCecoGroup: Map<string, CuentaEntry[]>;
     expandedCecoGroups: Set<string>;
-    expandedCuentaCats: Set<string>;
     toggleCecoGroup: (partida: string, groupLabel: string) => void;
-    toggleCuentaCat: (key: string) => void;
     columns: DisplayColumn[];
 }) {
     return (
@@ -312,12 +285,8 @@ function CecoExpansion({ partida, cecoGroups, cuentaEntriesByCecoGroup, expanded
                         {isGroupExpanded && (
                             <CuentaEntryRows
                                 entries={cuentaEntries}
-                                parentKey={`${partida}|${group.label}`}
-                                expandedCuentaCats={expandedCuentaCats}
-                                toggleCuentaCat={toggleCuentaCat}
                                 columns={columns}
                                 catLevel="l2"
-                                leafLevel="l3"
                             />
                         )}
                     </Frag>
@@ -329,14 +298,10 @@ function CecoExpansion({ partida, cecoGroups, cuentaEntriesByCecoGroup, expanded
 
 // ── Cuenta entry rows ────────────────────────────────────────────────
 
-function CuentaEntryRows({ entries, parentKey, expandedCuentaCats, toggleCuentaCat, columns, catLevel, leafLevel }: {
+function CuentaEntryRows({ entries, columns, catLevel }: {
     entries: CuentaEntry[];
-    parentKey: string;
-    expandedCuentaCats: Set<string>;
-    toggleCuentaCat: (key: string) => void;
     columns: DisplayColumn[];
     catLevel: 'l1' | 'l2';
-    leafLevel: 'l2' | 'l3';
 }) {
     return (
         <>
@@ -344,7 +309,7 @@ function CuentaEntryRows({ entries, parentKey, expandedCuentaCats, toggleCuentaC
                 if (entry.prefix === null) {
                     const cuentaRow = entry.row;
                     return (
-                        <tr key={`ug-${ei}`} className={`rpt-row-${leafLevel}`}>
+                        <tr key={`ug-${ei}`} className={`rpt-row-${catLevel}`}>
                             <td className="rpt-sticky">
                                 {cuentaRow['CUENTA_CONTABLE']} {cuentaRow['DESCRIPCION']}
                             </td>
@@ -354,36 +319,14 @@ function CuentaEntryRows({ entries, parentKey, expandedCuentaCats, toggleCuentaC
                     );
                 }
 
-                const catKey = `${parentKey}|${entry.prefix}`;
-                const isCatExpanded = expandedCuentaCats.has(catKey);
-
                 return (
-                    <Frag key={`cat-${entry.prefix}`}>
-                        {/* Cuenta category row */}
-                        <tr
-                            className={`rpt-row-${catLevel}`}
-                            onClick={() => toggleCuentaCat(catKey)}
-                            style={{ cursor: 'pointer' }}
-                        >
-                            <td className="rpt-sticky">
-                                <span className="rpt-chevron">{isCatExpanded ? '\u25BE' : '\u25B8'}</span>
-                                {entry.label}
-                            </td>
-                            <NumCells row={entry.data} columns={columns} />
-                            <TotalCell row={entry.data} columns={columns} />
-                        </tr>
-
-                        {/* Individual cuenta rows */}
-                        {isCatExpanded && entry.cuentaRows.map((cuentaRow, ki) => (
-                            <tr key={`cr-${ki}`} className={`rpt-row-${leafLevel}`}>
-                                <td className="rpt-sticky">
-                                    {cuentaRow['CUENTA_CONTABLE']} {cuentaRow['DESCRIPCION']}
-                                </td>
-                                <NumCells row={cuentaRow} columns={columns} />
-                                <TotalCell row={cuentaRow} columns={columns} />
-                            </tr>
-                        ))}
-                    </Frag>
+                    <tr key={`cat-${entry.prefix}`} className={`rpt-row-${catLevel}`}>
+                        <td className="rpt-sticky">
+                            {entry.label}
+                        </td>
+                        <NumCells row={entry.data} columns={columns} />
+                        <TotalCell row={entry.data} columns={columns} />
+                    </tr>
                 );
             })}
         </>
