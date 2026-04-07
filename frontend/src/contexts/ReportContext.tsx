@@ -114,16 +114,31 @@ function reportReducer(state: ReportState, action: ReportAction): ReportState {
         case 'SET_INTERCOMPANY_FILTER':
             return { ...state, intercompanyFilter: action.filter };
         case 'LOAD_START':
-            return { ...state, isLoading: true, error: null, bsError: null, loadedSections: new Set<string>(), sectionError: null };
+            return { ...state, isLoading: true, error: null, bsError: null, sectionError: null };
         case 'LOAD_PL_SUCCESS':
-            // Set reportData with empty bs_summary — BS loads separately
-            return {
-                ...state, isLoading: false,
-                reportData: { ...action.data, bs_summary: [] } as ReportData,
-                prevYearData: action.prevYearData
-                    ? { ...action.prevYearData, bs_summary: [] } as ReportData
-                    : null,
-            };
+            // Merge new summary into existing reportData to preserve loaded sections/BS,
+            // but only if company+year match (otherwise start fresh).
+            {
+                const sameContext = state.reportData
+                    && state.reportData.company === action.data.company
+                    && state.reportData.year === action.data.year;
+                const base = sameContext ? state.reportData : { bs_summary: [] as ReportRow[] };
+                const prevBase = sameContext ? state.prevYearData : null;
+                // Reset sections when company/year changed, OR when trailing12
+                // toggled (sections need prev-year data that wasn't fetched before).
+                const hadPrevData = !!state.prevYearData;
+                const hasPrevData = !!action.prevYearData;
+                const periodChanged = hadPrevData !== hasPrevData;
+                const keepSections = sameContext && !periodChanged;
+                return {
+                    ...state, isLoading: false,
+                    reportData: { ...base, ...action.data } as ReportData,
+                    prevYearData: action.prevYearData
+                        ? { ...(prevBase ?? {}), ...action.prevYearData, bs_summary: prevBase?.bs_summary ?? [] } as ReportData
+                        : prevBase,
+                    loadedSections: keepSections ? state.loadedSections : new Set<string>(),
+                };
+            }
         case 'LOAD_ERROR':
             return { ...state, isLoading: false, error: action.error, reportData: null, prevYearData: null };
         case 'BS_LOAD_START':
@@ -155,15 +170,15 @@ function reportReducer(state: ReportState, action: ReportAction): ReportState {
         case 'SECTION_LOAD_START':
             return { ...state, isSectionLoading: true, sectionError: null };
         case 'SECTION_LOAD_SUCCESS': {
+            // Only merge section data if we still have reportData (guard against stale responses)
+            if (!state.reportData) return { ...state, isSectionLoading: false };
             const newSections = new Set(state.loadedSections);
             newSections.add(action.section);
             return {
                 ...state,
                 isSectionLoading: false,
                 loadedSections: newSections,
-                reportData: state.reportData
-                    ? { ...state.reportData, ...action.data }
-                    : null,
+                reportData: { ...state.reportData, ...action.data },
                 prevYearData: action.prevData && state.prevYearData
                     ? { ...state.prevYearData, ...action.prevData }
                     : state.prevYearData,
@@ -264,6 +279,8 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
     // ─── P&L fetch (primary, fast path) ──────────────────────
     const loadData = useCallback(async (force = false, signal?: AbortSignal) => {
         if (!state.selectedCompany) return;
+        // Abort any in-flight section request before resetting state
+        if (sectionAbortRef.current) { sectionAbortRef.current.abort(); sectionAbortRef.current = null; }
         dispatch({ type: 'LOAD_START' });
         try {
             const plPromise = api.post<PLReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD_PL, {
@@ -283,16 +300,11 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
 
             const [plData, prevPlData] = await Promise.all([plPromise, prevPlPromise]);
             dispatch({ type: 'LOAD_PL_SUCCESS', data: plData, prevYearData: prevPlData });
-
-            // If user is on any BS view, fetch BS immediately after P&L
-            if (isBsView(state.currentView)) {
-                fetchBsData(force, signal);
-            }
         } catch (err: unknown) {
             if (err instanceof DOMException && err.name === 'AbortError') return;
             dispatch({ type: 'LOAD_ERROR', error: err instanceof Error ? err.message : 'Error al cargar datos' });
         }
-    }, [state.selectedCompany, state.selectedYear, state.periodRange, state.currentView, fetchBsData]);
+    }, [state.selectedCompany, state.selectedYear, state.periodRange]);
 
     // Auto-load P&L when company, year, or periodRange changes (debounced + cancellable)
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -335,34 +347,49 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
     }, [state.currentView, state.reportData, state.isBsLoading, state.bsError, fetchBsData]);
 
     // ─── P&L section fetch (on-demand detail loading) ──────────
+    // Use refs for values needed inside the fetch to avoid recreating the
+    // callback (which would cause the effect to re-fire and abort itself).
     const sectionAbortRef = useRef<AbortController | null>(null);
+    const companyRef = useRef(state.selectedCompany);
+    const yearRef = useRef(state.selectedYear);
+    const periodRef = useRef(state.periodRange);
+    companyRef.current = state.selectedCompany;
+    yearRef.current = state.selectedYear;
+    periodRef.current = state.periodRange;
 
-    const fetchSection = useCallback(async (section: string, signal?: AbortSignal) => {
-        if (!state.selectedCompany || state.loadedSections.has(section)) return;
+    const fetchSection = useCallback(async (section: string) => {
+        const company = companyRef.current;
+        const year = yearRef.current;
+        const period = periodRef.current;
+        if (!company) return;
+
+        // Abort any previous section request (allows switching sections mid-flight)
+        if (sectionAbortRef.current) sectionAbortRef.current.abort();
+        const controller = new AbortController();
+        sectionAbortRef.current = controller;
+
         dispatch({ type: 'SECTION_LOAD_START' });
         try {
             const dataPromise = api.post<PLSectionData>(API_CONFIG.ENDPOINTS.DATA_LOAD_PL_SECTION, {
-                company: state.selectedCompany,
-                year: state.selectedYear,
-                section,
-            }, { signal });
+                company, year, section,
+            }, { signal: controller.signal });
 
             let prevDataPromise: Promise<PLSectionData> | null = null;
-            if (state.periodRange === 'trailing12') {
+            if (period === 'trailing12') {
                 prevDataPromise = api.post<PLSectionData>(API_CONFIG.ENDPOINTS.DATA_LOAD_PL_SECTION, {
-                    company: state.selectedCompany,
-                    year: state.selectedYear - 1,
-                    section,
-                }, { signal });
+                    company, year: year - 1, section,
+                }, { signal: controller.signal });
             }
 
             const [data, prevData] = await Promise.all([dataPromise, prevDataPromise]);
+            if (controller.signal.aborted) return; // double-check after await
             dispatch({ type: 'SECTION_LOAD_SUCCESS', section, data, prevData });
         } catch (err: unknown) {
             if (err instanceof DOMException && err.name === 'AbortError') return;
             dispatch({ type: 'SECTION_LOAD_ERROR', error: err instanceof Error ? err.message : 'Error al cargar seccion' });
         }
-    }, [state.selectedCompany, state.selectedYear, state.periodRange, state.loadedSections]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Trigger section fetch when user navigates to a P&L detail view
     useEffect(() => {
@@ -370,16 +397,11 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
         if (
             section &&
             state.reportData &&
-            !state.loadedSections.has(section) &&
-            !state.isSectionLoading
+            !state.loadedSections.has(section)
         ) {
-            if (sectionAbortRef.current) sectionAbortRef.current.abort();
-            const controller = new AbortController();
-            sectionAbortRef.current = controller;
-            fetchSection(section, controller.signal);
-            return () => controller.abort();
+            fetchSection(section);
         }
-    }, [state.currentView, state.reportData, state.loadedSections, state.isSectionLoading, fetchSection]);
+    }, [state.currentView, state.reportData, state.loadedSections, fetchSection]);
 
     const exportFile = useCallback(async (type: 'excel' | 'pdf' | 'all') => {
         if (!state.selectedCompany) return;
