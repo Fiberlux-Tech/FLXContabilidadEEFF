@@ -11,7 +11,7 @@ import re
 from config.calendar import MONTH_NAMES
 from data.headcount_db import (
     fetch_headcount, bulk_upsert_roster, fetch_roster_detail,
-    clear_roster, roster_count,
+    roster_count,
 )
 from data_service import LRUTTLCache
 
@@ -154,8 +154,7 @@ def save_headcount_csv(db_path: str, cia: str | None, csv_content: str) -> int:
         })
         companies.add(empresa)
 
-    # Wipe old roster and store fresh raw rows
-    clear_roster(db_path)
+    # Append new rows (duplicates ignored via UNIQUE constraint)
     saved = bulk_upsert_roster(db_path, roster_rows)
 
     # Invalidate cache for all affected companies

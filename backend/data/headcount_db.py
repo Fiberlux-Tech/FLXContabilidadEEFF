@@ -125,11 +125,6 @@ def fetch_roster_detail(
     return [dict(r) for r in rows]
 
 
-def clear_roster(db_path: str) -> None:
-    """Delete all rows from employee_roster table."""
-    with _connect(db_path) as conn:
-        conn.execute("DELETE FROM employee_roster")
-
 
 def roster_count(db_path: str) -> int:
     """Return total number of raw roster rows."""
