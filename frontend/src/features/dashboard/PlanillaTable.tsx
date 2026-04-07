@@ -263,10 +263,9 @@ function partidaHcAvg(partida: PlanillaPartida, headcountMap: HeadcountMap, colY
 function partidaPwPerCol(partida: PlanillaPartida, headcountMap: HeadcountMap, col: DisplayColumn, colYm: Map<DisplayColumn, string>): number | null {
     let costSum = 0, hcSum = 0;
     for (const ceco of partida.cecos) {
-        const hc = hcForCol(headcountMap[ceco.code], col, colYm);
-        if (!hc || hc <= 0) continue;
         costSum += (ceco.totals[col.sourceMonths[0]] ?? 0);
-        hcSum += hc;
+        const hc = hcForCol(headcountMap[ceco.code], col, colYm);
+        if (hc && hc > 0) hcSum += hc;
     }
     return hcSum > 0 ? costSum / hcSum : null;
 }
@@ -274,10 +273,9 @@ function partidaPwPerCol(partida: PlanillaPartida, headcountMap: HeadcountMap, c
 function partidaPwAvg(partida: PlanillaPartida, headcountMap: HeadcountMap, colYm: Map<DisplayColumn, string>): number | null {
     let costSum = 0, hcSum = 0;
     for (const ceco of partida.cecos) {
-        const avg = hcAvg(headcountMap[ceco.code], colYm);
-        if (!avg || avg <= 0) continue;
         costSum += (ceco.totals['TOTAL'] ?? 0);
-        hcSum += avg;
+        const avg = hcAvg(headcountMap[ceco.code], colYm);
+        if (avg && avg > 0) hcSum += avg;
     }
     return hcSum > 0 ? costSum / hcSum : null;
 }
@@ -687,14 +685,12 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
             for (const p of partidas) total += (partidaHcPerCol(p, headcountMap, col, colYm) ?? 0);
             return fmtHc(total > 0 ? total : null);
         }
-        // salario: weighted average across all partidas
+        // salario: total cost / total headcount across all partidas
         let costSum = 0, hcSum = 0;
         for (const p of partidas) {
+            costSum += (getCellValue(p.totals as ReportRow, col) ?? 0);
             const hc = partidaHcPerCol(p, headcountMap, col, colYm) ?? 0;
-            if (hc > 0) {
-                costSum += (getCellValue(p.totals as ReportRow, col) ?? 0);
-                hcSum += hc;
-            }
+            if (hc > 0) hcSum += hc;
         }
         return fmtPw(hcSum > 0 ? costSum / hcSum : null);
     };
@@ -711,11 +707,9 @@ export default function PlanillaTable({ rows, columns, revenueRow, headcountMap,
         // salario
         let costSum = 0, hcSum = 0;
         for (const p of partidas) {
+            costSum += (p.totals['TOTAL'] ?? 0);
             const avg = partidaHcAvg(p, headcountMap, colYm) ?? 0;
-            if (avg > 0) {
-                costSum += (p.totals['TOTAL'] ?? 0);
-                hcSum += avg;
-            }
+            if (avg > 0) hcSum += avg;
         }
         return fmtPw(hcSum > 0 ? costSum / hcSum : null);
     };
