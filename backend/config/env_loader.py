@@ -19,8 +19,8 @@ from dotenv import load_dotenv
 
 
 def _find_monorepo_root() -> Path:
-    """Return the monorepo root directory (parent of this config package)."""
-    return Path(__file__).resolve().parent.parent
+    """Return the monorepo root directory (grandparent of this config package)."""
+    return Path(__file__).resolve().parent.parent.parent
 
 
 def load_env_config(root: str | Path | None = None) -> str:

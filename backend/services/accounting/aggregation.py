@@ -93,11 +93,12 @@ def detail_ceco_by_cuenta(df: pd.DataFrame, partidas: list[str],
 
 
 def detail_by_cuenta(df: pd.DataFrame, partidas: list[str],
+                     ascending: bool = False,
                      with_total_row: bool = False,
                      preagg: pd.DataFrame | None = None) -> pd.DataFrame:
     """Filter to *partidas* and pivot by CUENTA_CONTABLE + DESCRIPCION."""
     return _detail_pivot(df, partidas, [CUENTA_CONTABLE, DESCRIPCION],
-                         with_total_row=with_total_row, preagg=preagg)
+                         ascending=ascending, with_total_row=with_total_row, preagg=preagg)
 
 
 def detail_planilla(df: pd.DataFrame,
@@ -137,7 +138,8 @@ def detail_proveedores_transporte(df: pd.DataFrame) -> pd.DataFrame:
     return pivot
 
 
-def split_resultado_financiero(res_fin_df: pd.DataFrame, sort_col: str = TOTAL_COL) -> ResultadoFinanciero:
+def split_resultado_financiero(res_fin_df: pd.DataFrame, sort_col: str = TOTAL_COL,
+                               gastos_ascending: bool = True) -> ResultadoFinanciero:
     """Split a RESULTADO FINANCIERO DataFrame into ingresos (prefix '77') and gastos.
 
     Parameters
@@ -146,6 +148,8 @@ def split_resultado_financiero(res_fin_df: pd.DataFrame, sort_col: str = TOTAL_C
         Detail-by-cuenta pivot for RESULTADO FINANCIERO.
     sort_col : str
         Column to sort by (e.g. "TOTAL" for Excel, a period column for PDF).
+    gastos_ascending : bool
+        Sort gastos from lowest to highest (True) so most-negative items appear first.
 
     Returns
     -------
@@ -155,9 +159,10 @@ def split_resultado_financiero(res_fin_df: pd.DataFrame, sort_col: str = TOTAL_C
     ingresos = append_total_row(
         res_fin_df[mask_77].reset_index(drop=True), DESCRIPCION,
     )
-    gastos = append_total_row(
-        res_fin_df[~mask_77].reset_index(drop=True), DESCRIPCION,
-    )
+    gastos_df = res_fin_df[~mask_77].reset_index(drop=True)
+    if sort_col in gastos_df.columns:
+        gastos_df = gastos_df.sort_values(sort_col, ascending=gastos_ascending).reset_index(drop=True)
+    gastos = append_total_row(gastos_df, DESCRIPCION)
     return ResultadoFinanciero(ingresos=ingresos, gastos=gastos)
 
 

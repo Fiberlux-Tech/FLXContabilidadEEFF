@@ -9,7 +9,7 @@ __pycache__/
 *.db-wal
 .claude/
 backend/logs/
-output/
+backend/output/
 frontend/node_modules/
 frontend/dist/
 .cache/

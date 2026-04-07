@@ -14,7 +14,7 @@
 - Context managers for DB connections (`with connect() as conn:`)
 
 ### Error Handling
-- Custom exception hierarchy in `config/exceptions.py`
+- Custom exception hierarchy in `backend/config/exceptions.py`
 - Services raise domain-specific exceptions (`QueryError`, `ExportError`, `DataValidationError`)
 - Backend catches and returns JSON error responses with appropriate HTTP status codes:
   - 400 for validation errors (`ValueError`, `KeyError`)
@@ -28,17 +28,17 @@
 - Concurrent queries via `ThreadPoolExecutor` with separate connections per thread
 
 ### Configuration — Layered .env Loading
-- `config/env_loader.py` loads environment in two steps:
+- `backend/config/env_loader.py` loads environment in two steps:
   1. `.env` at monorepo root (shared defaults, `override=False`)
   2. `.env.{APP_ENV}` (environment-specific overrides, `override=True`)
 - `APP_ENV` defaults to `production` if not set
 - `get_config()` returns a frozen dataclass, cached with `@functools.lru_cache`
 - All secrets and connection strings come from env vars, never hardcoded
 
-### Import Path Quirk
-- `backend/app.py` adds both the monorepo root AND `services/` to `sys.path`
-- This allows services code to use bare imports: `from config.settings import ...`, `from data.fetcher import ...`
-- Do NOT use `from services.config.settings import ...` — it won't work
+### Import Path Setup
+- `backend/app.py` adds `backend/` and `backend/services/` to `sys.path`
+- This allows bare imports: `from config.settings import ...`, `from data.fetcher import ...`
+- All Python packages (config, data, models, services, accounting) live inside `backend/`
 
 ### Caching
 Three cache layers, each with a specific role:
@@ -54,7 +54,7 @@ Three cache layers, each with a specific role:
 - When exporting, `_run_export()` checks `get_raw_cached()` and `get_bs_cached()`
 - If dashboard was loaded recently, export skips DB entirely and reuses cached DataFrames
 
-**File-based previous-year cache** (`data/.cache/`):
+**File-based previous-year cache** (`backend/data/.cache/`):
 - CSV files with 30-day TTL
 - Previous-year P&L/BS data changes rarely, so this avoids repeated DB round-trips
 
@@ -64,7 +64,7 @@ Three cache layers, each with a specific role:
 - `_df_to_records()` applies this to every cell before returning to the API
 
 ### NOTA_GROUPS — Config-Driven Report Rendering
-- `config/nota.py` defines `NOTA_GROUPS`: a tuple of `NotaGroup` entries
+- `backend/config/nota.py` defines `NOTA_GROUPS`: a tuple of `NotaGroup` entries
 - Each `NotaEntry` specifies: label, render pattern, data domain (BS/PL), data keys
 - `RenderPattern` enum controls how each note renders (BS detail, PL by CECO, PL by cuenta, sales, etc.)
 - Both Excel sheet order AND PDF note numbering are driven by the same config
@@ -72,12 +72,12 @@ Three cache layers, each with a specific role:
 - `numbered_groups()` helper auto-numbers notes and skips empty groups
 
 ### Month Column Ordering
-- `MONTH_NAMES_LIST` (in `config/calendar.py`) is the single source of calendar-ordered month names
+- `MONTH_NAMES_LIST` (in `backend/config/calendar.py`) is the single source of calendar-ordered month names
 - Use `reindex(columns=non_month_cols + MONTH_NAMES_LIST, fill_value=0)` to ensure all 12 month columns exist in order
 - Never reconstruct via `list(MONTH_NAMES.values())` — import `MONTH_NAMES_LIST` instead
 
 ### Account Classification Rules
-- `accounting/rules.py` defines constants for account prefix matching
+- `backend/services/accounting/rules.py` defines constants for account prefix matching
 - `assign_partida_pl()` uses `np.select()` for vectorized classification (priority-ordered conditions)
 - Cost-center first character determines cost vs. sales expense vs. admin expense
 - BS classification maps account prefixes → statement line items, with per-account overrides
@@ -88,11 +88,11 @@ Three cache layers, each with a specific role:
 The accounting transformation pipeline is the core of this system. Its logic must NEVER be altered by UI changes, refactoring, or "improvements" unless explicitly requested for accounting correctness reasons.
 
 **Protected modules** (changes require explicit accounting justification):
-- `services/accounting/rules.py` — Account classification constants, BS mappings, display order, reclassification rules
-- `services/accounting/transforms.py` — SALDO computation (P&L: CREDITO−DEBITO; BS: sign by account class), account filtering (prefix ≥ 619), partida assignment (np.select priority order)
-- `services/accounting/statements.py` — P&L row structure (subtotal formulas: UTILIDAD BRUTA, OPERATIVA, NETA), BS row structure (CORRIENTE/NO CORRIENTE split, reclassification, Resultados del Ejercicio injection), balance validation (ACTIVO = PASIVO + PATRIMONIO)
-- `services/accounting/aggregation.py` — Pivot logic (monthly sums, cumsum for BS), period aggregation, resultado financiero split (prefix "77" = ingresos)
-- `data/queries.py` — SQL query construction, account prefix filtering, date range logic, closing entry exclusion
+- `backend/services/accounting/rules.py` — Account classification constants, BS mappings, display order, reclassification rules
+- `backend/services/accounting/transforms.py` — SALDO computation (P&L: CREDITO−DEBITO; BS: sign by account class), account filtering (prefix ≥ 619), partida assignment (np.select priority order)
+- `backend/services/accounting/statements.py` — P&L row structure (subtotal formulas: UTILIDAD BRUTA, OPERATIVA, NETA), BS row structure (CORRIENTE/NO CORRIENTE split, reclassification, Resultados del Ejercicio injection), balance validation (ACTIVO = PASIVO + PATRIMONIO)
+- `backend/services/accounting/aggregation.py` — Pivot logic (monthly sums, cumsum for BS), period aggregation, resultado financiero split (prefix "77" = ingresos)
+- `backend/data/queries.py` — SQL query construction, account prefix filtering, date range logic, closing entry exclusion
 
 **Sacred invariants** (must hold true at all times):
 1. P&L SALDO = CREDITO_LOCAL − DEBITO_LOCAL (never reversed)
@@ -120,7 +120,7 @@ The accounting transformation pipeline is the core of this system. Its logic mus
 ### Security Patterns
 - **Path traversal defense**: Download endpoint uses `os.path.basename()` + `os.path.realpath()` to ensure resolved path stays within `output_dir`
 - **Input validation**: `_validate_company_year()` shared helper validates company against allowlist and year range
-- **Column filtering allowlist**: Detail drill-down only allows filtering on explicitly listed columns (`_FILTERABLE_COLUMNS` in `data_service.py`)
+- **Column filtering allowlist**: Detail drill-down only allows filtering on explicitly listed columns (`_FILTERABLE_COLUMNS` in `backend/services/data_service.py`)
 - **Rate limiting**: Failed login attempts are rate-limited per IP
 - **Session cookies**: HttpOnly, SameSite=Lax
 

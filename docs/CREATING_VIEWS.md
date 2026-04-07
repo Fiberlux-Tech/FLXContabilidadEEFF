@@ -297,7 +297,7 @@ Only needed if the view requires data not already in the `/api/data/load` respon
 
 ### Option A: Add data to the existing load response
 
-Best for data derived from the same SQL queries. Modify `services/data_service.py`:
+Best for data derived from the same SQL queries. Modify `backend/services/data_service.py`:
 
 ```python
 def load_report_data(company: str, year: int, force_refresh: bool = False) -> dict:

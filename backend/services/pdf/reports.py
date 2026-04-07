@@ -203,8 +203,10 @@ def detail_by_cuenta_pdf(ctx: PeriodContext, partidas,
 
 def detail_resultado_financiero_pdf(ctx: PeriodContext):
     """Split RESULTADO FINANCIERO into ingresos (account prefix '77') and gastos."""
+    col_names = build_column_names(ctx.period_type, ctx.period_num, ctx.year)
+    sort_col = _default_sort_col(col_names, ctx.period_type)
     res_fin = detail_by_cuenta_pdf(ctx, ["RESULTADO FINANCIERO"])
-    return split_resultado_financiero(res_fin)
+    return split_resultado_financiero(res_fin, sort_col=sort_col)
 
 
 def sales_details_pdf(ctx: PeriodContext, with_total_row: bool = False):

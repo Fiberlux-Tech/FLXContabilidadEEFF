@@ -6,15 +6,16 @@ import os
 import sqlite3
 import sys
 
-_monorepo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if _monorepo_root not in sys.path:
-    sys.path.insert(0, _monorepo_root)
+_backend_dir = os.path.abspath(os.path.dirname(__file__))
+_monorepo_root = os.path.abspath(os.path.join(_backend_dir, '..'))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 from config.env_loader import load_env_config
 from auth import hash_password, ensure_users_table
 from constants import DEFAULT_DB_PATH
 
-load_env_config(_monorepo_root)
+load_env_config(_monorepo_root)  # .env files live at monorepo root
 
 
 def _resolve_db_path():

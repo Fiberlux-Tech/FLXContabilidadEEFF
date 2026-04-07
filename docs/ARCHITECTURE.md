@@ -4,14 +4,23 @@
 
 ```
 FLXContabilidad/
-├── backend/              # Flask API server
+├── backend/              # All Python: Flask API + services + data + config
 │   ├── app.py            # Flask app factory, sys.path setup, CORS, blueprint registration
 │   ├── auth.py           # SQLite-based session auth (login, logout, /me, rate limiting)
 │   ├── routes.py         # API endpoints (data loading, exports, downloads, drill-down)
 │   ├── manage.py         # CLI for user management (create, list, delete, reset-password)
 │   ├── gunicorn.conf.py  # Production WSGI server config
 │   ├── output/           # Generated Excel/PDF files
-│   └── logs/             # Access/error logs
+│   ├── logs/             # Access/error logs
+│   ├── services/         # Python data pipeline
+│   │   ├── data_service.py   # Single-fetch service with in-memory cache (30-min TTL)
+│   │   ├── pipeline.py       # Orchestrator: fetch → transform → export Excel/PDF
+│   │   ├── accounting/       # Transforms, aggregation, P&L/BS statement builders, rules
+│   │   ├── excel/            # Multi-sheet Excel generation (openpyxl)
+│   │   └── pdf/              # PDF generation (fpdf2) — cover, tables, notes
+│   ├── config/           # Shared config (settings, calendar, fields, company, nota, exceptions)
+│   ├── data/             # Data layer (db pool, SQL queries, fetcher, disk cache)
+│   └── models/           # Data model classes (PeriodContext, PnLReportData, PdfReportData)
 ├── frontend/             # React + Vite + Tailwind
 │   ├── src/
 │   │   ├── App.tsx       # Root component (auth check → login or dashboard)
@@ -25,16 +34,6 @@ FLXContabilidad/
 │   │       └── dashboard/  # DashboardShell, TopBar, Sidebar, MainContent,
 │   │                       # FinancialTable, DetailTable, PLNoteView
 │   └── dist/             # Production build (served by nginx)
-├── services/             # Python data pipeline
-│   ├── data_service.py   # Single-fetch service with in-memory cache (30-min TTL)
-│   ├── pipeline.py       # Orchestrator: fetch → transform → export Excel/PDF
-│   ├── accounting/       # Transforms, aggregation, P&L/BS statement builders, rules
-│   ├── excel/            # Multi-sheet Excel generation (openpyxl)
-│   ├── pdf/              # PDF generation (fpdf2) — cover, tables, notes
-│   └── images/           # Company logo assets for PDF reports
-├── config/               # Shared config (settings, calendar, fields, company, nota, exceptions)
-├── data/                 # Shared data layer (db pool, SQL queries, fetcher, disk cache)
-├── models/               # Data model classes (PeriodContext, PnLReportData, PdfReportData)
 ├── .env                  # Shared defaults
 ├── .env.development      # Dev-specific overrides
 ├── .env.production       # Production overrides
@@ -133,7 +132,7 @@ Three layers, each serving a different purpose:
 |-------|----------|-----|---------|
 | **In-memory** | `data_service.py` | 30 min | Fast dashboard reloads without DB queries |
 | **Export reuse** | `data_service.py` (raw cache) | 30 min | Export skips DB if dashboard already loaded |
-| **File-based** | `data/.cache/` (CSV) | 30 days | Previous-year P&L/BS data (changes rarely) |
+| **File-based** | `backend/data/.cache/` (CSV) | 30 days | Previous-year P&L/BS data (changes rarely) |
 
 All in-memory caches are keyed by `(company, year)` and protected by `threading.Lock`.
 

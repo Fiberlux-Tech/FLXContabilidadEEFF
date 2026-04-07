@@ -4,10 +4,11 @@ import logging
 import os
 import sys
 
-# Ensure monorepo root is on sys.path so bare `from config.…` imports work.
-_monorepo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if _monorepo_root not in sys.path:
-    sys.path.insert(0, _monorepo_root)
+# Ensure backend dir is on sys.path so bare `from config.…` imports work.
+_backend_dir = os.path.abspath(os.path.dirname(__file__))
+_monorepo_root = os.path.abspath(os.path.join(_backend_dir, '..'))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 from config.env_loader import load_env_config
 
@@ -65,20 +66,18 @@ def create_app():
     from data.headcount_db import init_headcount_db
     hc_db_path = os.environ.get(
         'HEADCOUNT_DB_PATH',
-        os.path.join(_monorepo_root, 'data', 'headcount.db'),
+        os.path.join(_backend_dir, 'data', 'headcount.db'),
     )
     app.config['HEADCOUNT_DB_PATH'] = init_headcount_db(hc_db_path)
 
     # Register blueprints
     app.register_blueprint(auth_bp, url_prefix='/auth')
 
-    # Add monorepo root and services/ to Python path.
-    # Monorepo root allows `from config.company import ...`
-    # Services dir allows bare imports used inside the pipeline (`from config.xxx`)
-    services_dir = os.path.join(_monorepo_root, 'services')
-    for p in (_monorepo_root, services_dir):
-        if p not in sys.path:
-            sys.path.insert(0, p)
+    # Add services/ to Python path so bare imports inside the pipeline work
+    # (`from data_service import …`, `from pipeline import …`)
+    services_dir = os.path.join(_backend_dir, 'services')
+    if services_dir not in sys.path:
+        sys.path.insert(0, services_dir)
 
     from routes import api_bp
     app.register_blueprint(api_bp, url_prefix='/api')
