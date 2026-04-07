@@ -22,6 +22,11 @@ _cache = LRUTTLCache("headcount", ttl=600, max_entries=40)
 # Matches column headers like "2025-01", "2026-12"
 _YEAR_MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
 
+# Normalise company names from CSVs to canonical VALID_COMPANIES keys
+_EMPRESA_ALIASES: dict[str, str] = {
+    "FLXTECH": "FIBERTECH",
+}
+
 
 def load_headcount(db_path: str, cia: str, year: int) -> dict:
     """Return headcount map keyed by CENTRO_COSTO with month-name values.
@@ -126,7 +131,10 @@ def save_headcount_csv(db_path: str, cia: str | None, csv_content: str) -> int:
         if len(row) <= max(col_map.values()):
             continue
 
-        empresa = row[col_map["empresa"]].strip().upper()
+        empresa = _EMPRESA_ALIASES.get(
+            row[col_map["empresa"]].strip().upper(),
+            row[col_map["empresa"]].strip().upper(),
+        )
         if empresa == "ROP":
             continue
         if cia and empresa != cia:
