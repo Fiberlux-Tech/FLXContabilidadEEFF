@@ -258,11 +258,15 @@ def _add_ic_variants(base: dict[str, pd.DataFrame],
     For each key in *base*, adds key_ex_ic and key_only_ic variants
     reindexed to match the original row structure.
     """
-    preagg_ex_ic = preagg[~preagg[IS_INTERCOMPANY]]
-    preagg_only_ic = preagg[preagg[IS_INTERCOMPANY]]
+    df_ex_ic = df_stmt[~df_stmt[IS_INTERCOMPANY]]
+    df_only_ic = df_stmt[df_stmt[IS_INTERCOMPANY]]
 
-    ex_ic_dfs = compute_fn(df_stmt[~df_stmt[IS_INTERCOMPANY]], preagg_ex_ic)
-    only_ic_dfs = compute_fn(df_stmt[df_stmt[IS_INTERCOMPANY]], preagg_only_ic)
+    # Re-preaggregate from filtered df_stmt (preagg doesn't carry IS_INTERCOMPANY)
+    preagg_ex_ic = preaggregate(df_ex_ic)
+    preagg_only_ic = preaggregate(df_only_ic)
+
+    ex_ic_dfs = compute_fn(df_ex_ic, preagg_ex_ic)
+    only_ic_dfs = compute_fn(df_only_ic, preagg_only_ic)
 
     result = dict(base)
     for key, ref_df in base.items():
