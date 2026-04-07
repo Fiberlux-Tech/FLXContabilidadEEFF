@@ -19,47 +19,47 @@ export interface NoteViewConfig {
 export const VIEW_TABLE_CONFIGS: Record<NoteView, NoteViewConfig> = {
     ingresos: {
         tables: (d) => [
-            { title: 'Ingresos Ordinarios', rows: d.ingresos_ordinarios, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'INGRESOS ORDINARIOS', filterCol: 'CUENTA_CONTABLE' },
-            { title: 'Ingresos de Proyectos', rows: d.ingresos_proyectos, labelKeys: ['NIT', 'RAZON_SOCIAL'], headerLabels: ['NIT', 'Razon Social'], partida: 'INGRESOS PROYECTOS', filterCol: 'NIT' },
+            { title: 'Ingresos Ordinarios', rows: d.ingresos_ordinarios ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'INGRESOS ORDINARIOS', filterCol: 'CUENTA_CONTABLE' },
+            { title: 'Ingresos de Proyectos', rows: d.ingresos_proyectos ?? [], labelKeys: ['NIT', 'RAZON_SOCIAL'], headerLabels: ['NIT', 'Razon Social'], partida: 'INGRESOS PROYECTOS', filterCol: 'NIT' },
         ],
         labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
     },
     costo: {
         tables: (d) => [
-            { title: 'Costo de Operaciones', rows: d.costo, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'COSTO', filterCol: 'CENTRO_COSTO' },
+            { title: 'Costo de Operaciones', rows: d.costo ?? [], labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'COSTO', filterCol: 'CENTRO_COSTO' },
         ],
         labelKeys: ['CENTRO_COSTO', 'DESC_CECO'],
     },
     gasto_venta: {
         tables: (d) => [
-            { title: 'Gastos de Ventas', rows: d.gasto_venta, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'GASTO VENTA', filterCol: 'CENTRO_COSTO' },
+            { title: 'Gastos de Ventas', rows: d.gasto_venta ?? [], labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'GASTO VENTA', filterCol: 'CENTRO_COSTO' },
         ],
         labelKeys: ['CENTRO_COSTO', 'DESC_CECO'],
     },
     gasto_admin: {
         tables: (d) => [
-            { title: 'Gastos de Administracion', rows: d.gasto_admin, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'GASTO ADMIN', filterCol: 'CENTRO_COSTO' },
+            { title: 'Gastos de Administracion', rows: d.gasto_admin ?? [], labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'GASTO ADMIN', filterCol: 'CENTRO_COSTO' },
         ],
         labelKeys: ['CENTRO_COSTO', 'DESC_CECO'],
     },
     otros_egresos: {
         tables: (d) => [
-            { title: 'Otros Ingresos', rows: d.otros_ingresos, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'OTROS INGRESOS', filterCol: 'CUENTA_CONTABLE' },
-            { title: 'Otros Egresos', rows: d.otros_egresos, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'OTROS EGRESOS', filterCol: 'CUENTA_CONTABLE' },
+            { title: 'Otros Ingresos', rows: d.otros_ingresos ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'OTROS INGRESOS', filterCol: 'CUENTA_CONTABLE' },
+            { title: 'Otros Egresos', rows: d.otros_egresos ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'OTROS EGRESOS', filterCol: 'CUENTA_CONTABLE' },
         ],
         labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
     },
     dya: {
         tables: (d) => [
-            { title: 'Depreciacion y Amortizacion (Costo)', rows: d.dya_costo, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'D&A - COSTO', filterCol: 'CENTRO_COSTO' },
-            { title: 'Depreciacion y Amortizacion (Gasto)', rows: d.dya_gasto, labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'D&A - GASTO', filterCol: 'CENTRO_COSTO' },
+            { title: 'Depreciacion y Amortizacion (Costo)', rows: d.dya_costo ?? [], labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'D&A - COSTO', filterCol: 'CENTRO_COSTO' },
+            { title: 'Depreciacion y Amortizacion (Gasto)', rows: d.dya_gasto ?? [], labelKeys: ['CENTRO_COSTO', 'DESC_CECO'], headerLabels: ['CC', 'Centro de Costo'], partida: 'D&A - GASTO', filterCol: 'CENTRO_COSTO' },
         ],
         labelKeys: ['CENTRO_COSTO', 'DESC_CECO'],
     },
     resultado_financiero: {
         tables: (d) => [
-            { title: 'Ingresos Financieros', rows: d.resultado_financiero_ingresos, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
-            { title: 'Gastos Financieros', rows: d.resultado_financiero_gastos, labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
+            { title: 'Ingresos Financieros', rows: d.resultado_financiero_ingresos ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
+            { title: 'Gastos Financieros', rows: d.resultado_financiero_gastos ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
         ],
         labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
     },

@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
 import { API_CONFIG } from '@/config';
-import type { ReportData, PLReportData, BSReportData, CompanyMap, Granularity, PeriodRange, DisplayColumn, MonthSource, ReportRow } from '@/types';
+import type { ReportData, PLReportData, PLSectionData, BSReportData, CompanyMap, Granularity, PeriodRange, DisplayColumn, MonthSource, ReportRow } from '@/types';
 import { isBsView, isAnalysisView } from '@/config/viewRegistry';
 import type { View } from '@/config/viewRegistry';
 import { getTrailing12MonthSources, buildDisplayColumns } from '@/utils/displayColumns';
@@ -11,6 +11,20 @@ export type { View };
 export { isBsView, isAnalysisView };
 
 const DEFAULT_COMPANY = 'NEXTNET';
+
+/** Map P&L detail views to their backend section name for lazy loading. */
+const VIEW_TO_SECTION: Partial<Record<View, string>> = {
+    ingresos: 'ingresos',
+    costo: 'costo',
+    gasto_venta: 'gasto_venta',
+    gasto_admin: 'gasto_admin',
+    otros_egresos: 'otros_egresos',
+    dya: 'dya',
+    resultado_financiero: 'resultado_financiero',
+    analysis_pl_finanzas: 'analysis_pl_finanzas',
+    analysis_planilla: 'analysis_planilla',
+    analysis_proveedores: 'analysis_proveedores',
+};
 
 interface ReportState {
     companies: CompanyMap;
@@ -31,6 +45,11 @@ interface ReportState {
     bsError: string | null;
     /** Intercompany filter: 'all' = no filter, 'only_ic' = only intercompany, 'ex_ic' = exclude intercompany */
     intercompanyFilter: 'all' | 'only_ic' | 'ex_ic';
+    /** Track which P&L detail sections have been loaded */
+    loadedSections: Set<string>;
+    /** Whether a section is currently being fetched */
+    isSectionLoading: boolean;
+    sectionError: string | null;
 }
 
 type ReportAction =
@@ -50,7 +69,10 @@ type ReportAction =
     | { type: 'BS_LOAD_ERROR'; error: string }
     | { type: 'EXPORT_START' }
     | { type: 'EXPORT_SUCCESS' }
-    | { type: 'EXPORT_ERROR'; error: string };
+    | { type: 'EXPORT_ERROR'; error: string }
+    | { type: 'SECTION_LOAD_START' }
+    | { type: 'SECTION_LOAD_SUCCESS'; section: string; data: PLSectionData; prevData: PLSectionData | null }
+    | { type: 'SECTION_LOAD_ERROR'; error: string };
 
 const initialState: ReportState = {
     companies: {},
@@ -68,6 +90,9 @@ const initialState: ReportState = {
     isBsLoading: false,
     bsError: null,
     intercompanyFilter: 'all',
+    loadedSections: new Set<string>(),
+    isSectionLoading: false,
+    sectionError: null,
 };
 
 function reportReducer(state: ReportState, action: ReportAction): ReportState {
@@ -89,7 +114,7 @@ function reportReducer(state: ReportState, action: ReportAction): ReportState {
         case 'SET_INTERCOMPANY_FILTER':
             return { ...state, intercompanyFilter: action.filter };
         case 'LOAD_START':
-            return { ...state, isLoading: true, error: null, bsError: null };
+            return { ...state, isLoading: true, error: null, bsError: null, loadedSections: new Set<string>(), sectionError: null };
         case 'LOAD_PL_SUCCESS':
             // Set reportData with empty bs_summary — BS loads separately
             return {
@@ -127,6 +152,25 @@ function reportReducer(state: ReportState, action: ReportAction): ReportState {
             return { ...state, isExporting: false };
         case 'EXPORT_ERROR':
             return { ...state, isExporting: false, error: action.error };
+        case 'SECTION_LOAD_START':
+            return { ...state, isSectionLoading: true, sectionError: null };
+        case 'SECTION_LOAD_SUCCESS': {
+            const newSections = new Set(state.loadedSections);
+            newSections.add(action.section);
+            return {
+                ...state,
+                isSectionLoading: false,
+                loadedSections: newSections,
+                reportData: state.reportData
+                    ? { ...state.reportData, ...action.data }
+                    : null,
+                prevYearData: action.prevData && state.prevYearData
+                    ? { ...state.prevYearData, ...action.prevData }
+                    : state.prevYearData,
+            };
+        }
+        case 'SECTION_LOAD_ERROR':
+            return { ...state, isSectionLoading: false, sectionError: action.error };
     }
 }
 
@@ -156,6 +200,11 @@ interface IReportContext {
     isExporting: boolean;
     isBsLoading: boolean;
     bsError: string | null;
+    /** Whether a P&L detail section is currently loading */
+    isSectionLoading: boolean;
+    sectionError: string | null;
+    /** Which P&L detail sections have been loaded */
+    loadedSections: Set<string>;
     /** Computed display columns for current granularity/range/variant */
     getDisplayColumns: (variant: 'pl' | 'bs') => DisplayColumn[];
     /** Trailing 12M month sources (for drill-down year resolution) */
@@ -285,6 +334,53 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
         }
     }, [state.currentView, state.reportData, state.isBsLoading, state.bsError, fetchBsData]);
 
+    // ─── P&L section fetch (on-demand detail loading) ──────────
+    const sectionAbortRef = useRef<AbortController | null>(null);
+
+    const fetchSection = useCallback(async (section: string, signal?: AbortSignal) => {
+        if (!state.selectedCompany || state.loadedSections.has(section)) return;
+        dispatch({ type: 'SECTION_LOAD_START' });
+        try {
+            const dataPromise = api.post<PLSectionData>(API_CONFIG.ENDPOINTS.DATA_LOAD_PL_SECTION, {
+                company: state.selectedCompany,
+                year: state.selectedYear,
+                section,
+            }, { signal });
+
+            let prevDataPromise: Promise<PLSectionData> | null = null;
+            if (state.periodRange === 'trailing12') {
+                prevDataPromise = api.post<PLSectionData>(API_CONFIG.ENDPOINTS.DATA_LOAD_PL_SECTION, {
+                    company: state.selectedCompany,
+                    year: state.selectedYear - 1,
+                    section,
+                }, { signal });
+            }
+
+            const [data, prevData] = await Promise.all([dataPromise, prevDataPromise]);
+            dispatch({ type: 'SECTION_LOAD_SUCCESS', section, data, prevData });
+        } catch (err: unknown) {
+            if (err instanceof DOMException && err.name === 'AbortError') return;
+            dispatch({ type: 'SECTION_LOAD_ERROR', error: err instanceof Error ? err.message : 'Error al cargar seccion' });
+        }
+    }, [state.selectedCompany, state.selectedYear, state.periodRange, state.loadedSections]);
+
+    // Trigger section fetch when user navigates to a P&L detail view
+    useEffect(() => {
+        const section = VIEW_TO_SECTION[state.currentView];
+        if (
+            section &&
+            state.reportData &&
+            !state.loadedSections.has(section) &&
+            !state.isSectionLoading
+        ) {
+            if (sectionAbortRef.current) sectionAbortRef.current.abort();
+            const controller = new AbortController();
+            sectionAbortRef.current = controller;
+            fetchSection(section, controller.signal);
+            return () => controller.abort();
+        }
+    }, [state.currentView, state.reportData, state.loadedSections, state.isSectionLoading, fetchSection]);
+
     const exportFile = useCallback(async (type: 'excel' | 'pdf' | 'all') => {
         if (!state.selectedCompany) return;
         dispatch({ type: 'EXPORT_START' });
@@ -336,9 +432,9 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             let effectiveKey = key;
             if (key === 'pl_summary' && state.intercompanyFilter === 'ex_ic') effectiveKey = 'pl_summary_ex_ic';
             if (key === 'pl_summary' && state.intercompanyFilter === 'only_ic') effectiveKey = 'pl_summary_only_ic';
-            const currentRows = state.reportData[effectiveKey] as ReportRow[];
+            const currentRows = (state.reportData[effectiveKey] as ReportRow[] | undefined) ?? [];
             if (state.periodRange === 'ytd') return currentRows;
-            const prevRows = (state.prevYearData?.[effectiveKey] as ReportRow[]) ?? [];
+            const prevRows = (state.prevYearData?.[effectiveKey] as ReportRow[] | undefined) ?? [];
             if (variant === 'bs') {
                 return mergeTrailingBSRows(currentRows, prevRows, labelKey, trailingMonthSources, state.selectedYear);
             }
@@ -350,9 +446,9 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
     const getMergedDetailRows = useCallback(
         (key: keyof ReportData, labelKeys: string[]): ReportRow[] => {
             if (!state.reportData) return [];
-            const currentRows = state.reportData[key] as ReportRow[];
+            const currentRows = (state.reportData[key] as ReportRow[] | undefined) ?? [];
             if (state.periodRange === 'ytd') return currentRows;
-            const prevRows = (state.prevYearData?.[key] as ReportRow[]) ?? [];
+            const prevRows = (state.prevYearData?.[key] as ReportRow[] | undefined) ?? [];
             return mergeTrailingDetailRows(currentRows, prevRows, labelKeys, trailingMonthSources, state.selectedYear);
         },
         [state.reportData, state.prevYearData, state.periodRange, trailingMonthSources, state.selectedYear],
@@ -382,6 +478,9 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             isExporting: state.isExporting,
             isBsLoading: state.isBsLoading,
             bsError: state.bsError,
+            isSectionLoading: state.isSectionLoading,
+            sectionError: state.sectionError,
+            loadedSections: state.loadedSections,
             getDisplayColumns,
             trailingMonthSources,
             getMergedRows,

@@ -5,6 +5,7 @@ export const API_CONFIG = {
     DATA_LOAD: '/api/data/load',
     DATA_LOAD_PL: '/api/data/load-pl',
     DATA_LOAD_BS: '/api/data/load-bs',
+    DATA_LOAD_PL_SECTION: '/api/data/pl-section',
     DATA_DETAIL: '/api/data/detail',
     EXPORT_EXCEL: '/api/export/excel',
     EXPORT_PDF: '/api/export/pdf',

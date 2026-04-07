@@ -24,8 +24,9 @@ from config.exceptions import (
 )
 from config.settings import get_config
 from data_service import (
-    load_report_data, load_pl_data, load_bs_data,
+    load_report_data, load_pl_data, load_bs_data, load_pl_section,
     get_detail_records, get_raw_cached, get_bs_cached, get_cache_stats,
+    VALID_PL_SECTIONS,
 )
 from pipeline import run_report
 from headcount_service import (
@@ -150,6 +151,26 @@ def load_bs(body, company, year):
     Optional: { "force_refresh": true }
     """
     return _timed_load(load_bs_data, body, company, year)
+
+
+@api_bp.route('/data/pl-section', methods=['POST'])
+@login_required
+@_handle_data_errors("loading P&L section")
+def load_pl_section_route(body, company, year):
+    """Compute a specific P&L detail section on demand.
+
+    Body: { "company": "FIBERLUX", "year": 2026, "section": "ingresos" }
+    """
+    section = (body.get('section') or '').strip()
+    if not section or section not in VALID_PL_SECTIONS:
+        raise RequestValidationError(
+            f'Seccion invalida: {section!r}. Validas: {sorted(VALID_PL_SECTIONS)}')
+
+    force_refresh = body.get('force_refresh', False)
+    t0 = time.perf_counter()
+    data = load_pl_section(company, year, section, force_refresh=force_refresh)
+    result = {**data, '_timing_ms': round((time.perf_counter() - t0) * 1000)}
+    return ok(result)
 
 
 # ── Detail drill-down ──────────────────────────────────────────────────

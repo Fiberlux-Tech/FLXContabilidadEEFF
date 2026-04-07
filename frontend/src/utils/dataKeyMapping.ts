@@ -1,8 +1,11 @@
 import type { ReportData, ReportRow, TableConfig } from '@/types';
 
-/** Map a TableConfig back to the ReportData key via reference equality */
+/** Map a TableConfig back to the ReportData key via reference equality.
+ *
+ * Detail fields may be undefined (lazy-loaded) — skip those entries.
+ */
 export function getDataKeyForTable(table: TableConfig, data: ReportData): keyof ReportData | null {
-    const mapping: [keyof ReportData, ReportRow[]][] = [
+    const mapping: [keyof ReportData, ReportRow[] | undefined][] = [
         // P&L notes
         ['ingresos_ordinarios', data.ingresos_ordinarios],
         ['ingresos_proyectos', data.ingresos_proyectos],
@@ -45,7 +48,7 @@ export function getDataKeyForTable(table: TableConfig, data: ReportData): keyof 
         ['bs_tributos', data.bs_tributos],
     ];
     for (const [key, rows] of mapping) {
-        if (table.rows === rows) return key;
+        if (rows && table.rows === rows) return key;
     }
     return null;
 }

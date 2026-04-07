@@ -11,12 +11,26 @@ import UploadPlanilla from '@/features/dashboard/UploadPlanilla';
 import { VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
 import { getDataKeyForTable } from '@/utils/dataKeyMapping';
 
+/** P&L views that require on-demand section loading. */
+const PL_SECTION_VIEWS: Record<string, string> = {
+    ingresos: 'ingresos',
+    costo: 'costo',
+    gasto_venta: 'gasto_venta',
+    gasto_admin: 'gasto_admin',
+    otros_egresos: 'otros_egresos',
+    dya: 'dya',
+    resultado_financiero: 'resultado_financiero',
+    analysis_pl_finanzas: 'analysis_pl_finanzas',
+    analysis_planilla: 'analysis_planilla',
+    analysis_proveedores: 'analysis_proveedores',
+};
+
 export default function MainContent() {
     const {
         reportData, currentView, isLoading, error,
         getDisplayColumns, periodRange, getMergedRows, getMergedDetailRows,
         isBsLoading, bsError, selectedCompany, selectedYear,
-        trailingMonthSources,
+        trailingMonthSources, loadedSections,
     } = useReport();
 
     const { headcount: headcountMap } = useHeadcount(selectedCompany, selectedYear, periodRange);
@@ -94,6 +108,19 @@ export default function MainContent() {
                     </div>
                 );
             }
+        }
+
+        // P&L detail section loading spinner
+        const sectionName = PL_SECTION_VIEWS[currentView];
+        if (sectionName && !loadedSections.has(sectionName)) {
+            return (
+                <div className="flex-1 flex items-center justify-center py-16">
+                    <div className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent mx-auto mb-4"></div>
+                        <p className="text-sm text-txt-muted">Cargando detalles...</p>
+                    </div>
+                </div>
+            );
         }
 
         // Note views (P&L and BS)

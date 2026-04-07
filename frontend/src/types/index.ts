@@ -36,58 +36,63 @@ export interface TableConfig {
 }
 
 export interface ReportData {
+  // Always present (from load-pl summary)
   pl_summary: ReportRow[];
   pl_summary_ex_ic: ReportRow[];
   pl_summary_only_ic: ReportRow[];
   bs_summary: ReportRow[];
-  ingresos_ordinarios: ReportRow[];
-  ingresos_proyectos: ReportRow[];
-  costo: ReportRow[];
-  costo_by_cuenta: ReportRow[];
-  gasto_venta: ReportRow[];
-  gasto_venta_by_cuenta: ReportRow[];
-  gasto_admin: ReportRow[];
-  gasto_admin_by_cuenta: ReportRow[];
-  dya_costo: ReportRow[];
-  dya_costo_by_cuenta: ReportRow[];
-  dya_gasto: ReportRow[];
-  dya_gasto_by_cuenta: ReportRow[];
-  otros_ingresos: ReportRow[];
-  otros_egresos: ReportRow[];
-  otros_egresos_by_cuenta: ReportRow[];
-  resultado_financiero_ingresos: ReportRow[];
-  resultado_financiero_gastos: ReportRow[];
-  otros_ingresos_by_cuenta: ReportRow[];
-  participacion_by_cuenta: ReportRow[];
-  provision_by_cuenta: ReportRow[];
-  planilla_by_cuenta: ReportRow[];
-  proveedores_transporte: ReportRow[];
-  // BS note detail tables
-  bs_efectivo: ReportRow[];
-  bs_cxc_comerciales: ReportRow[];
-  bs_cxc_comerciales_nit_top20: ReportRow[];
-  bs_cxc_otras: ReportRow[];
-  bs_cxc_otras_nit_top20: ReportRow[];
-  bs_cxc_relacionadas: ReportRow[];
-  bs_ppe: ReportRow[];
-  bs_ppe_depreciacion: ReportRow[];
-  bs_intangible: ReportRow[];
-  bs_intangible_amortizacion: ReportRow[];
-  bs_otros_activos: ReportRow[];
-  bs_cxp_comerciales: ReportRow[];
-  bs_cxp_comerciales_nit_top20: ReportRow[];
-  bs_cxp_otras: ReportRow[];
-  bs_cxp_otras_nit_top20: ReportRow[];
-  bs_cxp_relacionadas: ReportRow[];
-  bs_provisiones: ReportRow[];
-  bs_tributos: ReportRow[];
   company: string;
   year: number;
   months: Month[];
+  // P&L detail sections (lazy-loaded on demand via /api/data/pl-section)
+  ingresos_ordinarios?: ReportRow[];
+  ingresos_proyectos?: ReportRow[];
+  costo?: ReportRow[];
+  costo_by_cuenta?: ReportRow[];
+  gasto_venta?: ReportRow[];
+  gasto_venta_by_cuenta?: ReportRow[];
+  gasto_admin?: ReportRow[];
+  gasto_admin_by_cuenta?: ReportRow[];
+  dya_costo?: ReportRow[];
+  dya_costo_by_cuenta?: ReportRow[];
+  dya_gasto?: ReportRow[];
+  dya_gasto_by_cuenta?: ReportRow[];
+  otros_ingresos?: ReportRow[];
+  otros_egresos?: ReportRow[];
+  otros_egresos_by_cuenta?: ReportRow[];
+  resultado_financiero_ingresos?: ReportRow[];
+  resultado_financiero_gastos?: ReportRow[];
+  otros_ingresos_by_cuenta?: ReportRow[];
+  participacion_by_cuenta?: ReportRow[];
+  provision_by_cuenta?: ReportRow[];
+  planilla_by_cuenta?: ReportRow[];
+  proveedores_transporte?: ReportRow[];
+  // BS note detail tables (lazy-loaded via /api/data/load-bs)
+  bs_efectivo?: ReportRow[];
+  bs_cxc_comerciales?: ReportRow[];
+  bs_cxc_comerciales_nit_top20?: ReportRow[];
+  bs_cxc_otras?: ReportRow[];
+  bs_cxc_otras_nit_top20?: ReportRow[];
+  bs_cxc_relacionadas?: ReportRow[];
+  bs_ppe?: ReportRow[];
+  bs_ppe_depreciacion?: ReportRow[];
+  bs_intangible?: ReportRow[];
+  bs_intangible_amortizacion?: ReportRow[];
+  bs_otros_activos?: ReportRow[];
+  bs_cxp_comerciales?: ReportRow[];
+  bs_cxp_comerciales_nit_top20?: ReportRow[];
+  bs_cxp_otras?: ReportRow[];
+  bs_cxp_otras_nit_top20?: ReportRow[];
+  bs_cxp_relacionadas?: ReportRow[];
+  bs_provisiones?: ReportRow[];
+  bs_tributos?: ReportRow[];
 }
 
-/** Response from /api/data/load-pl (everything except bs_summary) */
-export type PLReportData = Omit<ReportData, 'bs_summary'>;
+/** Response from /api/data/load-pl (summary only — detail sections loaded separately) */
+export type PLReportData = Pick<ReportData, 'pl_summary' | 'pl_summary_ex_ic' | 'pl_summary_only_ic' | 'company' | 'year' | 'months'>;
+
+/** Response from /api/data/pl-section (partial detail data) */
+export type PLSectionData = Partial<ReportData>;
 
 /** Response from /api/data/load-bs */
 export interface BSReportData {
