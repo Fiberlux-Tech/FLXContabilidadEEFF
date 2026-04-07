@@ -141,6 +141,13 @@ const PARTIDA_TO_DATA_KEY: Record<string, keyof ReportData> = {
     'PROVISION INCOBRABLE': 'provision_by_cuenta',
 };
 
+/** Partida order matching the website's ExpandableFinancialTable */
+const FINANZAS_PARTIDA_ORDER = [
+    'COSTO', 'D&A - COSTO', 'GASTO VENTA', 'GASTO ADMIN',
+    'PARTICIPACION DE TRABAJADORES', 'D&A - GASTO',
+    'PROVISION INCOBRABLE', 'OTROS INGRESOS', 'OTROS EGRESOS',
+] as const;
+
 function buildFinanzasRows(
     summaryRows: ReportRow[],
     columns: DisplayColumn[],
@@ -149,9 +156,14 @@ function buildFinanzasRows(
     const cecoKeys = ['CENTRO_COSTO', 'DESC_CECO', 'CUENTA_CONTABLE', 'DESCRIPCION'];
     const flat: PlanillaExportRow[] = [];
 
-    for (const row of summaryRows) {
-        const label = row['PARTIDA_PL'] as string;
-        if (!label || label.trim() === '') continue;
+    // Build a lookup from summaryRows for quick access
+    const summaryByPartida = new Map(
+        summaryRows.map(r => [r['PARTIDA_PL'] as string, r]),
+    );
+
+    for (const label of FINANZAS_PARTIDA_ORDER) {
+        const row = summaryByPartida.get(label);
+        if (!row) continue;
 
         // Level 0: summary partida row — use getSummaryTotal for TOTAL
         const vals: Record<string, number> = {};
@@ -163,7 +175,7 @@ function buildFinanzasRows(
         if (total !== null) vals['TOTAL'] = total;
         flat.push({ label, level: 0, values: vals });
 
-        // If this partida has detail data, expand it
+        // Expand detail data for this partida
         const dataKey = PARTIDA_TO_DATA_KEY[label];
         if (!dataKey) continue;
 
