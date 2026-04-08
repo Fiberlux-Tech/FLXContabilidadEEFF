@@ -393,11 +393,16 @@ def _compute_analysis_pl_finanzas(df_stmt, preagg):
     return _add_ic_variants(base, df_stmt, preagg, _compute_analysis_pl_finanzas_base)
 
 
-def _compute_analysis_planilla(df_stmt, preagg):
+def _compute_analysis_planilla_base(df_stmt, preagg):
     return {
         "planilla_by_cuenta": detail_planilla(df_stmt, preagg=preagg),
         "revenue_by_cuenta": sales_details(df_stmt, preagg=preagg),
     }
+
+
+def _compute_analysis_planilla(df_stmt, preagg):
+    base = _compute_analysis_planilla_base(df_stmt, preagg)
+    return _add_ic_variants(base, df_stmt, preagg, _compute_analysis_planilla_base)
 
 
 def _compute_analysis_proveedores(df_stmt, preagg, *, ceco: str = "100.113.01"):
