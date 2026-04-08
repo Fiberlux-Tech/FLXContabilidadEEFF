@@ -492,10 +492,16 @@ export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuen
     }, [rosterModal, company]);
 
     // ── Revenue cuenta filter ──────────────────────────────────────────
+    // Filter out synthetic TOTAL rows (added by trailing 12M merge)
+    const revenueDataRows = useMemo(
+        () => revenueByCuenta.filter(r => String(r['CUENTA_CONTABLE'] ?? '') !== 'TOTAL'),
+        [revenueByCuenta],
+    );
+
     const revenueCuentas = useMemo(() => {
         const list: { cuenta: string; desc: string }[] = [];
         const seen = new Set<string>();
-        for (const row of revenueByCuenta) {
+        for (const row of revenueDataRows) {
             const cuenta = String(row['CUENTA_CONTABLE'] ?? '');
             if (!cuenta || seen.has(cuenta)) continue;
             seen.add(cuenta);
@@ -503,13 +509,13 @@ export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuen
         }
         list.sort((a, b) => a.cuenta.localeCompare(b.cuenta));
         return list;
-    }, [revenueByCuenta]);
+    }, [revenueDataRows]);
 
     const adjustedRevenueRow = useMemo<ReportRow | null>(() => {
         if (!revenueRow) return null;
         if (excludedCuentas.size === 0) return revenueRow;
         // Sum only non-excluded cuenta rows to build a synthetic revenue row
-        const included = revenueByCuenta.filter(
+        const included = revenueDataRows.filter(
             r => !excludedCuentas.has(String(r['CUENTA_CONTABLE'] ?? ''))
         );
         if (included.length === 0) return null;
@@ -524,7 +530,7 @@ export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuen
             }
         }
         return synth;
-    }, [revenueRow, revenueByCuenta, excludedCuentas]);
+    }, [revenueRow, revenueDataRows, excludedCuentas]);
 
     const toggleCuentaExclusion = useCallback((cuenta: string) => {
         setExcludedCuentas(prev => {
