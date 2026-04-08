@@ -405,6 +405,8 @@ def _compute_analysis_proveedores(df_stmt, preagg, *, ceco: str = "100.113.01"):
     ceco_labels = []
     for code in ALLOWED_PROVEEDORES_CECOS:
         rows = df_stmt[df_stmt[CENTRO_COSTO] == code]
+        if rows.empty:
+            continue
         desc = rows[DESC_CECO].dropna().unique()
         label = str(desc[0]) if len(desc) > 0 else code
         ceco_labels.append({"ceco": code, "label": label})
