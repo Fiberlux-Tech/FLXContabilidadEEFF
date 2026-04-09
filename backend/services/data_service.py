@@ -422,6 +422,24 @@ def _compute_analysis_proveedores(df_stmt, preagg, *, ceco: str = "100.113.01"):
     }
 
 
+def _compute_analysis_flujo_caja_base(df_stmt, preagg):
+    return {
+        "flujo_ingresos_ord_by_cuenta": detail_by_cuenta(df_stmt, ["INGRESOS ORDINARIOS"], preagg=preagg),
+        "flujo_ingresos_proy_by_cuenta": detail_by_cuenta(df_stmt, ["INGRESOS PROYECTOS"], preagg=preagg),
+        "flujo_costo_by_cuenta": detail_ceco_by_cuenta(df_stmt, ["COSTO"], preagg=preagg),
+        "flujo_gasto_venta_by_cuenta": detail_ceco_by_cuenta(df_stmt, ["GASTO VENTA"], preagg=preagg),
+        "flujo_gasto_admin_by_cuenta": detail_ceco_by_cuenta(df_stmt, ["GASTO ADMIN"], preagg=preagg),
+        "flujo_participacion_by_cuenta": detail_ceco_by_cuenta(df_stmt, ["PARTICIPACION DE TRABAJADORES"], preagg=preagg),
+        "flujo_otros_ingresos_by_cuenta": detail_ceco_by_cuenta(df_stmt, ["OTROS INGRESOS"], preagg=preagg),
+        "flujo_otros_egresos_by_cuenta": detail_ceco_by_cuenta(df_stmt, ["OTROS EGRESOS"], preagg=preagg),
+    }
+
+
+def _compute_analysis_flujo_caja(df_stmt, preagg):
+    base = _compute_analysis_flujo_caja_base(df_stmt, preagg)
+    return _add_ic_variants(base, df_stmt, preagg, _compute_analysis_flujo_caja_base)
+
+
 SECTION_REGISTRY: dict[str, callable] = {
     "ingresos": _compute_ingresos,
     "costo": _compute_costo,
@@ -433,6 +451,7 @@ SECTION_REGISTRY: dict[str, callable] = {
     "analysis_pl_finanzas": _compute_analysis_pl_finanzas,
     "analysis_planilla": _compute_analysis_planilla,
     "analysis_proveedores": _compute_analysis_proveedores,
+    "analysis_flujo_caja": _compute_analysis_flujo_caja,
 }
 
 VALID_PL_SECTIONS = frozenset(SECTION_REGISTRY.keys())

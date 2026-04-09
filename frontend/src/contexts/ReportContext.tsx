@@ -25,6 +25,7 @@ const VIEW_TO_SECTION: Partial<Record<View, string>> = {
     analysis_pl_finanzas: 'analysis_pl_finanzas',
     analysis_planilla: 'analysis_planilla',
     analysis_proveedores: 'analysis_proveedores',
+    analysis_flujo_caja: 'analysis_flujo_caja',
 };
 
 interface ReportState {

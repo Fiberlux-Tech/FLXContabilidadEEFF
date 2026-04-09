@@ -113,6 +113,31 @@ export interface ReportData {
   revenue_by_cuenta_only_ic?: ReportRow[];
   proveedores_transporte?: ReportRow[];
   proveedores_cecos?: ReportRow[];
+  // Proxy Flujo de Caja
+  flujo_ingresos_ord_by_cuenta?: ReportRow[];
+  flujo_ingresos_ord_by_cuenta_ex_ic?: ReportRow[];
+  flujo_ingresos_ord_by_cuenta_only_ic?: ReportRow[];
+  flujo_ingresos_proy_by_cuenta?: ReportRow[];
+  flujo_ingresos_proy_by_cuenta_ex_ic?: ReportRow[];
+  flujo_ingresos_proy_by_cuenta_only_ic?: ReportRow[];
+  flujo_costo_by_cuenta?: ReportRow[];
+  flujo_costo_by_cuenta_ex_ic?: ReportRow[];
+  flujo_costo_by_cuenta_only_ic?: ReportRow[];
+  flujo_gasto_venta_by_cuenta?: ReportRow[];
+  flujo_gasto_venta_by_cuenta_ex_ic?: ReportRow[];
+  flujo_gasto_venta_by_cuenta_only_ic?: ReportRow[];
+  flujo_gasto_admin_by_cuenta?: ReportRow[];
+  flujo_gasto_admin_by_cuenta_ex_ic?: ReportRow[];
+  flujo_gasto_admin_by_cuenta_only_ic?: ReportRow[];
+  flujo_participacion_by_cuenta?: ReportRow[];
+  flujo_participacion_by_cuenta_ex_ic?: ReportRow[];
+  flujo_participacion_by_cuenta_only_ic?: ReportRow[];
+  flujo_otros_ingresos_by_cuenta?: ReportRow[];
+  flujo_otros_ingresos_by_cuenta_ex_ic?: ReportRow[];
+  flujo_otros_ingresos_by_cuenta_only_ic?: ReportRow[];
+  flujo_otros_egresos_by_cuenta?: ReportRow[];
+  flujo_otros_egresos_by_cuenta_ex_ic?: ReportRow[];
+  flujo_otros_egresos_by_cuenta_only_ic?: ReportRow[];
   // BS note detail tables (lazy-loaded via /api/data/load-bs)
   bs_efectivo?: ReportRow[];
   bs_cxc_comerciales?: ReportRow[];

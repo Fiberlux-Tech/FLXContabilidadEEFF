@@ -48,6 +48,7 @@ const VIEW_REGISTRY = [
     { id: 'analysis_pl_finanzas',   title: 'Analisis de Costos/Gastos',           navLabel: 'Analisis de Costos/Gastos',   category: 'analysis' },
     { id: 'analysis_planilla',      title: 'Analisis de Planilla',               navLabel: 'Analisis de Planilla',        category: 'analysis' },
     { id: 'analysis_proveedores',   title: 'Analisis de Proveedores',            navLabel: 'Analisis de Proveedores',     category: 'analysis' },
+    { id: 'analysis_flujo_caja',    title: 'Proxy Flujo de Caja',               navLabel: 'Proxy Flujo de Caja',         category: 'analysis' },
 
     // ── Carga de Datos ─────────────────────────────────────────
     { id: 'upload_planilla',        title: 'Cargar Planilla',                    navLabel: 'Cargar Planilla',             category: 'uploads' },

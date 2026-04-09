@@ -4,6 +4,7 @@ import FinancialTable from '@/features/dashboard/FinancialTable';
 import ExpandableFinancialTable from '@/features/dashboard/ExpandableFinancialTable';
 import PlanillaTable from '@/features/dashboard/PlanillaTable';
 import ProveedoresTable from '@/features/dashboard/ProveedoresTable';
+import FlujoCajaTable from '@/features/dashboard/FlujoCajaTable';
 import PLNoteView from '@/features/dashboard/PLNoteView';
 import { useHeadcount } from '@/features/dashboard/useHeadcount';
 import UploadPlanilla from '@/features/dashboard/UploadPlanilla';
@@ -23,6 +24,7 @@ const PL_SECTION_VIEWS: Record<string, string> = {
     analysis_pl_finanzas: 'analysis_pl_finanzas',
     analysis_planilla: 'analysis_planilla',
     analysis_proveedores: 'analysis_proveedores',
+    analysis_flujo_caja: 'analysis_flujo_caja',
 };
 
 export default function MainContent() {
@@ -210,6 +212,24 @@ export default function MainContent() {
             const cecos = reportData.proveedores_cecos as { ceco: string; label: string }[] | undefined;
             const cecoLabel = cecos?.find(c => c.ceco === proveedoresCeco)?.label ?? proveedoresCeco;
             return <ProveedoresTable rows={proveedoresRows} columns={plColumns} cecoLabel={cecoLabel} />;
+        }
+
+        if (currentView === 'analysis_flujo_caja') {
+            const cecoKeys = ['CENTRO_COSTO', 'DESC_CECO', 'CUENTA_CONTABLE', 'DESCRIPCION'];
+            const cuentaKeys = ['CUENTA_CONTABLE', 'DESCRIPCION'];
+            return (
+                <FlujoCajaTable
+                    columns={plColumns}
+                    ingresosOrdByCuenta={getMergedDetailRows('flujo_ingresos_ord_by_cuenta', cuentaKeys)}
+                    ingresosProyByCuenta={getMergedDetailRows('flujo_ingresos_proy_by_cuenta', cuentaKeys)}
+                    costoByCuenta={getMergedDetailRows('flujo_costo_by_cuenta', cecoKeys)}
+                    gastoVentaByCuenta={getMergedDetailRows('flujo_gasto_venta_by_cuenta', cecoKeys)}
+                    gastoAdminByCuenta={getMergedDetailRows('flujo_gasto_admin_by_cuenta', cecoKeys)}
+                    participacionByCuenta={getMergedDetailRows('flujo_participacion_by_cuenta', cecoKeys)}
+                    otrosIngresosByCuenta={getMergedDetailRows('flujo_otros_ingresos_by_cuenta', cecoKeys)}
+                    otrosEgresosByCuenta={getMergedDetailRows('flujo_otros_egresos_by_cuenta', cecoKeys)}
+                />
+            );
         }
 
         if (currentView === 'pl') {
