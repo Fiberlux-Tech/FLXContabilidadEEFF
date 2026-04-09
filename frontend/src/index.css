@@ -140,6 +140,17 @@
   }
   .rpt-row-section td:first-child { padding-left: 0; }
 
+  /* ─── Flujo section header (Ingresos / Gastos / Otros) ─── */
+  .rpt-section-header td {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #888;
+    padding: 20px 12px 6px 0;
+    border-bottom: none;
+  }
+
   /* ─── L0: Top-level expandable (Partida) ─── */
   .rpt-row-l0 td {
     font-size: 13px;

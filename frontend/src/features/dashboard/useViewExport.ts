@@ -239,18 +239,44 @@ interface FlujoRowDef {
     sumOf?: string[];
 }
 
-const FLUJO_ROWS: FlujoRowDef[] = [
-    { key: 'ingresos_ord', label: 'Ingresos Ordinarios', isComputed: false, hasCeco: false },
-    { key: 'ingresos_proy', label: 'Ingresos Proyectos', isComputed: false, hasCeco: false },
-    { key: 'total_ingresos', label: 'Total Ingresos', isComputed: true, sumOf: ['ingresos_ord', 'ingresos_proy'] },
-    { key: 'costo', label: 'Costo', isComputed: false, hasCeco: true },
-    { key: 'gasto_venta', label: 'Gasto Venta', isComputed: false, hasCeco: true },
-    { key: 'gasto_admin', label: 'Gasto Admin', isComputed: false, hasCeco: true },
-    { key: 'participacion', label: 'Participacion de Trabajadores', isComputed: false, hasCeco: true },
-    { key: 'otros_ingresos', label: 'Otros Ingresos', isComputed: false, hasCeco: true },
-    { key: 'otros_egresos', label: 'Otros Egresos', isComputed: false, hasCeco: true },
-    { key: 'total', label: 'TOTAL', isComputed: true, sumOf: ['ingresos_ord', 'ingresos_proy', 'costo', 'gasto_venta', 'gasto_admin', 'participacion', 'otros_ingresos', 'otros_egresos'] },
+interface FlujoSectionDef {
+    title: string;
+    rows: FlujoRowDef[];
+}
+
+const FLUJO_SECTIONS: FlujoSectionDef[] = [
+    {
+        title: 'Ingresos',
+        rows: [
+            { key: 'ingresos_ord', label: 'Ingresos Ordinarios', isComputed: false, hasCeco: false },
+            { key: 'ingresos_proy', label: 'Ingresos Proyectos', isComputed: false, hasCeco: false },
+            { key: 'total_ingresos', label: 'Total Ingresos', isComputed: true, sumOf: ['ingresos_ord', 'ingresos_proy'] },
+        ],
+    },
+    {
+        title: 'Gastos',
+        rows: [
+            { key: 'costo', label: 'Costo', isComputed: false, hasCeco: true },
+            { key: 'gasto_venta', label: 'Gasto Venta', isComputed: false, hasCeco: true },
+            { key: 'gasto_admin', label: 'Gasto Admin', isComputed: false, hasCeco: true },
+            { key: 'participacion', label: 'Participacion de Trabajadores', isComputed: false, hasCeco: true },
+            { key: 'total_gastos', label: 'Total Gastos', isComputed: true, sumOf: ['costo', 'gasto_venta', 'gasto_admin', 'participacion'] },
+        ],
+    },
+    {
+        title: 'Otros',
+        rows: [
+            { key: 'otros_ingresos', label: 'Otros Ingresos', isComputed: false, hasCeco: true },
+            { key: 'otros_egresos', label: 'Otros Egresos', isComputed: false, hasCeco: true },
+            { key: 'total_otros', label: 'Total Otros', isComputed: true, sumOf: ['otros_ingresos', 'otros_egresos'] },
+        ],
+    },
 ];
+
+const FLUJO_GRAND_TOTAL: FlujoRowDef = {
+    key: 'total', label: 'TOTAL', isComputed: true,
+    sumOf: ['ingresos_ord', 'ingresos_proy', 'costo', 'gasto_venta', 'gasto_admin', 'participacion', 'otros_ingresos', 'otros_egresos'],
+};
 
 function buildFlujoCajaRows(
     columns: DisplayColumn[],
@@ -260,8 +286,9 @@ function buildFlujoCajaRows(
     const cuentaKeys = ['CUENTA_CONTABLE', 'DESCRIPCION'];
 
     // Fetch and compute totals for each data partida
+    const allDefs = FLUJO_SECTIONS.flatMap(s => s.rows);
     const dataRows = new Map<string, { totalRow: Record<string, number>; cecoGroups: ReturnType<typeof buildCecoGroups>; rawRows: ReportRow[]; hasCeco: boolean }>();
-    for (const def of FLUJO_ROWS) {
+    for (const def of allDefs) {
         if (def.isComputed) continue;
         const dataKey = FLUJO_DATA_KEYS[def.key];
         if (!dataKey) continue;
@@ -272,31 +299,25 @@ function buildFlujoCajaRows(
         dataRows.set(def.key, { totalRow, cecoGroups, rawRows: rows, hasCeco: def.hasCeco ?? false });
     }
 
-    const flat: PlanillaExportRow[] = [];
-
-    for (const def of FLUJO_ROWS) {
-        if (def.isComputed) {
-            // Computed subtotal row
-            const sums: Record<string, number> = {};
-            for (const key of def.sumOf!) {
-                const d = dataRows.get(key);
-                if (!d) continue;
-                for (const [m, v] of Object.entries(d.totalRow)) {
-                    if (typeof v === 'number') sums[m] = (sums[m] ?? 0) + v;
-                }
+    const computeSum = (keys: string[]): Record<string, number> => {
+        const sums: Record<string, number> = {};
+        for (const key of keys) {
+            const d = dataRows.get(key);
+            if (!d) continue;
+            for (const [m, v] of Object.entries(d.totalRow)) {
+                if (typeof v === 'number') sums[m] = (sums[m] ?? 0) + v;
             }
-            flat.push({ label: def.label, level: 0, values: sums });
-            continue;
         }
+        return sums;
+    };
 
+    const emitDataRow = (def: FlujoRowDef, flat: PlanillaExportRow[]) => {
         const d = dataRows.get(def.key);
-        if (!d) continue;
+        if (!d) return;
 
-        // Level 0: partida total
         flat.push({ label: def.label, level: 0, values: d.totalRow });
 
         if (d.hasCeco) {
-            // Level 1: CECO groups, Level 2: cuentas within each CECO
             for (const group of d.cecoGroups) {
                 const gVals: Record<string, number> = {};
                 for (const col of columns) {
@@ -320,7 +341,6 @@ function buildFlujoCajaRows(
                 }
             }
         } else {
-            // Revenue lines: Level 1 = individual cuentas (no CECO grouping)
             for (const row of d.rawRows) {
                 const cuenta = String(row['CUENTA_CONTABLE'] ?? '');
                 if (!cuenta || cuenta === 'TOTAL') continue;
@@ -334,7 +354,25 @@ function buildFlujoCajaRows(
                 flat.push({ label: `${cuenta} ${desc}`, level: 1, values: eVals });
             }
         }
+    };
+
+    const flat: PlanillaExportRow[] = [];
+
+    for (const section of FLUJO_SECTIONS) {
+        // Section header (empty values row)
+        flat.push({ label: section.title, level: 0, values: {} });
+
+        for (const def of section.rows) {
+            if (def.isComputed) {
+                flat.push({ label: def.label, level: 0, values: computeSum(def.sumOf!) });
+            } else {
+                emitDataRow(def, flat);
+            }
+        }
     }
+
+    // Grand total
+    flat.push({ label: FLUJO_GRAND_TOTAL.label, level: 0, values: computeSum(FLUJO_GRAND_TOTAL.sumOf!) });
 
     return flat;
 }

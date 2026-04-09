@@ -24,18 +24,44 @@ interface ComputedRowDef {
 
 type RowDef = DataRowDef | ComputedRowDef;
 
-const FLUJO_ROWS: RowDef[] = [
-    { key: 'ingresos_ord', label: 'Ingresos Ordinarios', isComputed: false, hasCeco: false },
-    { key: 'ingresos_proy', label: 'Ingresos Proyectos', isComputed: false, hasCeco: false },
-    { key: 'total_ingresos', label: 'Total Ingresos', isComputed: true, sumOf: ['ingresos_ord', 'ingresos_proy'] },
-    { key: 'costo', label: 'Costo', isComputed: false, hasCeco: true },
-    { key: 'gasto_venta', label: 'Gasto Venta', isComputed: false, hasCeco: true },
-    { key: 'gasto_admin', label: 'Gasto Admin', isComputed: false, hasCeco: true },
-    { key: 'participacion', label: 'Participacion de Trabajadores', isComputed: false, hasCeco: true },
-    { key: 'otros_ingresos', label: 'Otros Ingresos', isComputed: false, hasCeco: true },
-    { key: 'otros_egresos', label: 'Otros Egresos', isComputed: false, hasCeco: true },
-    { key: 'total', label: 'TOTAL', isComputed: true, sumOf: ['ingresos_ord', 'ingresos_proy', 'costo', 'gasto_venta', 'gasto_admin', 'participacion', 'otros_ingresos', 'otros_egresos'] },
+interface SectionDef {
+    title: string;
+    rows: RowDef[];
+}
+
+const FLUJO_SECTIONS: SectionDef[] = [
+    {
+        title: 'Ingresos',
+        rows: [
+            { key: 'ingresos_ord', label: 'Ingresos Ordinarios', isComputed: false, hasCeco: false },
+            { key: 'ingresos_proy', label: 'Ingresos Proyectos', isComputed: false, hasCeco: false },
+            { key: 'total_ingresos', label: 'Total Ingresos', isComputed: true, sumOf: ['ingresos_ord', 'ingresos_proy'] },
+        ],
+    },
+    {
+        title: 'Gastos',
+        rows: [
+            { key: 'costo', label: 'Costo', isComputed: false, hasCeco: true },
+            { key: 'gasto_venta', label: 'Gasto Venta', isComputed: false, hasCeco: true },
+            { key: 'gasto_admin', label: 'Gasto Admin', isComputed: false, hasCeco: true },
+            { key: 'participacion', label: 'Participacion de Trabajadores', isComputed: false, hasCeco: true },
+            { key: 'total_gastos', label: 'Total Gastos', isComputed: true, sumOf: ['costo', 'gasto_venta', 'gasto_admin', 'participacion'] },
+        ],
+    },
+    {
+        title: 'Otros',
+        rows: [
+            { key: 'otros_ingresos', label: 'Otros Ingresos', isComputed: false, hasCeco: true },
+            { key: 'otros_egresos', label: 'Otros Egresos', isComputed: false, hasCeco: true },
+            { key: 'total_otros', label: 'Total Otros', isComputed: true, sumOf: ['otros_ingresos', 'otros_egresos'] },
+        ],
+    },
 ];
+
+const FLUJO_GRAND_TOTAL: ComputedRowDef = {
+    key: 'total', label: 'TOTAL', isComputed: true,
+    sumOf: ['ingresos_ord', 'ingresos_proy', 'costo', 'gasto_venta', 'gasto_admin', 'participacion', 'otros_ingresos', 'otros_egresos'],
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -169,7 +195,7 @@ export default function FlujoCajaTable(props: FlujoCajaTableProps) {
                 ? rows.filter(r => !excludedCuentas.has(String(r['CUENTA_CONTABLE'] ?? '')))
                 : rows;
 
-            const def = FLUJO_ROWS.find(r => r.key === key);
+            const def = FLUJO_SECTIONS.flatMap(s => s.rows).find(r => r.key === key);
             const hasCeco = def && !def.isComputed ? def.hasCeco : false;
 
             const cecoGroups = hasCeco ? buildCecoGroups(filtered, columns) : [];
@@ -275,56 +301,76 @@ export default function FlujoCajaTable(props: FlujoCajaTableProps) {
                         </tr>
                     </thead>
                     <tbody>
-                        {FLUJO_ROWS.map(rowDef => {
-                            if (rowDef.isComputed) {
-                                const sumRow = computeSum(rowDef.sumOf);
-                                return (
-                                    <tr key={rowDef.key} className="rpt-row-l0" style={{ fontWeight: 700 }}>
-                                        <td className="rpt-sticky">{rowDef.label}</td>
-                                        <NumCells row={sumRow} columns={columns} />
-                                        <TotalCell row={sumRow} />
-                                    </tr>
-                                );
-                            }
+                        {FLUJO_SECTIONS.map(section => (
+                            <Rows key={section.title}>
+                                <tr className="rpt-section-header">
+                                    <td className="rpt-sticky" colSpan={columns.length + 2}>
+                                        {section.title}
+                                    </td>
+                                </tr>
+                                {section.rows.map(rowDef => {
+                                    if (rowDef.isComputed) {
+                                        const sumRow = computeSum(rowDef.sumOf);
+                                        return (
+                                            <tr key={rowDef.key} className="rpt-row-l0" style={{ fontWeight: 700 }}>
+                                                <td className="rpt-sticky">{rowDef.label}</td>
+                                                <NumCells row={sumRow} columns={columns} />
+                                                <TotalCell row={sumRow} />
+                                            </tr>
+                                        );
+                                    }
 
-                            const data = partidaData.get(rowDef.key);
-                            if (!data) return null;
-                            const isExpanded = expandedPartidas.has(rowDef.key);
+                                    const data = partidaData.get(rowDef.key);
+                                    if (!data) return null;
+                                    const isExpanded = expandedPartidas.has(rowDef.key);
 
-                            return (
-                                <Rows key={rowDef.key}>
-                                    <tr
-                                        className="rpt-row-l0"
-                                        onClick={() => togglePartida(rowDef.key)}
-                                        style={{ cursor: 'pointer' }}
-                                    >
-                                        <td className="rpt-sticky">
-                                            <span className="rpt-chevron">{isExpanded ? '\u25BE' : '\u25B8'}</span>
-                                            {rowDef.label}
-                                            {hasExclusions && (
-                                                <span className="text-[10px] text-txt-muted ml-2">(filtrado)</span>
+                                    return (
+                                        <Rows key={rowDef.key}>
+                                            <tr
+                                                className="rpt-row-l0"
+                                                onClick={() => togglePartida(rowDef.key)}
+                                                style={{ cursor: 'pointer' }}
+                                            >
+                                                <td className="rpt-sticky">
+                                                    <span className="rpt-chevron">{isExpanded ? '\u25BE' : '\u25B8'}</span>
+                                                    {rowDef.label}
+                                                    {hasExclusions && (
+                                                        <span className="text-[10px] text-txt-muted ml-2">(filtrado)</span>
+                                                    )}
+                                                </td>
+                                                <NumCells row={data.totalRow} columns={columns} />
+                                                <TotalCell row={data.totalRow} />
+                                            </tr>
+
+                                            {isExpanded && rowDef.hasCeco && (
+                                                <CecoExpansion
+                                                    partidaKey={rowDef.key}
+                                                    cecoGroups={data.cecoGroups}
+                                                    expandedCecos={expandedCecos}
+                                                    toggleCeco={toggleCeco}
+                                                    columns={columns}
+                                                />
                                             )}
-                                        </td>
-                                        <NumCells row={data.totalRow} columns={columns} />
-                                        <TotalCell row={data.totalRow} />
-                                    </tr>
 
-                                    {isExpanded && rowDef.hasCeco && (
-                                        <CecoExpansion
-                                            partidaKey={rowDef.key}
-                                            cecoGroups={data.cecoGroups}
-                                            expandedCecos={expandedCecos}
-                                            toggleCeco={toggleCeco}
-                                            columns={columns}
-                                        />
-                                    )}
-
-                                    {isExpanded && !rowDef.hasCeco && (
-                                        <CuentaDirectRows rows={data.cuentaRows} columns={columns} />
-                                    )}
-                                </Rows>
+                                            {isExpanded && !rowDef.hasCeco && (
+                                                <CuentaDirectRows rows={data.cuentaRows} columns={columns} />
+                                            )}
+                                        </Rows>
+                                    );
+                                })}
+                            </Rows>
+                        ))}
+                        {/* Grand total */}
+                        {(() => {
+                            const sumRow = computeSum(FLUJO_GRAND_TOTAL.sumOf);
+                            return (
+                                <tr className="rpt-row-l0" style={{ fontWeight: 700 }}>
+                                    <td className="rpt-sticky">{FLUJO_GRAND_TOTAL.label}</td>
+                                    <NumCells row={sumRow} columns={columns} />
+                                    <TotalCell row={sumRow} />
+                                </tr>
                             );
-                        })}
+                        })()}
                     </tbody>
                 </table>
             </div>
