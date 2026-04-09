@@ -7,7 +7,7 @@ import type { HeadcountMap } from '@/features/dashboard/useHeadcount';
 import { useHeadcount } from '@/features/dashboard/useHeadcount';
 import { getCellValue, getSummaryTotal } from '@/utils/cellValue';
 import { getDataKeyForTable } from '@/utils/dataKeyMapping';
-import { buildCecoGroups, buildCuentaEntries } from '@/utils/cecoGrouping';
+import { buildCecoGroups, buildCuentaEntries, sumRows } from '@/utils/cecoGrouping';
 
 // ── Planilla grouping (mirrors PlanillaTable hierarchy) ─────────────
 
@@ -211,6 +211,127 @@ function buildFinanzasRows(
                 }
                 eVals['TOTAL'] = (src['TOTAL'] as number) ?? 0;
                 flat.push({ label: eLabel, level: 2, values: eVals });
+            }
+        }
+    }
+
+    return flat;
+}
+
+// ── Flujo de Caja export ───────────────────────────────────────────
+
+const FLUJO_DATA_KEYS: Record<string, keyof ReportData> = {
+    ingresos_ord: 'flujo_ingresos_ord_by_cuenta',
+    ingresos_proy: 'flujo_ingresos_proy_by_cuenta',
+    costo: 'flujo_costo_by_cuenta',
+    gasto_venta: 'flujo_gasto_venta_by_cuenta',
+    gasto_admin: 'flujo_gasto_admin_by_cuenta',
+    participacion: 'flujo_participacion_by_cuenta',
+    otros_ingresos: 'flujo_otros_ingresos_by_cuenta',
+    otros_egresos: 'flujo_otros_egresos_by_cuenta',
+};
+
+interface FlujoRowDef {
+    key: string;
+    label: string;
+    isComputed: boolean;
+    hasCeco?: boolean;
+    sumOf?: string[];
+}
+
+const FLUJO_ROWS: FlujoRowDef[] = [
+    { key: 'ingresos_ord', label: 'Ingresos Ordinarios', isComputed: false, hasCeco: false },
+    { key: 'ingresos_proy', label: 'Ingresos Proyectos', isComputed: false, hasCeco: false },
+    { key: 'total_ingresos', label: 'Total Ingresos', isComputed: true, sumOf: ['ingresos_ord', 'ingresos_proy'] },
+    { key: 'costo', label: 'Costo', isComputed: false, hasCeco: true },
+    { key: 'gasto_venta', label: 'Gasto Venta', isComputed: false, hasCeco: true },
+    { key: 'gasto_admin', label: 'Gasto Admin', isComputed: false, hasCeco: true },
+    { key: 'participacion', label: 'Participacion de Trabajadores', isComputed: false, hasCeco: true },
+    { key: 'otros_ingresos', label: 'Otros Ingresos', isComputed: false, hasCeco: true },
+    { key: 'otros_egresos', label: 'Otros Egresos', isComputed: false, hasCeco: true },
+    { key: 'total', label: 'TOTAL', isComputed: true, sumOf: ['ingresos_ord', 'ingresos_proy', 'costo', 'gasto_venta', 'gasto_admin', 'participacion', 'otros_ingresos', 'otros_egresos'] },
+];
+
+function buildFlujoCajaRows(
+    columns: DisplayColumn[],
+    getMergedDetailRows: (key: keyof ReportData, labelKeys: string[]) => ReportRow[],
+): PlanillaExportRow[] {
+    const cecoKeys = ['CENTRO_COSTO', 'DESC_CECO', 'CUENTA_CONTABLE', 'DESCRIPCION'];
+    const cuentaKeys = ['CUENTA_CONTABLE', 'DESCRIPCION'];
+
+    // Fetch and compute totals for each data partida
+    const dataRows = new Map<string, { totalRow: Record<string, number>; cecoGroups: ReturnType<typeof buildCecoGroups>; rawRows: ReportRow[]; hasCeco: boolean }>();
+    for (const def of FLUJO_ROWS) {
+        if (def.isComputed) continue;
+        const dataKey = FLUJO_DATA_KEYS[def.key];
+        if (!dataKey) continue;
+        const keys = def.hasCeco ? cecoKeys : cuentaKeys;
+        const rows = getMergedDetailRows(dataKey, keys);
+        const cecoGroups = def.hasCeco ? buildCecoGroups(rows, columns) : [];
+        const totalRow = sumRows(rows, columns);
+        dataRows.set(def.key, { totalRow, cecoGroups, rawRows: rows, hasCeco: def.hasCeco ?? false });
+    }
+
+    const flat: PlanillaExportRow[] = [];
+
+    for (const def of FLUJO_ROWS) {
+        if (def.isComputed) {
+            // Computed subtotal row
+            const sums: Record<string, number> = {};
+            for (const key of def.sumOf!) {
+                const d = dataRows.get(key);
+                if (!d) continue;
+                for (const [m, v] of Object.entries(d.totalRow)) {
+                    if (typeof v === 'number') sums[m] = (sums[m] ?? 0) + v;
+                }
+            }
+            flat.push({ label: def.label, level: 0, values: sums });
+            continue;
+        }
+
+        const d = dataRows.get(def.key);
+        if (!d) continue;
+
+        // Level 0: partida total
+        flat.push({ label: def.label, level: 0, values: d.totalRow });
+
+        if (d.hasCeco) {
+            // Level 1: CECO groups, Level 2: cuentas within each CECO
+            for (const group of d.cecoGroups) {
+                const gVals: Record<string, number> = {};
+                for (const col of columns) {
+                    const v = getCellValue(group.data, col);
+                    if (v !== null) gVals[col.sourceMonths[0]] = v;
+                }
+                gVals['TOTAL'] = (group.data['TOTAL'] as number) ?? 0;
+                flat.push({ label: group.label, level: 1, values: gVals });
+
+                for (const row of group.cuentaRows) {
+                    const cuenta = String(row['CUENTA_CONTABLE'] ?? '');
+                    if (!cuenta || cuenta === 'TOTAL') continue;
+                    const desc = String(row['DESCRIPCION'] ?? '');
+                    const eVals: Record<string, number> = {};
+                    for (const col of columns) {
+                        const v = getCellValue(row, col);
+                        if (v !== null) eVals[col.sourceMonths[0]] = v;
+                    }
+                    eVals['TOTAL'] = (row['TOTAL'] as number) ?? 0;
+                    flat.push({ label: `${cuenta} ${desc}`, level: 2, values: eVals });
+                }
+            }
+        } else {
+            // Revenue lines: Level 1 = individual cuentas (no CECO grouping)
+            for (const row of d.rawRows) {
+                const cuenta = String(row['CUENTA_CONTABLE'] ?? '');
+                if (!cuenta || cuenta === 'TOTAL') continue;
+                const desc = String(row['DESCRIPCION'] ?? '');
+                const eVals: Record<string, number> = {};
+                for (const col of columns) {
+                    const v = getCellValue(row, col);
+                    if (v !== null) eVals[col.sourceMonths[0]] = v;
+                }
+                eVals['TOTAL'] = (row['TOTAL'] as number) ?? 0;
+                flat.push({ label: `${cuenta} ${desc}`, level: 1, values: eVals });
             }
         }
     }
@@ -478,6 +599,15 @@ export function useViewExport(): { handleExport: () => void; canExport: boolean 
                 kind: 'planilla',
                 sheetName: viewTitle,
                 flatRows: buildFinanzasRows(rows, cols, getMergedDetailRows),
+                columns: cols,
+                year: selectedYear,
+            });
+        } else if (currentView === 'analysis_flujo_caja') {
+            const cols = getDisplayColumns('pl');
+            sheets.push({
+                kind: 'planilla',
+                sheetName: viewTitle,
+                flatRows: buildFlujoCajaRows(cols, getMergedDetailRows),
                 columns: cols,
                 year: selectedYear,
             });
