@@ -88,6 +88,22 @@ def fetch_headcount_all(db_path: str, cia: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def fetch_headcount_consolidated(db_path: str, year: int) -> list[dict]:
+    """Return headcount per CECO/month across ALL companies for a year."""
+    lo = year * 100 + 1
+    hi = year * 100 + 12
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT centro_costo, year_month, COUNT(DISTINCT empleado) AS headcount "
+            "FROM employee_roster "
+            "WHERE year_month BETWEEN ? AND ? "
+            "GROUP BY centro_costo, year_month "
+            "ORDER BY centro_costo, year_month",
+            (lo, hi),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # ── Roster CRUD ─────────────────────────────────────────────────────────
 
 def bulk_upsert_roster(db_path: str, records: list[dict]) -> int:

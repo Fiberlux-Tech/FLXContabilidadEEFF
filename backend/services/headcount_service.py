@@ -9,8 +9,10 @@ import logging
 import re
 
 from config.calendar import MONTH_NAMES
+from config.company import CONSOLIDADO
 from data.headcount_db import (
-    fetch_headcount, bulk_upsert_roster, fetch_roster_detail,
+    fetch_headcount, fetch_headcount_consolidated,
+    bulk_upsert_roster, fetch_roster_detail,
     roster_count,
 )
 from data_service import LRUTTLCache
@@ -41,7 +43,9 @@ def load_headcount(db_path: str, cia: str, year: int) -> dict:
     if cached is not None:
         return cached
 
-    rows = fetch_headcount(db_path, cia, year)
+    rows = (fetch_headcount_consolidated(db_path, year)
+            if cia == CONSOLIDADO
+            else fetch_headcount(db_path, cia, year))
     result: dict[str, dict[str, float]] = {}
     for r in rows:
         ceco = r["centro_costo"]
@@ -90,7 +94,9 @@ def load_headcount_ym(db_path: str, cia: str, years: list[int]) -> dict:
                         result[ceco][year * 100 + num] = val
             continue
 
-        rows = fetch_headcount(db_path, cia, year)
+        rows = (fetch_headcount_consolidated(db_path, year)
+                if cia == CONSOLIDADO
+                else fetch_headcount(db_path, cia, year))
         for r in rows:
             ceco = r["centro_costo"]
             if ceco not in result:

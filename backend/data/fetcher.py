@@ -10,6 +10,7 @@ import pandas as pd
 from data.db import connect
 from data.queries import fetch_pnl_data, fetch_bs_data
 from config.calendar import MIN_YEAR
+from config.company import REAL_COMPANIES
 from config.period import month_end_boundary
 from config.settings import get_config
 
@@ -181,3 +182,35 @@ def fetch_bs_only(company: str, year: int, conn_factory=None) -> pd.DataFrame:
     df = _fetch_with_own_conn(fetch_bs_data, conn_factory, company, year, None)
     logger.info("fetch_bs_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
     return df
+
+
+# ── Consolidated (all-companies) fetch functions ────────────────────────
+
+def _fetch_consolidated(fetch_fn, year: int, month: int | None, conn_factory) -> pd.DataFrame:
+    """Fetch data for all real companies concurrently and concatenate."""
+    if conn_factory is None:
+        conn_factory = connect
+    t0 = time.perf_counter()
+    max_workers = get_config().db.fetch_max_workers
+    futures = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for company in REAL_COMPANIES:
+            futures[company] = pool.submit(
+                _fetch_with_own_conn, fetch_fn, conn_factory, company, year, month,
+            )
+    dfs = []
+    for company, fut in futures.items():
+        dfs.append(fut.result(timeout=240))
+    result = pd.concat(dfs, ignore_index=True)
+    logger.info("fetch_consolidated %s/%d: %.2fs, %d rows", fetch_fn.__name__, year, time.perf_counter() - t0, len(result))
+    return result
+
+
+def fetch_pnl_consolidated(year: int, conn_factory=None) -> pd.DataFrame:
+    """Fetch P&L data for ALL real companies and concatenate."""
+    return _fetch_consolidated(fetch_pnl_data, year, None, conn_factory)
+
+
+def fetch_bs_consolidated(year: int, conn_factory=None) -> pd.DataFrame:
+    """Fetch BS data for ALL real companies and concatenate."""
+    return _fetch_consolidated(fetch_bs_data, year, None, conn_factory)

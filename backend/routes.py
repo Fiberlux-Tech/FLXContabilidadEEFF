@@ -13,7 +13,7 @@ from flask import Blueprint, jsonify, request, send_file
 from auth import login_required
 from helpers import ok, error
 from config.calendar import MONTH_NAMES_SET, MIN_YEAR
-from config.company import VALID_COMPANIES, COMPANY_META
+from config.company import VALID_COMPANIES, COMPANY_META, CONSOLIDADO
 from config.fields import (
     CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL,
     CENTRO_COSTO, DESC_CECO,
@@ -126,6 +126,8 @@ def load_data(body, company, year):
     Body: { "company": "FIBERLUX", "year": 2026 }
     Optional: { "force_refresh": true }
     """
+    if company == CONSOLIDADO:
+        raise RequestValidationError('Use load-pl y load-bs para vista consolidada')
     return _timed_load(load_report_data, body, company, year)
 
 
@@ -271,6 +273,9 @@ def _export_handler(export_type: str):
     body = request.get_json(silent=True) or {}
 
     company, year = _validate_company_year(body)
+
+    if company == CONSOLIDADO:
+        raise RequestValidationError('Exportacion no disponible para vista consolidada')
 
     try:
         result = _run_export(company, year, excel_only=_EXPORT_TYPE_MAP[export_type])
@@ -429,6 +434,8 @@ def get_roster():
     company = (request.args.get('company') or '').strip().upper()
     if company not in VALID_COMPANIES:
         raise RequestValidationError(f'Empresa invalida: {company}')
+    if company == CONSOLIDADO:
+        raise RequestValidationError('Detalle de planilla no disponible para vista consolidada')
 
     centro_costo = (request.args.get('centro_costo') or '').strip()
     if not centro_costo:
