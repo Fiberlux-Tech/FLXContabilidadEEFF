@@ -1,5 +1,5 @@
 import { ALL_MONTHS } from '@/types';
-import type { DisplayColumn, MonthSource, Month, Granularity, PeriodRange } from '@/types';
+import type { DisplayColumn, MonthSource, Month, Granularity, PeriodRange, Quarter } from '@/types';
 
 const QUARTER_MONTHS: [Month, Month, Month][] = [
     ['JAN', 'FEB', 'MAR'],
@@ -27,7 +27,18 @@ export function buildDisplayColumns(
     periodRange: PeriodRange,
     selectedYear: number,
     variant: 'pl' | 'bs',
+    selectedQuarter: Quarter = 1,
 ): DisplayColumn[] {
+    // Single-quarter mode: 3 months of the chosen quarter, anchored to selectedYear.
+    // periodRange is ignored (the quarter is inherently year-bound).
+    if (granularity === 'single_quarter') {
+        const months = QUARTER_MONTHS[selectedQuarter - 1];
+        return months.map(m => ({
+            header: `${m} ${selectedYear}`,
+            sourceMonths: [m],
+        }));
+    }
+
     if (periodRange === 'ytd') {
         // Current year: all 12 months
         if (granularity === 'monthly') {

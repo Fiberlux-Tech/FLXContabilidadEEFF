@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useMemo, useRef } from 'react';
 import { api } from '@/lib/api';
 import { API_CONFIG } from '@/config';
-import type { ReportData, PLReportData, PLSectionData, BSReportData, CompanyMap, Granularity, PeriodRange, DisplayColumn, MonthSource, ReportRow } from '@/types';
+import type { ReportData, PLReportData, PLSectionData, BSReportData, CompanyMap, Granularity, PeriodRange, Quarter, DisplayColumn, MonthSource, ReportRow } from '@/types';
 import { isBsView, isAnalysisView } from '@/config/viewRegistry';
 import type { View } from '@/config/viewRegistry';
 import { getTrailing12MonthSources, buildDisplayColumns } from '@/utils/displayColumns';
@@ -34,6 +34,7 @@ interface ReportState {
     selectedCompany: string;
     selectedYear: number;
     granularity: Granularity;
+    selectedQuarter: Quarter;
     periodRange: PeriodRange;
     reportData: ReportData | null;
     /** For trailing 12M: the previous year's data */
@@ -62,6 +63,7 @@ type ReportAction =
     | { type: 'SET_COMPANY'; company: string }
     | { type: 'SET_YEAR'; year: number }
     | { type: 'SET_GRANULARITY'; granularity: Granularity }
+    | { type: 'SET_QUARTER'; quarter: Quarter }
     | { type: 'SET_PERIOD_RANGE'; periodRange: PeriodRange }
     | { type: 'SET_VIEW'; view: View }
     | { type: 'SET_INTERCOMPANY_FILTER'; filter: 'all' | 'only_ic' | 'ex_ic' | 'expanded' }
@@ -85,6 +87,7 @@ const initialState: ReportState = {
     selectedCompany: '',
     selectedYear: new Date().getFullYear(),
     granularity: 'monthly',
+    selectedQuarter: 1,
     periodRange: 'ytd',
     reportData: null,
     prevYearData: null,
@@ -113,6 +116,8 @@ function reportReducer(state: ReportState, action: ReportAction): ReportState {
             return { ...state, selectedYear: action.year };
         case 'SET_GRANULARITY':
             return { ...state, granularity: action.granularity };
+        case 'SET_QUARTER':
+            return { ...state, selectedQuarter: action.quarter };
         case 'SET_PERIOD_RANGE':
             return { ...state, periodRange: action.periodRange };
         case 'SET_VIEW':
@@ -211,6 +216,8 @@ interface IReportContext {
     setSelectedYear: (y: number) => void;
     granularity: Granularity;
     setGranularity: (g: Granularity) => void;
+    selectedQuarter: Quarter;
+    setSelectedQuarter: (q: Quarter) => void;
     periodRange: PeriodRange;
     setPeriodRange: (r: PeriodRange) => void;
     intercompanyFilter: 'all' | 'only_ic' | 'ex_ic' | 'expanded';
@@ -467,13 +474,16 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
     );
 
     const getDisplayColumns = useCallback(
-        (variant: 'pl' | 'bs') => buildDisplayColumns(state.granularity, state.periodRange, state.selectedYear, variant),
-        [state.granularity, state.periodRange, state.selectedYear],
+        (variant: 'pl' | 'bs') => buildDisplayColumns(state.granularity, state.periodRange, state.selectedYear, variant, state.selectedQuarter),
+        [state.granularity, state.periodRange, state.selectedYear, state.selectedQuarter],
     );
 
     const getMergedRows = useCallback(
         (key: keyof ReportData, labelKey: string, variant: 'pl' | 'bs'): ReportRow[] => {
             if (!state.reportData) return [];
+
+            // Single-quarter mode is year-bound, so always treat as YTD (skip trailing merge).
+            const effectiveRange = state.granularity === 'single_quarter' ? 'ytd' : state.periodRange;
 
             // Expanded IC mode: build interleaved rows from all three variants
             if (key === 'pl_summary' && state.intercompanyFilter === 'expanded') {
@@ -481,7 +491,7 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
                 const exIcRows = (state.reportData['pl_summary_ex_ic'] as ReportRow[] | undefined) ?? [];
                 const onlyIcRows = (state.reportData['pl_summary_only_ic'] as ReportRow[] | undefined) ?? [];
                 const expanded = buildExpandedPLRows(allRows, exIcRows, onlyIcRows);
-                if (state.periodRange === 'ytd') return expanded;
+                if (effectiveRange === 'ytd') return expanded;
                 const prevAll = (state.prevYearData?.['pl_summary'] as ReportRow[] | undefined) ?? [];
                 const prevExIc = (state.prevYearData?.['pl_summary_ex_ic'] as ReportRow[] | undefined) ?? [];
                 const prevOnlyIc = (state.prevYearData?.['pl_summary_only_ic'] as ReportRow[] | undefined) ?? [];
@@ -494,19 +504,22 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             if (key === 'pl_summary' && state.intercompanyFilter === 'ex_ic') effectiveKey = 'pl_summary_ex_ic';
             if (key === 'pl_summary' && state.intercompanyFilter === 'only_ic') effectiveKey = 'pl_summary_only_ic';
             const currentRows = (state.reportData[effectiveKey] as ReportRow[] | undefined) ?? [];
-            if (state.periodRange === 'ytd') return currentRows;
+            if (effectiveRange === 'ytd') return currentRows;
             const prevRows = (state.prevYearData?.[effectiveKey] as ReportRow[] | undefined) ?? [];
             if (variant === 'bs') {
                 return mergeTrailingBSRows(currentRows, prevRows, labelKey, trailingMonthSources, state.selectedYear);
             }
             return mergeTrailingRows(currentRows, prevRows, labelKey, trailingMonthSources, state.selectedYear);
         },
-        [state.reportData, state.prevYearData, state.periodRange, trailingMonthSources, state.selectedYear, state.intercompanyFilter],
+        [state.reportData, state.prevYearData, state.periodRange, state.granularity, trailingMonthSources, state.selectedYear, state.intercompanyFilter],
     );
 
     const getMergedDetailRows = useCallback(
         (key: keyof ReportData, labelKeys: string[]): ReportRow[] => {
             if (!state.reportData) return [];
+
+            // Single-quarter mode is year-bound, so always treat as YTD (skip trailing merge).
+            const effectiveRange = state.granularity === 'single_quarter' ? 'ytd' : state.periodRange;
 
             // Apply IC filter: swap key suffix for ex_ic / only_ic.
             // "expanded" falls back to "all" (no suffix) in detail views.
@@ -520,11 +533,11 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             }
 
             const currentRows = (state.reportData[effectiveKey] as ReportRow[] | undefined) ?? [];
-            if (state.periodRange === 'ytd') return currentRows;
+            if (effectiveRange === 'ytd') return currentRows;
             const prevRows = (state.prevYearData?.[effectiveKey] as ReportRow[] | undefined) ?? [];
             return mergeTrailingDetailRows(currentRows, prevRows, labelKeys, trailingMonthSources, state.selectedYear);
         },
-        [state.reportData, state.prevYearData, state.periodRange, trailingMonthSources, state.selectedYear, state.intercompanyFilter],
+        [state.reportData, state.prevYearData, state.periodRange, state.granularity, trailingMonthSources, state.selectedYear, state.intercompanyFilter],
     );
 
     return (
@@ -536,6 +549,8 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             setSelectedYear: (y) => dispatch({ type: 'SET_YEAR', year: y }),
             granularity: state.granularity,
             setGranularity: (g) => dispatch({ type: 'SET_GRANULARITY', granularity: g }),
+            selectedQuarter: state.selectedQuarter,
+            setSelectedQuarter: (q) => dispatch({ type: 'SET_QUARTER', quarter: q }),
             periodRange: state.periodRange,
             setPeriodRange: (r) => dispatch({ type: 'SET_PERIOD_RANGE', periodRange: r }),
             intercompanyFilter: state.intercompanyFilter,

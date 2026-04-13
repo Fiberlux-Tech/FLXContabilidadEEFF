@@ -192,7 +192,8 @@ export interface BSReportData {
   months: Month[];
 }
 
-export type Granularity = 'monthly' | 'quarterly';
+export type Granularity = 'monthly' | 'quarterly' | 'single_quarter';
+export type Quarter = 1 | 2 | 3 | 4;
 export type PeriodRange = 'ytd' | 'trailing12';
 
 /** A display column: the header shown in the table + the source month keys to aggregate */

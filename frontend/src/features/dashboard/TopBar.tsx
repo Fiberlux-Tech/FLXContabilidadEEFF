@@ -40,6 +40,7 @@ function ToggleGroup({ value, options, onChange }: {
 function DisplayDropdown() {
     const {
         granularity, setGranularity,
+        selectedQuarter, setSelectedQuarter,
         periodRange, setPeriodRange,
         selectedYear, setSelectedYear,
         trailingMonthSources,
@@ -58,9 +59,9 @@ function DisplayDropdown() {
         : '';
 
     // Chip label summarising current settings
-    const granLabel = granularity === 'monthly' ? 'Mensual' : 'Trimestral';
-    const periodLabel = periodRange === 'ytd' ? selectedYear : 'Ult 12M';
-    const chipLabel = `${granLabel} · ${periodLabel}`;
+    const chipLabel = granularity === 'single_quarter'
+        ? `Q${selectedQuarter} · ${selectedYear}`
+        : `${granularity === 'monthly' ? 'Mensual' : 'Trimestral'} · ${periodRange === 'ytd' ? selectedYear : 'Ult 12M'}`;
 
     return (
         <div className="relative" ref={ref}>
@@ -79,7 +80,7 @@ function DisplayDropdown() {
             </button>
 
             {open && (
-                <div className="dropdown-panel w-64">
+                <div className="dropdown-panel w-72">
                     {/* Granularity */}
                     <div>
                         <label className="dropdown-section-label">Vista</label>
@@ -88,49 +89,86 @@ function DisplayDropdown() {
                             options={[
                                 { value: 'monthly', label: 'Mensual' },
                                 { value: 'quarterly', label: 'Trimestral' },
+                                { value: 'single_quarter', label: 'Trimestre' },
                             ]}
-                            onChange={v => setGranularity(v as 'monthly' | 'quarterly')}
+                            onChange={v => setGranularity(v as 'monthly' | 'quarterly' | 'single_quarter')}
                         />
                     </div>
 
                     <div className="h-px bg-border my-2" />
 
-                    {/* Period */}
-                    <div>
-                        <label className="dropdown-section-label">Periodo</label>
-                        <ToggleGroup
-                            value={periodRange}
-                            options={[
-                                { value: 'ytd', label: 'Ano Actual' },
-                                { value: 'trailing12', label: 'Ultimos 12M' },
-                            ]}
-                            onChange={v => setPeriodRange(v as 'ytd' | 'trailing12')}
-                        />
-                    </div>
-
-                    <div className="h-px bg-border my-2" />
-
-                    {/* Year / Range */}
-                    {periodRange === 'ytd' ? (
-                        <div>
-                            <label className="dropdown-section-label">Ano</label>
-                            <select
-                                value={selectedYear}
-                                onChange={e => setSelectedYear(Number(e.target.value))}
-                                className="select-base w-full"
-                            >
-                                {years.map(y => (
-                                    <option key={y} value={y}>{y}</option>
-                                ))}
-                            </select>
-                        </div>
-                    ) : (
-                        <div>
-                            <label className="dropdown-section-label">Rango</label>
-                            <div className="px-3 py-1.5 text-[13px] text-txt-secondary bg-surface-alt border border-border rounded-md font-medium">
-                                {trailingLabel}
+                    {/* Quarter picker — only in single_quarter mode */}
+                    {granularity === 'single_quarter' ? (
+                        <>
+                            <div>
+                                <label className="dropdown-section-label">Trimestre</label>
+                                <ToggleGroup
+                                    value={String(selectedQuarter)}
+                                    options={[
+                                        { value: '1', label: 'Q1' },
+                                        { value: '2', label: 'Q2' },
+                                        { value: '3', label: 'Q3' },
+                                        { value: '4', label: 'Q4' },
+                                    ]}
+                                    onChange={v => setSelectedQuarter(Number(v) as 1 | 2 | 3 | 4)}
+                                />
                             </div>
-                        </div>
+
+                            <div className="h-px bg-border my-2" />
+
+                            <div>
+                                <label className="dropdown-section-label">Ano</label>
+                                <select
+                                    value={selectedYear}
+                                    onChange={e => setSelectedYear(Number(e.target.value))}
+                                    className="select-base w-full"
+                                >
+                                    {years.map(y => (
+                                        <option key={y} value={y}>{y}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            {/* Period */}
+                            <div>
+                                <label className="dropdown-section-label">Periodo</label>
+                                <ToggleGroup
+                                    value={periodRange}
+                                    options={[
+                                        { value: 'ytd', label: 'Ano Actual' },
+                                        { value: 'trailing12', label: 'Ultimos 12M' },
+                                    ]}
+                                    onChange={v => setPeriodRange(v as 'ytd' | 'trailing12')}
+                                />
+                            </div>
+
+                            <div className="h-px bg-border my-2" />
+
+                            {/* Year / Range */}
+                            {periodRange === 'ytd' ? (
+                                <div>
+                                    <label className="dropdown-section-label">Ano</label>
+                                    <select
+                                        value={selectedYear}
+                                        onChange={e => setSelectedYear(Number(e.target.value))}
+                                        className="select-base w-full"
+                                    >
+                                        {years.map(y => (
+                                            <option key={y} value={y}>{y}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            ) : (
+                                <div>
+                                    <label className="dropdown-section-label">Rango</label>
+                                    <div className="px-3 py-1.5 text-[13px] text-txt-secondary bg-surface-alt border border-border rounded-md font-medium">
+                                        {trailingLabel}
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
             )}
@@ -145,6 +183,8 @@ export default function TopBar() {
     const {
         companies, selectedCompany, setSelectedCompany,
         selectedYear,
+        granularity,
+        selectedQuarter,
         intercompanyFilter, setIntercompanyFilter,
         currentView,
         loadData, isLoading,
@@ -167,9 +207,14 @@ export default function TopBar() {
         ? `${trailingMonthSources[0].month} ${trailingMonthSources[0].year} — ${trailingMonthSources[trailingMonthSources.length - 1].month} ${trailingMonthSources[trailingMonthSources.length - 1].year}`
         : '';
 
-    const subtitle = periodRange === 'ytd'
-        ? `${companyName} — ${selectedYear}`
-        : `${companyName} — ${trailingLabel}`;
+    let subtitle: string;
+    if (granularity === 'single_quarter') {
+        subtitle = `${companyName} — Q${selectedQuarter} ${selectedYear}`;
+    } else if (periodRange === 'ytd') {
+        subtitle = `${companyName} — ${selectedYear}`;
+    } else {
+        subtitle = `${companyName} — ${trailingLabel}`;
+    }
 
     return (
         <header className="bg-surface border-b border-border px-8 py-3 sticky top-0 z-30">
