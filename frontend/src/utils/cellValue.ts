@@ -36,29 +36,22 @@ export function getCellValue(row: ReportRow, col: DisplayColumn): number | null 
 
 // ── Total column computation ─────────────────────────────────────────
 
-/** Summary table total (P&L: precomputed or sum; BS: last column value) */
+/** Summary table total (P&L: sum of visible columns; BS: last column value) */
 export function getSummaryTotal(row: ReportRow, columns: DisplayColumn[], variant: 'pl' | 'bs'): number | null {
     if (variant === 'bs') {
         // BS total = last column's value (last month/quarter balance)
         const lastCol = columns[columns.length - 1];
         return getCellValue(row, lastCol);
     }
-    // P&L total: check if row has a precomputed TOTAL, otherwise sum columns
-    const precomputed = row['TOTAL'] as number | null;
-    if (precomputed !== null && precomputed !== undefined) return precomputed;
-    let sum = 0;
-    let allNull = true;
-    for (const col of columns) {
-        const v = getCellValue(row, col);
-        if (v !== null) { sum += v; allNull = false; }
-    }
-    return allNull ? null : sum;
+    return sumColumns(row, columns);
 }
 
-/** Detail table total (precomputed TOTAL first, then sum) */
+/** Detail table total (sum of visible columns) */
 export function getDetailTotal(row: ReportRow, columns: DisplayColumn[]): number | null {
-    const precomputed = row['TOTAL'] as number | null;
-    if (precomputed !== null && precomputed !== undefined) return precomputed;
+    return sumColumns(row, columns);
+}
+
+function sumColumns(row: ReportRow, columns: DisplayColumn[]): number | null {
     let sum = 0;
     let allNull = true;
     for (const col of columns) {
