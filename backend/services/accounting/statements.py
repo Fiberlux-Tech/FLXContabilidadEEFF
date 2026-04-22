@@ -3,14 +3,14 @@ import logging
 import numpy as np
 import pandas as pd
 
-from config.calendar import MONTH_NAMES, MONTH_NAMES_SET
+from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MONTH_NAMES_SET
 from accounting.rules import (
     BS_SECTION_ORDER, BS_RECLASSIFICATION_RULES,
     BS_PARTIDA_ORDER,
     BS_ACTIVO_NO_CORRIENTE, BS_PASIVO_NO_CORRIENTE,
     BS_NATIVE_SECTION_MAP,
 )
-from accounting.aggregation import TOTAL_COL, pivot_by_month, _apply_bs_cumsum
+from accounting.aggregation import TOTAL_COL, pivot_by_month, _apply_bs_cumsum, last_data_month
 from config.exceptions import DataValidationError
 from config.fields import PARTIDA_PL, PARTIDA_BS, SECCION_BS, CUENTA_CONTABLE, DESCRIPCION
 
@@ -290,11 +290,13 @@ def _reclassify_bs_cuentas(cuenta_rows, val_cols):
     return result
 
 
-def extract_utilidad_neta(pl_df, bs_val_cols):
+def extract_utilidad_neta(pl_df, bs_val_cols, last_month: int | None = None):
     """Extract cumulative UTILIDAD NETA from a P&L summary for the BS.
 
     The P&L summary has monthly *flow* values (each month independent).
     The BS needs *cumulative* values (running total through each month).
+    When *last_month* is provided, months after it are zeroed so that future
+    periods don't inherit the last closed cumulative balance.
 
     Parameters
     ----------
@@ -302,6 +304,8 @@ def extract_utilidad_neta(pl_df, bs_val_cols):
         The P&L summary DataFrame (output of ``pl_summary()``).
     bs_val_cols : list[str]
         The month column names used in the BS (e.g. ["JAN", "FEB", ...]).
+    last_month : int or None
+        Highest month (1–12) with actual BS data. Months beyond this are zeroed.
 
     Returns
     -------
@@ -320,7 +324,12 @@ def extract_utilidad_neta(pl_df, bs_val_cols):
         else:
             vals.append(0.0)
     monthly = np.array(vals)
-    return np.cumsum(monthly)
+    cumulative = np.cumsum(monthly)
+    if last_month is not None:
+        for i, col in enumerate(bs_val_cols):
+            if col in MONTH_NAMES_SET and MONTH_NAMES_LIST.index(col) >= last_month:
+                cumulative[i] = 0.0
+    return cumulative
 
 
 def bs_summary(df, *, include_detail=True, pl_summary_df=None, strict_balance=False,
@@ -340,11 +349,14 @@ def bs_summary(df, *, include_detail=True, pl_summary_df=None, strict_balance=Fa
         When None all months present in the data are shown.
     """
     # Cuenta-level pivot (finest grain — we'll aggregate partidas from this)
+    last_month = last_data_month(df)
     cuenta_pivot = pivot_by_month(
         df, [PARTIDA_BS, SECCION_BS, CUENTA_CONTABLE, DESCRIPCION],
         add_total=False,
     )
-    cuenta_pivot, mes_cols, val_cols = _apply_bs_cumsum(cuenta_pivot, keep_months)
+    cuenta_pivot, mes_cols, val_cols = _apply_bs_cumsum(
+        cuenta_pivot, keep_months, last_month=last_month,
+    )
 
     # Build raw cuenta rows
     partida_list = cuenta_pivot[PARTIDA_BS].tolist()
@@ -385,7 +397,7 @@ def bs_summary(df, *, include_detail=True, pl_summary_df=None, strict_balance=Fa
     # Use ALL month columns for cumsum (same logic as BS accounts above),
     # then pick only the display columns.
     if pl_summary_df is not None:
-        utilidad_neta_all = extract_utilidad_neta(pl_summary_df, mes_cols)
+        utilidad_neta_all = extract_utilidad_neta(pl_summary_df, mes_cols, last_month=last_month)
         if utilidad_neta_all is not None:
             # Map month names to their cumulative values
             month_to_cum = dict(zip(mes_cols, utilidad_neta_all))

@@ -200,16 +200,36 @@ def sales_details(df: pd.DataFrame, with_total_row: bool = False,
 
 # ── BS detail helpers ────────────────────────────────────────────────────────
 
+def last_data_month(df: pd.DataFrame) -> int | None:
+    """Return the highest MES (1–12) present in *df*, or None if empty.
+
+    Used to distinguish closed months (cumsum carries balance forward) from
+    future months (should display as 0 / blank, not the last closed balance).
+    """
+    if df.empty or MES not in df.columns:
+        return None
+    max_mes = df[MES].max()
+    return int(max_mes) if pd.notna(max_mes) else None
+
+
 def _apply_bs_cumsum(
     pivot: pd.DataFrame,
     keep_months: list[str] | None = None,
+    last_month: int | None = None,
 ) -> tuple[pd.DataFrame, list[str], list[str]]:
     """Ensure 12 month columns exist, reorder to calendar order, cumsum, filter.
+
+    When *last_month* is given (1–12), month columns after that are zeroed out
+    AFTER cumsum so future months don't inherit the last closed balance.
 
     Returns (pivot_with_cumsum_applied, all_month_cols, display_month_cols).
     """
     pivot = ensure_month_columns(pivot)
     pivot[MONTH_NAMES_LIST] = pivot[MONTH_NAMES_LIST].cumsum(axis=1)
+    if last_month is not None:
+        future_cols = MONTH_NAMES_LIST[last_month:]  # MONTH_NAMES_LIST is 0-indexed JAN..DEC
+        if future_cols:
+            pivot[future_cols] = 0
     if keep_months is not None:
         display_cols = [c for c in MONTH_NAMES_LIST if c in keep_months]
     else:
@@ -237,11 +257,25 @@ def bs_detail_by_cuenta(df: pd.DataFrame, partidas: list[str], *,
     if exclude_cuenta_prefixes is not None:
         filtered = filtered[~filtered[CUENTA_CONTABLE].str.startswith(exclude_cuenta_prefixes)]
     pivot = pivot_by_month(filtered, [CUENTA_CONTABLE, DESCRIPCION], add_total=False)
-    pivot, mes_cols, display_cols = _apply_bs_cumsum(pivot, keep_months)
-    # Sort by last displayed month's cumulative value
-    sort_col = display_cols[-1] if display_cols else CUENTA_CONTABLE
+    last_month = last_data_month(df)
+    pivot, mes_cols, display_cols = _apply_bs_cumsum(
+        pivot, keep_months, last_month=last_month,
+    )
+    # Sort by last displayed month's cumulative value. When no keep_months
+    # filter is set, display_cols ends at DEC which would be zeroed for future
+    # months; fall back to the last month with actual data.
+    if keep_months is None and last_month is not None:
+        sort_col = MONTH_NAMES_LIST[last_month - 1]
+    else:
+        sort_col = display_cols[-1] if display_cols else CUENTA_CONTABLE
     if add_total_col:
-        pivot[TOTAL_COL] = pivot[mes_cols].iloc[:, -1] if mes_cols else 0
+        # TOTAL = cumulative as of the last month with actual data (not Dec,
+        # which would be 0 after future-month zeroing).
+        if mes_cols:
+            total_src_col = MONTH_NAMES_LIST[last_month - 1] if last_month else mes_cols[-1]
+            pivot[TOTAL_COL] = pivot[total_src_col]
+        else:
+            pivot[TOTAL_COL] = 0
         sort_col = TOTAL_COL
     pivot = pivot.sort_values(sort_col, ascending=False).reset_index(drop=True)
     # Drop month columns outside the requested period
@@ -270,10 +304,18 @@ def bs_top20_by_nit(df: pd.DataFrame, partidas: list[str], *,
     filtered[RAZON_SOCIAL] = filtered[RAZON_SOCIAL].fillna("SIN RAZON SOCIAL")
 
     pivot = pivot_by_month(filtered, [NIT, RAZON_SOCIAL], add_total=False)
-    pivot, mes_cols, display_cols = _apply_bs_cumsum(pivot, keep_months)
+    last_month = last_data_month(df)
+    pivot, mes_cols, display_cols = _apply_bs_cumsum(
+        pivot, keep_months, last_month=last_month,
+    )
 
-    # Sort by raw value of last displayed month (descending — largest positive first)
-    sort_col = display_cols[-1] if display_cols else NIT
+    # Sort by raw value of last displayed month (descending — largest positive first).
+    # When no keep_months filter is set, display_cols goes through DEC which would
+    # be zeroed for future months; fall back to the last month with actual data.
+    if keep_months is None and last_month is not None:
+        sort_col = MONTH_NAMES_LIST[last_month - 1]
+    else:
+        sort_col = display_cols[-1] if display_cols else NIT
     pivot = pivot.sort_values(sort_col, ascending=False).reset_index(drop=True)
 
     # Take top N
