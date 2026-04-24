@@ -200,16 +200,7 @@ src/
 
 ## Deployment
 
-### Build & Deploy Frontend
-```bash
-cd frontend && npm run build
-# Output goes to frontend/dist/ — nginx serves it
-```
-
-### Restart Backend
-```bash
-sudo systemctl restart flxcontabilidad
-```
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the staging + prod workflow, the `deploy.sh` script, environment layout, firewall rules, and agent-facing rules. Don't run `npm run build` / `systemctl restart` manually — always go through `./deploy.sh` so the deploy is reproducible and logged.
 
 ### Create Users
 ```bash
@@ -219,3 +210,4 @@ cd backend
 ../venv/bin/python manage.py reset-password --username john --password newpass
 ../venv/bin/python manage.py delete-user --username john
 ```
+Run these in the **staging tree only** if you're adding a non-admin test account — never mirror prod users to staging (see DEPLOYMENT.md).
