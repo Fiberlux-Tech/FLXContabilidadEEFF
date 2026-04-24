@@ -1,34 +1,22 @@
 # Deployment Guide
 
-Staging + production workflow for FLXContabilidad. Both environments run on the **same server** (`10.100.50.4`), distinguished by hostname.
+Staging + production workflow for FLXContabilidad. Both environments run on the **same server** (`10.100.50.4`), distinguished by port.
 
 ## Environments
 
-| Env     | Hostname                     | Code directory                                  | Branch | Service                            | Backend port |
-|---------|------------------------------|-------------------------------------------------|--------|------------------------------------|--------------|
-| Prod    | `flx.internal`               | `/home/administrator/FLXContabilidad/`          | `main` | `flxcontabilidad.service`          | 5000         |
-| Staging | `flx-staging.internal`       | `/home/administrator/FLXContabilidad-staging/`  | `dev`  | `flxcontabilidad-staging.service`  | 5001         |
+| Env     | URL                          | Code directory                                  | Branch | Service                            | Nginx port | Backend port |
+|---------|------------------------------|-------------------------------------------------|--------|------------------------------------|------------|--------------|
+| Prod    | `http://10.100.50.4`         | `/home/administrator/FLXContabilidad/`          | `main` | `flxcontabilidad.service`          | 80         | 5000         |
+| Staging | `http://10.100.50.4:8081`    | `/home/administrator/FLXContabilidad-staging/`  | `dev`  | `flxcontabilidad-staging.service`  | 8081       | 5001         |
 
-Both nginx vhosts listen on port 80; nginx routes by `server_name`. Both read the **same read-only SQL Server** for financial data, but use **separate SQLite auth databases** so logins don't leak between environments:
+No per-machine setup is required — both URLs work directly for anyone on the LAN.
+
+Both environments read the **same read-only SQL Server** for financial data, but use **separate SQLite auth databases** so logins don't leak between environments:
 
 - Prod auth DB: `/var/lib/flxcontabilidad/users.db`
 - Staging auth DB: `/home/administrator/flxcontabilidad-staging-data/users.db`
 
-Each environment has its own `SECRET_KEY`, so a session cookie signed by one is invalid on the other.
-
-## Per-machine setup (one-time, per user)
-
-The hostnames are resolved via `/etc/hosts` — there is no LAN DNS. Each machine that wants to use them needs these two lines:
-
-```
-10.100.50.4  flx.internal
-10.100.50.4  flx-staging.internal
-```
-
-- **macOS / Linux:** `sudo sh -c 'echo "10.100.50.4  flx.internal" >> /etc/hosts && echo "10.100.50.4  flx-staging.internal" >> /etc/hosts'`
-- **Windows:** edit `C:\Windows\System32\drivers\etc\hosts` as Administrator and add the two lines.
-
-**If you don't add these**, `http://10.100.50.4` still works for prod (the IP is kept in the prod `server_name`). You only need the hosts entries to browse staging at `http://flx-staging.internal`.
+Staging was seeded with a copy of the prod auth DB, so all prod users can log in with the same credentials. Each environment has its own `SECRET_KEY`, so a session cookie signed by one is invalid on the other.
 
 ## Golden rules
 
@@ -62,12 +50,15 @@ cd /home/administrator/FLXContabilidad-staging
 
 ### 3. Verify in staging
 
-Open `http://flx-staging.internal` in a browser. Exercise the changed feature. Check the golden path and at least one edge case. Compare numbers against prod if the change touches reports.
+Open `http://10.100.50.4:8081` in a browser. Exercise the changed feature. Check the golden path and at least one edge case. Compare numbers against prod if the change touches reports.
 
 If broken: fix on laptop → push to `dev` → re-run `deploy.sh` on staging. Repeat until good.
 
 ### 4. Promote to prod
 
+Preferred (reviewable): open a PR `dev` → `main` on GitHub, review the diff, merge there.
+
+Alternative (local, for trivial changes):
 ```bash
 # on laptop
 git checkout main
@@ -75,8 +66,6 @@ git pull origin main
 git merge dev
 git push origin main
 ```
-
-(Preferred: open a PR `dev` → `main` on GitHub, review the diff, merge there.)
 
 ### 5. Deploy to prod
 
@@ -86,7 +75,7 @@ cd /home/administrator/FLXContabilidad
 ./deploy.sh
 ```
 
-Verify `http://flx.internal` loads and the change is live.
+Verify `http://10.100.50.4` loads and the change is live.
 
 ## Rollback
 
@@ -109,10 +98,10 @@ When asked to "deploy", "push to staging", "release", "ship", etc., follow this 
 2. **Never `git push origin main` without explicit user approval in the current turn.** Pushing to `main` is a release action.
 3. **Never run `./deploy.sh` in the prod directory without explicit user approval in the current turn.**
 4. **Never edit files under `/home/administrator/FLXContabilidad/` directly on the server.** Agents make changes on the user's laptop working copy (the one Claude Code is running in) and let the user handle the git push. The server directories exist only for `git pull` + build + restart.
-5. **Never bypass staging.** If the user says "push this fix to prod", respond with: "I'll push to `dev` first so it lands in staging — verify at `flx-staging.internal`, then merge `dev` → `main` to release." Only skip staging if the user explicitly overrides with something like "hotfix straight to main, I've already verified".
+5. **Never bypass staging.** If the user says "push this fix to prod", respond with: "I'll push to `dev` first so it lands in staging — verify at `http://10.100.50.4:8081`, then merge `dev` → `main` to release." Only skip staging if the user explicitly overrides with something like "hotfix straight to main, I've already verified".
 6. **No `--no-verify`, no force-push to `main`, no `git reset --hard` on `main`.** Ever.
 7. **Accounting-logic changes are gated by the SACRED rules** ([CODING_PATTERNS.md](CODING_PATTERNS.md)). Flag them explicitly before committing.
-8. **After suggesting a deploy, remind the user of the verification step** ("open `flx-staging.internal` and check X"). Don't mark work complete until the user confirms staging looks right.
+8. **After suggesting a deploy, remind the user of the verification step** ("open `http://10.100.50.4:8081` and check X"). Don't mark work complete until the user confirms staging looks right.
 
 ## Server-side layout (for reference, already set up)
 
@@ -120,5 +109,6 @@ When asked to "deploy", "push to staging", "release", "ship", etc., follow this 
 - **Staging systemd unit:** `/etc/systemd/system/flxcontabilidad-staging.service` — same template as prod, pointed at the staging directory and `EnvironmentFile` at the staging `.env`
 - **Staging env files:** `/home/administrator/FLXContabilidad-staging/.env` (inherits most keys from prod — distinct `SECRET_KEY`, `SQLITE_DB_PATH`, `APP_ENV=staging`, `GUNICORN_BIND=127.0.0.1:5001`) and `.env.staging` (staging-specific CORS origins)
 - **Staging auth DB directory:** `/home/administrator/flxcontabilidad-staging-data/` — owned by `administrator:administrator`, mode `770`
-- **Nginx:** `/etc/nginx/sites-available/flx-prod` and `/etc/nginx/sites-available/flx-staging`, both symlinked into `sites-enabled/`. Prod matches `flx.internal`, `10.100.50.4`, `10.100.23.164`; staging matches `flx-staging.internal`
-- **`deploy.sh`:** identical script in both working tree roots — infers target service from its own directory name
+- **Nginx:** `/etc/nginx/sites-available/flx-prod` (listens on `:80`, serves prod dist, proxies `/api` + `/auth` to `:5000`) and `/etc/nginx/sites-available/flx-staging` (listens on `:8081`, serves staging dist, proxies to `:5001`). Both symlinked into `sites-enabled/`.
+- **`deploy.sh`:** identical script in both working tree roots — infers target service and branch from the directory name.
+
