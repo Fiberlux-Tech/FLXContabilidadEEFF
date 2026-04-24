@@ -16,7 +16,9 @@ Both environments read the **same read-only SQL Server** for financial data, but
 - Prod auth DB: `/var/lib/flxcontabilidad/users.db`
 - Staging auth DB: `/home/administrator/flxcontabilidad-staging-data/users.db`
 
-Staging was seeded with a copy of the prod auth DB, so all prod users can log in with the same credentials. Each environment has its own `SECRET_KEY`, so a session cookie signed by one is invalid on the other.
+Each environment has its own `SECRET_KEY`, so a session cookie signed by one is invalid on the other.
+
+**Staging auth is intentionally minimal — only the `admin` user exists there.** Finance team users live on prod only. Do **not** mirror prod users to staging: the point of the isolation is that staging is a developer sandbox, not a shadow production environment. If you ever need a non-admin account on staging for testing, create it explicitly with `backend/manage.py create-user` in the staging tree — do not copy `users.db` across.
 
 ## Golden rules
 
@@ -111,4 +113,19 @@ When asked to "deploy", "push to staging", "release", "ship", etc., follow this 
 - **Staging auth DB directory:** `/home/administrator/flxcontabilidad-staging-data/` — owned by `administrator:administrator`, mode `770`
 - **Nginx:** `/etc/nginx/sites-available/flx-prod` (listens on `:80`, serves prod dist, proxies `/api` + `/auth` to `:5000`) and `/etc/nginx/sites-available/flx-staging` (listens on `:8081`, serves staging dist, proxies to `:5001`). Both symlinked into `sites-enabled/`.
 - **`deploy.sh`:** identical script in both working tree roots — infers target service and branch from the directory name.
+- **Firewall (ufw):** allows incoming `80` (prod) and `8081` (staging). **Any new port exposed to the LAN needs `sudo ufw allow <port>/tcp`** or connections will time out silently.
+
+## Visual distinction between staging and prod
+
+The sidebar header on staging reads **"TEST WEB"** instead of "FLX Contabilidad" so you can tell at a glance which environment you're in. This is driven by `frontend/src/features/dashboard/Sidebar.tsx` reading `import.meta.env.VITE_APP_ENV` at **build time**.
+
+The value comes from **`frontend/.env.local`** in the staging working tree:
+
+```
+VITE_APP_ENV=staging
+```
+
+This file is gitignored (`.env.*` in root `.gitignore`) so it cannot leak into prod via a merge. Prod's working tree has no `.env.local`, so its build leaves `VITE_APP_ENV` undefined and the sidebar shows "FLX Contabilidad".
+
+If staging ever starts showing "FLX Contabilidad" instead of "TEST WEB", the first thing to check is that `frontend/.env.local` still exists in the staging tree and that `./deploy.sh` was re-run after creating it.
 
