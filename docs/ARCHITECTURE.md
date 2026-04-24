@@ -44,14 +44,17 @@ FLXContabilidad/
 ## Request Flow
 
 ```
-Browser (http://10.100.50.4)
+Browser (http://10.100.50.4           for prod,
+         http://10.100.50.4:8081      for staging)
     │
     ▼
-Nginx (port 80)
-    ├── Static files → frontend/dist/
-    ├── /auth/*      → Gunicorn (port 5000) → Flask auth.py
-    └── /api/*       → Gunicorn (port 5000) → Flask routes.py → services/
+Nginx (:80 prod, :8081 staging — one machine, split by port)
+    ├── Static files → frontend/dist/ in the matching working tree
+    ├── /auth/*      → Gunicorn (prod :5000 / staging :5001) → Flask auth.py
+    └── /api/*       → Gunicorn (prod :5000 / staging :5001) → Flask routes.py → services/
 ```
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for full staging + prod topology.
 
 ## API Endpoints
 
@@ -145,10 +148,11 @@ The accounting transformation pipeline is **sacred** — it must not be modified
 **Frontend is presentation-only** — it may sum pre-computed monthly values for quarterly display, merge rows for trailing 12M, format numbers, and paginate. It must never compute accounting subtotals, reclassify accounts, or override backend values.
 
 ## Infrastructure
-- **Server**: Ubuntu Linux at 10.100.50.4
-- **Process manager**: systemd (service: `flxcontabilidad.service`)
-- **WSGI server**: Gunicorn (3 sync workers, port 5000)
-- **Reverse proxy**: Nginx (port 80)
+- **Server**: Ubuntu Linux at 10.100.50.4 — hosts both prod and staging
+- **Process manager**: systemd (`flxcontabilidad.service` for prod, `flxcontabilidad-staging.service` for staging)
+- **WSGI server**: Gunicorn (3 sync workers; prod on :5000, staging on :5001)
+- **Reverse proxy**: Nginx (prod on :80, staging on :8081)
 - **Frontend build**: Vite (static files in `frontend/dist/`)
-- **Python**: 3.12 with venv
+- **Python**: 3.12 with venv (separate venv per working tree)
 - **Node**: For frontend build only (not needed at runtime)
+- **Deploy**: `./deploy.sh` in each working tree — see [DEPLOYMENT.md](DEPLOYMENT.md)
