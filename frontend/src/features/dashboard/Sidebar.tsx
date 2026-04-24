@@ -54,7 +54,9 @@ export default function Sidebar() {
         <aside className="w-[280px] bg-nav border-r border-nav-border flex flex-col min-h-screen shrink-0 overflow-y-auto">
             {/* Header */}
             <div className="px-5 pt-5 pb-4">
-                <h1 className="text-lg font-bold text-txt tracking-tight">FLX Contabilidad</h1>
+                <h1 className="text-lg font-bold text-txt tracking-tight">
+                    {import.meta.env.VITE_APP_ENV === 'staging' ? 'TEST WEB' : 'FLX Contabilidad'}
+                </h1>
                 <p className="text-[11px] text-txt-muted mt-0.5 font-medium">Estados Financieros</p>
             </div>
 

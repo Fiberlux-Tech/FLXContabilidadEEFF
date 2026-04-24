@@ -16,11 +16,13 @@ Both environments read the **same read-only SQL Server** for financial data, but
 - Prod auth DB: `/var/lib/flxcontabilidad/users.db`
 - Staging auth DB: `/home/administrator/flxcontabilidad-staging-data/users.db`
 
-Staging was seeded with a copy of the prod auth DB, so all prod users can log in with the same credentials. Each environment has its own `SECRET_KEY`, so a session cookie signed by one is invalid on the other.
+Each environment has its own `SECRET_KEY`, so a session cookie signed by one is invalid on the other.
+
+**Staging auth is intentionally minimal — only the `admin` user exists there.** Finance team users live on prod only. Do **not** mirror prod users to staging: the point of the isolation is that staging is a developer sandbox, not a shadow production environment. If you ever need a non-admin account on staging for testing, create it explicitly with `backend/manage.py create-user` in the staging tree — do not copy `users.db` across.
 
 ## Golden rules
 
-1. **Never edit code directly on the server.** Edit on laptop → push to GitHub → pull on server.
+1. **Always commit before running `./deploy.sh`.** Both working trees may be edited (via SSH / VSCode Remote-SSH), but `git status` must say *"working tree clean"* before deploying. Otherwise the build will bake uncommitted work into the bundle and the running site will be code that doesn't exist in git — impossible to reproduce or roll back.
 2. **Never push directly to `main`.** All changes land on `dev` first, get verified in staging, then merge to `main`.
 3. **Prod (`main`) always reflects what's running live.** If `git log main` disagrees with the site, something is wrong — investigate, don't paper over it.
 4. **Accounting logic changes need extra care.** Re-read [CODING_PATTERNS.md](CODING_PATTERNS.md) "SACRED" section before touching `backend/services/accounting/` or `backend/data/queries.py`.
@@ -29,11 +31,12 @@ Staging was seeded with a copy of the prod auth DB, so all prod users can log in
 
 ### 1. Make changes on `dev`
 
-On your laptop:
+Either on a local laptop clone or directly in the staging working tree on the server (via SSH / VSCode Remote-SSH). Either way:
 ```bash
 git checkout dev
 git pull origin dev
-# edit files, commit
+# edit files
+git add -A && git commit -m "..."
 git push origin dev
 ```
 
@@ -97,7 +100,7 @@ When asked to "deploy", "push to staging", "release", "ship", etc., follow this 
 1. **Confirm the target environment.** Ask "staging or production?" if not specified. Default to staging if in doubt.
 2. **Never `git push origin main` without explicit user approval in the current turn.** Pushing to `main` is a release action.
 3. **Never run `./deploy.sh` in the prod directory without explicit user approval in the current turn.**
-4. **Never edit files under `/home/administrator/FLXContabilidad/` directly on the server.** Agents make changes on the user's laptop working copy (the one Claude Code is running in) and let the user handle the git push. The server directories exist only for `git pull` + build + restart.
+4. **Edit only in the staging working tree (`/home/administrator/FLXContabilidad-staging/`), never in the prod tree (`/home/administrator/FLXContabilidad/`).** The prod tree exists only for `git pull` + build + restart. Any code change goes through staging via `dev`. Before running `./deploy.sh` in either tree, always verify `git status` shows a clean tree — uncommitted changes must be committed or stashed first.
 5. **Never bypass staging.** If the user says "push this fix to prod", respond with: "I'll push to `dev` first so it lands in staging — verify at `http://10.100.50.4:8081`, then merge `dev` → `main` to release." Only skip staging if the user explicitly overrides with something like "hotfix straight to main, I've already verified".
 6. **No `--no-verify`, no force-push to `main`, no `git reset --hard` on `main`.** Ever.
 7. **Accounting-logic changes are gated by the SACRED rules** ([CODING_PATTERNS.md](CODING_PATTERNS.md)). Flag them explicitly before committing.
@@ -111,4 +114,19 @@ When asked to "deploy", "push to staging", "release", "ship", etc., follow this 
 - **Staging auth DB directory:** `/home/administrator/flxcontabilidad-staging-data/` — owned by `administrator:administrator`, mode `770`
 - **Nginx:** `/etc/nginx/sites-available/flx-prod` (listens on `:80`, serves prod dist, proxies `/api` + `/auth` to `:5000`) and `/etc/nginx/sites-available/flx-staging` (listens on `:8081`, serves staging dist, proxies to `:5001`). Both symlinked into `sites-enabled/`.
 - **`deploy.sh`:** identical script in both working tree roots — infers target service and branch from the directory name.
+- **Firewall (ufw):** allows incoming `80` (prod) and `8081` (staging). **Any new port exposed to the LAN needs `sudo ufw allow <port>/tcp`** or connections will time out silently.
+
+## Visual distinction between staging and prod
+
+The sidebar header on staging reads **"TEST WEB"** instead of "FLX Contabilidad" so you can tell at a glance which environment you're in. This is driven by `frontend/src/features/dashboard/Sidebar.tsx` reading `import.meta.env.VITE_APP_ENV` at **build time**.
+
+The value comes from **`frontend/.env.local`** in the staging working tree:
+
+```
+VITE_APP_ENV=staging
+```
+
+This file is gitignored (`.env.*` in root `.gitignore`) so it cannot leak into prod via a merge. Prod's working tree has no `.env.local`, so its build leaves `VITE_APP_ENV` undefined and the sidebar shows "FLX Contabilidad".
+
+If staging ever starts showing "FLX Contabilidad" instead of "TEST WEB", the first thing to check is that `frontend/.env.local` still exists in the staging tree and that `./deploy.sh` was re-run after creating it.
 
