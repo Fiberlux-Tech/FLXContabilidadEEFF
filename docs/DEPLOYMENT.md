@@ -9,9 +9,26 @@ Staging + production workflow for FLXContabilidad. Both environments run on the 
 | Prod    | `flx.internal`               | `/home/administrator/FLXContabilidad/`          | `main` | `flxcontabilidad.service`          | 5000         |
 | Staging | `flx-staging.internal`       | `/home/administrator/FLXContabilidad-staging/`  | `dev`  | `flxcontabilidad-staging.service`  | 5001         |
 
-Both nginx vhosts listen on port 80; nginx routes by `server_name`. Both point at the **same database**.
+Both nginx vhosts listen on port 80; nginx routes by `server_name`. Both read the **same read-only SQL Server** for financial data, but use **separate SQLite auth databases** so logins don't leak between environments:
 
-Users must add both hostnames to `/etc/hosts` (or LAN DNS) pointing to `10.100.50.4`.
+- Prod auth DB: `/var/lib/flxcontabilidad/users.db`
+- Staging auth DB: `/home/administrator/flxcontabilidad-staging-data/users.db`
+
+Each environment has its own `SECRET_KEY`, so a session cookie signed by one is invalid on the other.
+
+## Per-machine setup (one-time, per user)
+
+The hostnames are resolved via `/etc/hosts` — there is no LAN DNS. Each machine that wants to use them needs these two lines:
+
+```
+10.100.50.4  flx.internal
+10.100.50.4  flx-staging.internal
+```
+
+- **macOS / Linux:** `sudo sh -c 'echo "10.100.50.4  flx.internal" >> /etc/hosts && echo "10.100.50.4  flx-staging.internal" >> /etc/hosts'`
+- **Windows:** edit `C:\Windows\System32\drivers\etc\hosts` as Administrator and add the two lines.
+
+**If you don't add these**, `http://10.100.50.4` still works for prod (the IP is kept in the prod `server_name`). You only need the hosts entries to browse staging at `http://flx-staging.internal`.
 
 ## Golden rules
 
@@ -97,14 +114,11 @@ When asked to "deploy", "push to staging", "release", "ship", etc., follow this 
 7. **Accounting-logic changes are gated by the SACRED rules** ([CODING_PATTERNS.md](CODING_PATTERNS.md)). Flag them explicitly before committing.
 8. **After suggesting a deploy, remind the user of the verification step** ("open `flx-staging.internal` and check X"). Don't mark work complete until the user confirms staging looks right.
 
-## One-time server setup (for reference, already done)
+## Server-side layout (for reference, already set up)
 
-- Second working tree: `git clone <repo> /home/administrator/FLXContabilidad-staging && cd $_ && git checkout dev`
-- Second systemd unit: `/etc/systemd/system/flxcontabilidad-staging.service` (copy of prod unit, port 5001, `WorkingDirectory` pointing at staging dir)
-- Nginx: two `server` blocks on port 80, one per `server_name` (`flx.internal`, `flx-staging.internal`), each with its own `root` and `proxy_pass` to the matching backend port
-- `/etc/hosts` on each user's machine:
-  ```
-  10.100.50.4  flx.internal
-  10.100.50.4  flx-staging.internal
-  ```
-- `deploy.sh` in each working tree (identical — it just runs `git pull`, rebuilds, restarts the service matching that directory)
+- **Staging working tree:** `/home/administrator/FLXContabilidad-staging/` on branch `dev`, its own venv at `venv/`
+- **Staging systemd unit:** `/etc/systemd/system/flxcontabilidad-staging.service` — same template as prod, pointed at the staging directory and `EnvironmentFile` at the staging `.env`
+- **Staging env files:** `/home/administrator/FLXContabilidad-staging/.env` (inherits most keys from prod — distinct `SECRET_KEY`, `SQLITE_DB_PATH`, `APP_ENV=staging`, `GUNICORN_BIND=127.0.0.1:5001`) and `.env.staging` (staging-specific CORS origins)
+- **Staging auth DB directory:** `/home/administrator/flxcontabilidad-staging-data/` — owned by `administrator:administrator`, mode `770`
+- **Nginx:** `/etc/nginx/sites-available/flx-prod` and `/etc/nginx/sites-available/flx-staging`, both symlinked into `sites-enabled/`. Prod matches `flx.internal`, `10.100.50.4`, `10.100.23.164`; staging matches `flx-staging.internal`
+- **`deploy.sh`:** identical script in both working tree roots — infers target service from its own directory name
