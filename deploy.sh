@@ -11,12 +11,12 @@ case "$DIR" in
   FLXContabilidad)
     SERVICE="flxcontabilidad"
     BRANCH="main"
-    URL="http://flx.internal"
+    URL="http://10.100.50.4"
     ;;
   FLXContabilidad-staging)
     SERVICE="flxcontabilidad-staging"
     BRANCH="dev"
-    URL="http://flx-staging.internal"
+    URL="http://10.100.50.4:8081"
     ;;
   *)
     echo "error: unknown working tree '$DIR' — deploy.sh only runs in FLXContabilidad or FLXContabilidad-staging" >&2
