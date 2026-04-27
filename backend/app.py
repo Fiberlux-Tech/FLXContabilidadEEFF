@@ -43,6 +43,10 @@ def create_app():
     app.config['SESSION_COOKIE_HTTPONLY'] = True
     app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
     # SESSION_COOKIE_SECURE intentionally False — app served over plain HTTP on internal network
+    # Per-environment cookie name so prod (port 80) and staging (port 8081) on the
+    # same host don't clobber each other's sessions (browsers key cookies by
+    # domain only, ignoring port).
+    app.config['SESSION_COOKIE_NAME'] = os.environ.get('SESSION_COOKIE_NAME', 'session')
 
     # CORS
     origins_raw = os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:5173')
