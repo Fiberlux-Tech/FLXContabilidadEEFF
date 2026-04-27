@@ -218,37 +218,45 @@ def _reindex_like(filtered: pd.DataFrame, reference: pd.DataFrame) -> pd.DataFra
 
     Label columns are preserved from *reference*; numeric month columns
     default to 0 so the table shape is identical regardless of filter.
+
+    Vectorized via pd.merge on a stringified composite key. Preserves
+    reference row order (left merge) and reference column order.
     """
     if filtered.empty or reference.empty:
-        # Return reference structure with zeroed numerics
         result = reference.copy()
         for col in result.select_dtypes(include="number").columns:
             result[col] = 0
         return result
 
-    # Identify label vs numeric columns from reference
     num_cols = list(reference.select_dtypes(include="number").columns)
     label_cols = [c for c in reference.columns if c not in num_cols]
 
-    # Build a lookup from label values → filtered numeric values
-    if label_cols:
-        # Create composite key for matching
-        ref_keys = reference[label_cols].astype(str).apply("|".join, axis=1)
-        filt_keys = filtered[label_cols].astype(str).apply("|".join, axis=1)
-        filt_lookup = dict(zip(filt_keys, filtered.index))
-    else:
-        ref_keys = reference.index
-        filt_lookup = {}
+    if not label_cols:
+        result = reference.copy()
+        for col in num_cols:
+            result[col] = 0.0
+        return result
+
+    _KEY = "__reindex_key__"
+    # .astype(str) normalizes category vs object dtype mismatches (e.g. CENTRO_COSTO).
+    ref_keys = reference[label_cols].astype(str).agg("|".join, axis=1)
+    filt_keys = filtered[label_cols].astype(str).agg("|".join, axis=1)
+
+    # Preserve a latent quirk of the prior implementation: when *filtered*
+    # contained duplicate label-keys, dict(zip(...)) kept only the LAST
+    # occurrence. Reproduce exactly via drop_duplicates(keep="last").
+    # Do not "fix" this here — this change is purely a perf rewrite.
+    filt_numeric = filtered[num_cols].copy()
+    filt_numeric[_KEY] = filt_keys.values
+    filt_numeric = filt_numeric.drop_duplicates(subset=[_KEY], keep="last")
+
+    # Left-merge from reference preserves reference row order exactly.
+    left = pd.DataFrame({_KEY: ref_keys.values})
+    merged = left.merge(filt_numeric, on=_KEY, how="left")
 
     result = reference.copy()
     for col in num_cols:
-        result[col] = 0.0
-
-    for i, key in enumerate(ref_keys):
-        if key in filt_lookup:
-            src_idx = filt_lookup[key]
-            for col in num_cols:
-                result.at[i, col] = filtered.at[src_idx, col]
+        result[col] = merged[col].fillna(0.0).to_numpy()
 
     return result
 
