@@ -15,11 +15,31 @@ from config.env_loader import load_env_config
 # Load layered .env → .env.{APP_ENV} configuration
 _app_env = load_env_config(_monorepo_root)
 
+import orjson
 from flask import Flask, request
+from flask.json.provider import JSONProvider
 from flask_cors import CORS
 
 from auth import auth_bp, init_db
 from constants import DEFAULT_DB_PATH
+
+
+class OrjsonProvider(JSONProvider):
+    """Flask JSON provider backed by orjson.
+
+    ~3-5x faster than stdlib json on the large nested dicts our P&L sections
+    return. _sanitize_value (in services/data_service.py) already converts
+    numpy types and NaN→None upstream, so the OPT flags below are defensive.
+    """
+    _OPTS = orjson.OPT_NON_STR_KEYS | orjson.OPT_SERIALIZE_NUMPY
+
+    def dumps(self, obj, **kwargs):
+        return orjson.dumps(obj, option=self._OPTS).decode("utf-8")
+
+    def loads(self, s, **kwargs):
+        if isinstance(s, str):
+            s = s.encode("utf-8")
+        return orjson.loads(s)
 
 
 def create_app():
@@ -29,6 +49,7 @@ def create_app():
     )
 
     app = Flask(__name__)
+    app.json = OrjsonProvider(app)
 
     secret_key = os.environ.get('SECRET_KEY')
     if not secret_key:
