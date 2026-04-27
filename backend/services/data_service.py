@@ -118,6 +118,8 @@ _caches: dict[str, LRUTTLCache] = {
     "pl_df": LRUTTLCache("pl_df"),
     "pl_stmt": LRUTTLCache("pl_stmt"),
     "pl_preagg": LRUTTLCache("pl_preagg"),
+    "pl_preagg_ex_ic": LRUTTLCache("pl_preagg_ex_ic"),
+    "pl_preagg_only_ic": LRUTTLCache("pl_preagg_only_ic"),
     "pl_sections": LRUTTLCache("pl_sections"),
 }
 
@@ -193,7 +195,7 @@ def _save_to_disk(company: str, year: int, df: pd.DataFrame, kind: str = "df_stm
 
 def _delete_disk_cache(company: str, year: int) -> None:
     """Delete disk cache files for a specific company/year."""
-    for kind in ("df_stmt", "preagg"):
+    for kind in ("df_stmt", "preagg", "preagg_ex_ic", "preagg_only_ic"):
         path = _stmt_disk_path(company, year, kind)
         path.unlink(missing_ok=True)
 
@@ -263,19 +265,20 @@ def _reindex_like(filtered: pd.DataFrame, reference: pd.DataFrame) -> pd.DataFra
 
 def _add_ic_variants(base: dict[str, pd.DataFrame],
                      df_stmt: pd.DataFrame,
-                     preagg: pd.DataFrame,
+                     preagg_ex_ic: pd.DataFrame,
+                     preagg_only_ic: pd.DataFrame,
                      compute_fn) -> dict[str, pd.DataFrame]:
     """Run *compute_fn* on IC-filtered subsets and merge results with *base*.
 
     For each key in *base*, adds key_ex_ic and key_only_ic variants
     reindexed to match the original row structure.
+
+    The IC-filtered preaggs are passed in (cached at the _ensure_pl_stmt_cached
+    layer) rather than recomputed here — they're pure functions of df_stmt and
+    were redundantly rebuilt 11× per report load before.
     """
     df_ex_ic = df_stmt[~df_stmt[IS_INTERCOMPANY]]
     df_only_ic = df_stmt[df_stmt[IS_INTERCOMPANY]]
-
-    # Re-preaggregate from filtered df_stmt (preagg doesn't carry IS_INTERCOMPANY)
-    preagg_ex_ic = preaggregate(df_ex_ic)
-    preagg_only_ic = preaggregate(df_only_ic)
 
     ex_ic_dfs = compute_fn(df_ex_ic, preagg_ex_ic)
     only_ic_dfs = compute_fn(df_only_ic, preagg_only_ic)
@@ -302,9 +305,10 @@ def _compute_ingresos_base(df_stmt, preagg):
     }
 
 
-def _compute_ingresos(df_stmt, preagg):
+def _compute_ingresos(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_ingresos_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_ingresos_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_ingresos_base)
 
 
 def _compute_costo_base(df_stmt, preagg):
@@ -314,9 +318,10 @@ def _compute_costo_base(df_stmt, preagg):
     }
 
 
-def _compute_costo(df_stmt, preagg):
+def _compute_costo(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_costo_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_costo_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_costo_base)
 
 
 def _compute_gasto_venta_base(df_stmt, preagg):
@@ -326,9 +331,10 @@ def _compute_gasto_venta_base(df_stmt, preagg):
     }
 
 
-def _compute_gasto_venta(df_stmt, preagg):
+def _compute_gasto_venta(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_gasto_venta_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_gasto_venta_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_gasto_venta_base)
 
 
 def _compute_gasto_admin_base(df_stmt, preagg):
@@ -338,9 +344,10 @@ def _compute_gasto_admin_base(df_stmt, preagg):
     }
 
 
-def _compute_gasto_admin(df_stmt, preagg):
+def _compute_gasto_admin(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_gasto_admin_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_gasto_admin_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_gasto_admin_base)
 
 
 def _compute_otros_egresos_base(df_stmt, preagg):
@@ -354,9 +361,10 @@ def _compute_otros_egresos_base(df_stmt, preagg):
     }
 
 
-def _compute_otros_egresos(df_stmt, preagg):
+def _compute_otros_egresos(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_otros_egresos_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_otros_egresos_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_otros_egresos_base)
 
 
 def _compute_dya_base(df_stmt, preagg):
@@ -368,9 +376,10 @@ def _compute_dya_base(df_stmt, preagg):
     }
 
 
-def _compute_dya(df_stmt, preagg):
+def _compute_dya(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_dya_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_dya_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_dya_base)
 
 
 def _compute_resultado_financiero_base(df_stmt, preagg):
@@ -381,9 +390,10 @@ def _compute_resultado_financiero_base(df_stmt, preagg):
     }
 
 
-def _compute_resultado_financiero(df_stmt, preagg):
+def _compute_resultado_financiero(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_resultado_financiero_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_resultado_financiero_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_resultado_financiero_base)
 
 
 def _compute_analysis_pl_finanzas_base(df_stmt, preagg):
@@ -400,9 +410,10 @@ def _compute_analysis_pl_finanzas_base(df_stmt, preagg):
     }
 
 
-def _compute_analysis_pl_finanzas(df_stmt, preagg):
+def _compute_analysis_pl_finanzas(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_analysis_pl_finanzas_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_analysis_pl_finanzas_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_analysis_pl_finanzas_base)
 
 
 def _compute_analysis_planilla_base(df_stmt, preagg):
@@ -412,9 +423,10 @@ def _compute_analysis_planilla_base(df_stmt, preagg):
     }
 
 
-def _compute_analysis_planilla(df_stmt, preagg):
+def _compute_analysis_planilla(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_analysis_planilla_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_analysis_planilla_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_analysis_planilla_base)
 
 
 def _compute_analysis_proveedores(df_stmt, preagg, *, ceco: str = "100.113.01"):
@@ -447,9 +459,10 @@ def _compute_analysis_flujo_caja_base(df_stmt, preagg):
     }
 
 
-def _compute_analysis_flujo_caja(df_stmt, preagg):
+def _compute_analysis_flujo_caja(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_analysis_flujo_caja_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg, _compute_analysis_flujo_caja_base)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_analysis_flujo_caja_base)
 
 
 SECTION_REGISTRY: dict[str, callable] = {
@@ -470,6 +483,7 @@ VALID_PL_SECTIONS = frozenset(SECTION_REGISTRY.keys())
 
 
 def compute_pl_section(df_stmt: pd.DataFrame, preagg: pd.DataFrame,
+                       preagg_ex_ic: pd.DataFrame, preagg_only_ic: pd.DataFrame,
                        section_name: str, **kwargs) -> dict[str, pd.DataFrame]:
     """Compute a specific P&L detail section from prepared data.
 
@@ -477,9 +491,15 @@ def compute_pl_section(df_stmt: pd.DataFrame, preagg: pd.DataFrame,
     Extra kwargs are forwarded only to sections that accept them (e.g. analysis_proveedores).
     """
     compute_fn = SECTION_REGISTRY[section_name]
+    # analysis_proveedores does not call _add_ic_variants — special-case by name
+    # so it keeps its (df_stmt, preagg, **kwargs) signature unchanged.
+    if section_name == "analysis_proveedores":
+        if kwargs:
+            return compute_fn(df_stmt, preagg, **kwargs)
+        return compute_fn(df_stmt, preagg)
     if kwargs:
-        return compute_fn(df_stmt, preagg, **kwargs)
-    return compute_fn(df_stmt, preagg)
+        return compute_fn(df_stmt, preagg, preagg_ex_ic, preagg_only_ic, **kwargs)
+    return compute_fn(df_stmt, preagg, preagg_ex_ic, preagg_only_ic)
 
 
 # ── DataFrame → JSON helpers ────────────────────────────────────────────
@@ -618,9 +638,16 @@ def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd
     """
     df_stmt, preagg, pl, records = _run_pl_summary_only(raw_current_full)
 
+    # Compute IC preaggs once for the whole loop (this is the cold "everything
+    # at once" path — no in-memory cache to populate).
+    preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
+    preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
+
     # Compute all detail sections
     for section_name in SECTION_REGISTRY:
-        section_dfs = compute_pl_section(df_stmt, preagg, section_name)
+        section_dfs = compute_pl_section(df_stmt, preagg,
+                                         preagg_ex_ic, preagg_only_ic,
+                                         section_name)
         for key, df in section_dfs.items():
             if key not in records:  # avoid duplicating keys across sections
                 records[key] = _df_to_records(df)
@@ -628,17 +655,22 @@ def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd
     return df_stmt, pl, records
 
 
-def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return (df_stmt, preagg) for a company/year, from cache or fresh load.
+def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Return (df_stmt, preagg, preagg_ex_ic, preagg_only_ic) for a company/year.
 
     Checks: in-memory cache → disk cache → SQL fetch + transform.
-    Also populates pl_df cache for BS dependency.
+    Also populates pl_df cache for BS dependency. The two IC-filtered preaggs
+    are cached alongside the base preagg so _add_ic_variants doesn't have to
+    re-aggregate on every section call.
     """
     if not force_refresh:
         df_stmt = _caches["pl_stmt"].get(company, year)
         preagg = _caches["pl_preagg"].get(company, year)
-        if df_stmt is not None and preagg is not None:
-            return df_stmt, preagg
+        preagg_ex_ic = _caches["pl_preagg_ex_ic"].get(company, year)
+        preagg_only_ic = _caches["pl_preagg_only_ic"].get(company, year)
+        if (df_stmt is not None and preagg is not None
+                and preagg_ex_ic is not None and preagg_only_ic is not None):
+            return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
 
         # Try disk cache
         df_stmt = _load_from_disk(company, year, "df_stmt")
@@ -646,14 +678,23 @@ def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = Fal
             preagg = _load_from_disk(company, year, "preagg")
             if preagg is None:
                 preagg = preaggregate(df_stmt)
+            preagg_ex_ic = _load_from_disk(company, year, "preagg_ex_ic")
+            preagg_only_ic = _load_from_disk(company, year, "preagg_only_ic")
+            if preagg_ex_ic is None or preagg_only_ic is None:
+                preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
+                preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
+                _save_to_disk(company, year, preagg_ex_ic, "preagg_ex_ic")
+                _save_to_disk(company, year, preagg_only_ic, "preagg_only_ic")
             _caches["pl_stmt"].set(company, year, df_stmt)
             _caches["pl_preagg"].set(company, year, preagg)
+            _caches["pl_preagg_ex_ic"].set(company, year, preagg_ex_ic)
+            _caches["pl_preagg_only_ic"].set(company, year, preagg_only_ic)
             _caches["df"].set(company, year, df_stmt)
             # Also compute and cache pl_df for BS dependency
             pl = pl_summary(df_stmt)
             pl = ensure_month_columns(pl)
             _caches["pl_df"].set(company, year, pl)
-            return df_stmt, preagg
+            return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
 
     # Full fetch + transform
     t0 = time.perf_counter()
@@ -663,17 +704,23 @@ def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = Fal
     logger.info("P&L fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
 
     df_stmt, preagg, pl, _ = _run_pl_summary_only(raw)
+    preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
+    preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
 
     _caches["pl_stmt"].set(company, year, df_stmt)
     _caches["pl_preagg"].set(company, year, preagg)
+    _caches["pl_preagg_ex_ic"].set(company, year, preagg_ex_ic)
+    _caches["pl_preagg_only_ic"].set(company, year, preagg_only_ic)
     _caches["df"].set(company, year, df_stmt)
     _caches["pl_df"].set(company, year, pl)
 
     # Persist to disk for future restarts
     _save_to_disk(company, year, df_stmt, "df_stmt")
     _save_to_disk(company, year, preagg, "preagg")
+    _save_to_disk(company, year, preagg_ex_ic, "preagg_ex_ic")
+    _save_to_disk(company, year, preagg_only_ic, "preagg_only_ic")
 
-    return df_stmt, preagg
+    return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
 
 
 def load_pl_data(company: str, year: int, *, force_refresh: bool = False) -> dict:
@@ -697,7 +744,7 @@ def load_pl_data(company: str, year: int, *, force_refresh: bool = False) -> dic
         _delete_disk_cache(company, year)
         _caches["pl_sections"].pop(company, year)
 
-    df_stmt, preagg = _ensure_pl_stmt_cached(company, year, force_refresh=force_refresh)
+    df_stmt, _, _, _ = _ensure_pl_stmt_cached(company, year, force_refresh=force_refresh)
 
     # Compute summaries from cached df_stmt
     pl = pl_summary(df_stmt)
@@ -725,6 +772,8 @@ def load_pl_data(company: str, year: int, *, force_refresh: bool = False) -> dic
     _prefetch_bs_background(company, year)
     # Pre-fetch previous year P&L in background for trailing 12M
     _prefetch_prev_year_background(company, year)
+    # Pre-compute the most-clicked P&L sections so navigation feels instant
+    _prefetch_pl_sections_background(company, year)
 
     return result
 
@@ -753,11 +802,13 @@ def load_pl_section(company: str, year: int, section: str,
 
     t0 = time.perf_counter()
 
-    # Get df_stmt + preagg (from memory, disk, or SQL)
-    df_stmt, preagg = _ensure_pl_stmt_cached(company, year, force_refresh=force_refresh)
+    # Get df_stmt + preaggs (from memory, disk, or SQL)
+    df_stmt, preagg, preagg_ex_ic, preagg_only_ic = _ensure_pl_stmt_cached(
+        company, year, force_refresh=force_refresh)
 
     # Compute the section
-    section_dfs = compute_pl_section(df_stmt, preagg, section, **kwargs)
+    section_dfs = compute_pl_section(
+        df_stmt, preagg, preagg_ex_ic, preagg_only_ic, section, **kwargs)
     section_records = {key: _df_to_records(df) for key, df in section_dfs.items()}
 
     # Cache the section result (accumulate into existing dict)
@@ -913,6 +964,50 @@ def _prefetch_prev_year_background(company: str, year: int) -> None:
 
         t = threading.Thread(target=worker, daemon=True)
         _bg_tasks[key] = t
+        t.start()
+
+
+# Hardcoded based on canonical P&L workflow: ingresos → costo → gasto_admin
+# are the universal first-clicked sections. No usage analytics in the codebase
+# to drive this dynamically. Excludes analysis_proveedores (requires a ceco
+# kwarg) and the heavier analysis_* sections (rarely first-clicked).
+PREFETCH_PL_SECTIONS = ("ingresos", "costo", "gasto_admin")
+
+_bg_pl_section_tasks: dict[tuple[str, int], threading.Thread] = {}
+
+
+def _prefetch_pl_sections_background(company: str, year: int) -> None:
+    """Pre-compute the most-clicked P&L sections in one daemon thread."""
+    key = (company, year)
+    with _bg_lock:
+        cached = _caches["pl_sections"].get(company, year) or {}
+        if all(s in cached for s in PREFETCH_PL_SECTIONS):
+            return
+        existing = _bg_pl_section_tasks.get(key)
+        if existing is not None and existing.is_alive():
+            return
+
+        def worker():
+            try:
+                for section in PREFETCH_PL_SECTIONS:
+                    # NO force_refresh — caller already invalidated, we just
+                    # populate the freshly-empty cache.
+                    load_pl_section(company, year, section)
+                logger.info(
+                    "Background P&L section pre-fetch done for %s/%d (%s)",
+                    company, year, ",".join(PREFETCH_PL_SECTIONS),
+                )
+            except Exception:
+                logger.exception(
+                    "Background P&L section pre-fetch failed for %s/%d",
+                    company, year,
+                )
+            finally:
+                with _bg_lock:
+                    _bg_pl_section_tasks.pop(key, None)
+
+        t = threading.Thread(target=worker, daemon=True)
+        _bg_pl_section_tasks[key] = t
         t.start()
 
 
