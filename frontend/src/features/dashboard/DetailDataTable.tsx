@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { ReportRow } from '@/types';
 import { formatNumber } from '@/utils/format';
 
@@ -16,6 +17,11 @@ export const DETAIL_HEADERS: Record<string, string> = {
 export const DETAIL_COLS = Object.keys(DETAIL_HEADERS);
 export const PAGE_SIZES: number[] = [25, 50, 100];
 export const DEFAULT_PAGE_SIZE = PAGE_SIZES[0];
+
+const COL_WIDTHS: Record<string, string> = {
+    ASIENTO: '90px',
+    RAZON_SOCIAL: '180px',
+};
 
 interface DetailDataTableProps {
     detailRows: ReportRow[];
@@ -37,7 +43,12 @@ export default function DetailDataTable({ detailRows, filteredRows, filters, upd
     return (
         <>
             <div className="overflow-x-auto">
-                <table className="rpt-table-auto">
+                <table className="rpt-table-auto" style={{ tableLayout: 'fixed', width: '100%' }}>
+                    <colgroup>
+                        {DETAIL_COLS.map(col => (
+                            <col key={col} style={COL_WIDTHS[col] ? { width: COL_WIDTHS[col] } : undefined} />
+                        ))}
+                    </colgroup>
                     <thead>
                         <tr>
                             {DETAIL_COLS.map(col => (
@@ -66,14 +77,25 @@ export default function DetailDataTable({ detailRows, filteredRows, filters, upd
                                 {DETAIL_COLS.map(col => {
                                     const val = row[col];
                                     const isSaldo = col === 'SALDO';
+                                    const isRazon = col === 'RAZON_SOCIAL';
                                     const numVal = isSaldo ? (val as number) : null;
+                                    const baseStyle: CSSProperties = isSaldo
+                                        ? { textAlign: 'right', fontWeight: 500 }
+                                        : { textAlign: 'left' };
+                                    if (isRazon) {
+                                        baseStyle.overflow = 'hidden';
+                                        baseStyle.textOverflow = 'ellipsis';
+                                        baseStyle.whiteSpace = 'nowrap';
+                                    }
+                                    const display = isSaldo ? formatNumber(val as number) : (val ?? '');
                                     return (
                                         <td
                                             key={col}
                                             className={isSaldo && numVal !== null && numVal < 0 ? 'rpt-neg' : ''}
-                                            style={isSaldo ? { textAlign: 'right', fontWeight: 500 } : { textAlign: 'left' }}
+                                            style={baseStyle}
+                                            title={isRazon ? String(val ?? '') : undefined}
                                         >
-                                            {isSaldo ? formatNumber(val as number) : (val ?? '')}
+                                            {display}
                                         </td>
                                     );
                                 })}
