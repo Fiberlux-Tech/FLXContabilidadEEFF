@@ -107,6 +107,9 @@ def create_app():
     from routes import api_bp
     app.register_blueprint(api_bp, url_prefix='/api')
 
+    from admin_routes import admin_bp
+    app.register_blueprint(admin_bp, url_prefix='/api/admin')
+
     # Response size logging for API endpoints
     _api_logger = logging.getLogger('flxcontabilidad.response')
 

@@ -5,6 +5,8 @@ export interface User {
   id: number;
   username: string;
   display_name: string;
+  is_admin: boolean;
+  allowed_views: string[];
 }
 
 export interface CompanyMeta {

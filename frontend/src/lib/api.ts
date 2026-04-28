@@ -81,4 +81,7 @@ export const api = {
 
     put: <T>(url: string, data: Record<string, unknown>) =>
         request<T>(url, { method: 'PUT', body: data as unknown as BodyInit }),
+
+    patch: <T>(url: string, data: Record<string, unknown>) =>
+        request<T>(url, { method: 'PATCH', body: data as unknown as BodyInit }),
 };

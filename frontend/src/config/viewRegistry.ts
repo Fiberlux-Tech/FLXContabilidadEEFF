@@ -10,7 +10,7 @@
  * from this registry — no other file needs manual updates for metadata.
  */
 
-export type ViewCategory = 'pl' | 'bs' | 'analysis' | 'uploads';
+export type ViewCategory = 'pl' | 'bs' | 'analysis' | 'uploads' | 'admin';
 
 export interface ViewEntry {
     id: string;
@@ -52,6 +52,9 @@ const VIEW_REGISTRY = [
 
     // ── Carga de Datos ─────────────────────────────────────────
     { id: 'upload_planilla',        title: 'Cargar Planilla',                    navLabel: 'Cargar Planilla',             category: 'uploads' },
+
+    // ── Administración (admin only) ────────────────────────────
+    { id: 'admin_users',            title: 'Usuarios y Permisos',                navLabel: 'Usuarios',                    category: 'admin' },
 ] as const satisfies readonly ViewEntry[];
 
 // ── Derived types ───────────────────────────────────────────────────────
@@ -73,12 +76,14 @@ export const PL_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'pl').map(v
 export const BS_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'bs').map(v => ({ view: v.id as View, label: v.navLabel }));
 export const ANALYSIS_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'analysis').map(v => ({ view: v.id as View, label: v.navLabel }));
 export const UPLOADS_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'uploads').map(v => ({ view: v.id as View, label: v.navLabel }));
+export const ADMIN_NAV_ITEMS = VIEW_REGISTRY.filter(v => v.category === 'admin').map(v => ({ view: v.id as View, label: v.navLabel }));
 
 // ── Category helpers ────────────────────────────────────────────────────
 
 const _BS_IDS: Set<string> = new Set(VIEW_REGISTRY.filter(v => v.category === 'bs').map(v => v.id));
 const _ANALYSIS_IDS: Set<string> = new Set(VIEW_REGISTRY.filter(v => v.category === 'analysis').map(v => v.id));
 const _UPLOADS_IDS: Set<string> = new Set(VIEW_REGISTRY.filter(v => v.category === 'uploads').map(v => v.id));
+const _ADMIN_IDS: Set<string> = new Set(VIEW_REGISTRY.filter(v => v.category === 'admin').map(v => v.id));
 
 export function isBsView(view: View): boolean {
     return _BS_IDS.has(view);
@@ -90,4 +95,8 @@ export function isAnalysisView(view: View): boolean {
 
 export function isUploadsView(view: View): boolean {
     return _UPLOADS_IDS.has(view);
+}
+
+export function isAdminView(view: View): boolean {
+    return _ADMIN_IDS.has(view);
 }
