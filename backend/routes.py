@@ -110,6 +110,10 @@ def _handle_data_errors(label: str):
             company, year = _validate_company_year(body)
             try:
                 return fn(body, company, year)
+            except RequestValidationError:
+                # Let the blueprint errorhandler format this as a 400 with
+                # the real message instead of masking it as a 500.
+                raise
             except (ValueError, KeyError) as exc:
                 return error(str(exc), 400)
             except (QueryError, DataValidationError) as exc:
