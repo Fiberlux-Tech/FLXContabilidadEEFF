@@ -33,6 +33,8 @@ class PnLReportData:
     otros_egresos_expanded: pd.DataFrame
     resultado_financiero_ingresos: pd.DataFrame  # 77* accounts, with TOTAL row
     resultado_financiero_gastos: pd.DataFrame    # non-77* accounts, with TOTAL row
+    diferencia_cambio_ingresos: pd.DataFrame     # 77.6* accounts, with TOTAL row
+    diferencia_cambio_gastos: pd.DataFrame       # 67.6* accounts, with TOTAL row
     dya_costo: pd.DataFrame                      # D&A - COSTO by CENTRO_COSTO, with TOTAL row
     dya_gasto: pd.DataFrame                      # D&A - GASTO by CENTRO_COSTO, with TOTAL row
     dya_costo_expanded: pd.DataFrame             # D&A - COSTO by CECO x CUENTA
@@ -53,6 +55,8 @@ class PdfReportData:
     otros_egresos: pd.DataFrame                     # OTROS EGRESOS by CECO (summary)
     resultado_financiero_ingresos: pd.DataFrame     # 77* accounts by CUENTA
     resultado_financiero_gastos: pd.DataFrame       # non-77* accounts by CUENTA
+    diferencia_cambio_ingresos: pd.DataFrame        # 77.6* accounts by CUENTA
+    diferencia_cambio_gastos: pd.DataFrame          # 67.6* accounts by CUENTA
     dya_costo: pd.DataFrame                         # D&A - COSTO by CECO
     dya_gasto: pd.DataFrame                         # D&A - GASTO by CECO
     bs_summary: pd.DataFrame                         # Balance sheet (2 value columns)

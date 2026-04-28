@@ -32,6 +32,7 @@ const SECTIONS: SectionDef[] = [
         { id: 'otros_egresos', label: 'Otros' },
         { id: 'dya', label: 'Depreciación y Amortización' },
         { id: 'resultado_financiero', label: 'Resultado Financiero' },
+        { id: 'diferencia_cambio', label: 'Diferencia de Cambio' },
     ]},
     { key: 'bs', title: 'Balance General', items: [
         { id: 'bs', label: 'Resumen' },

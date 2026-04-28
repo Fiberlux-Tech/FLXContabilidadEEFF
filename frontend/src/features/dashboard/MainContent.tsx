@@ -22,6 +22,7 @@ const PL_SECTION_VIEWS: Record<string, string> = {
     otros_egresos: 'otros_egresos',
     dya: 'dya',
     resultado_financiero: 'resultado_financiero',
+    diferencia_cambio: 'diferencia_cambio',
     analysis_pl_finanzas: 'analysis_pl_finanzas',
     analysis_planilla: 'analysis_planilla',
     analysis_proveedores: 'analysis_proveedores',

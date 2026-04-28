@@ -98,6 +98,12 @@ export interface ReportData {
   resultado_financiero_gastos?: ReportRow[];
   resultado_financiero_gastos_ex_ic?: ReportRow[];
   resultado_financiero_gastos_only_ic?: ReportRow[];
+  diferencia_cambio_ingresos?: ReportRow[];
+  diferencia_cambio_ingresos_ex_ic?: ReportRow[];
+  diferencia_cambio_ingresos_only_ic?: ReportRow[];
+  diferencia_cambio_gastos?: ReportRow[];
+  diferencia_cambio_gastos_ex_ic?: ReportRow[];
+  diferencia_cambio_gastos_only_ic?: ReportRow[];
   otros_ingresos_by_cuenta?: ReportRow[];
   otros_ingresos_by_cuenta_ex_ic?: ReportRow[];
   otros_ingresos_by_cuenta_only_ic?: ReportRow[];

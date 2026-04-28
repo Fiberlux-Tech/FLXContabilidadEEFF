@@ -29,6 +29,7 @@ const VIEW_REGISTRY = [
     { id: 'otros_egresos',          title: 'Otros',                                navLabel: 'Otros',                       category: 'pl' },
     { id: 'dya',                    title: 'Depreciacion y Amortizacion',         navLabel: 'Depreciacion y Amortizacion', category: 'pl' },
     { id: 'resultado_financiero',   title: 'Resultado Financiero',                navLabel: 'Resultado Financiero',        category: 'pl' },
+    { id: 'diferencia_cambio',      title: 'Diferencia de Cambio',                navLabel: 'Diferencia de Cambio',        category: 'pl' },
 
     // ── Balance General ─────────────────────────────────────────
     { id: 'bs',                     title: 'Balance General',                     navLabel: 'Resumen',                     category: 'bs' },

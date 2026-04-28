@@ -16,7 +16,7 @@ from pdf.reports import (
     build_column_names, build_bs_column_names,
     pl_summary_pdf, bs_summary_pdf, bs_detail_by_cuenta_pdf,
     sales_details_pdf, proyectos_especiales_pdf,
-    detail_by_ceco_pdf, detail_resultado_financiero_pdf,
+    detail_by_ceco_pdf, detail_resultado_financiero_pdf, detail_diferencia_cambio_pdf,
     bs_relacionadas_nit_pdf, bs_top_by_nit_pdf,
 )
 from models.models import PdfReportData, PeriodContext
@@ -50,6 +50,7 @@ def build_pdf_data(raw_current_full: pd.DataFrame, raw_prev: pd.DataFrame,
     pdf_otros_egresos = detail_by_ceco_pdf(ctx, ["OTROS EGRESOS"], ascending=True, with_total_row=True)
 
     pdf_res_fin = detail_resultado_financiero_pdf(ctx)
+    pdf_dif_cambio = detail_diferencia_cambio_pdf(ctx)
 
     pdf_dya_costo = detail_by_ceco_pdf(ctx, ["D&A - COSTO"], ascending=True, with_total_row=True)
     pdf_dya_gasto = detail_by_ceco_pdf(ctx, ["D&A - GASTO"], ascending=True, with_total_row=True)
@@ -112,6 +113,8 @@ def build_pdf_data(raw_current_full: pd.DataFrame, raw_prev: pd.DataFrame,
         otros_egresos=pdf_otros_egresos,
         resultado_financiero_ingresos=pdf_res_fin.ingresos,
         resultado_financiero_gastos=pdf_res_fin.gastos,
+        diferencia_cambio_ingresos=pdf_dif_cambio.ingresos,
+        diferencia_cambio_gastos=pdf_dif_cambio.gastos,
         dya_costo=pdf_dya_costo,
         dya_gasto=pdf_dya_gasto,
         bs_summary=pdf_bs,
