@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useReport } from '@/contexts/ReportContext';
-import { isBsView, isAnalysisView, isUploadsView, PL_NAV_ITEMS, BS_NAV_ITEMS, ANALYSIS_NAV_ITEMS, UPLOADS_NAV_ITEMS } from '@/config/viewRegistry';
+import {
+    isBsView, isAnalysisView, isUploadsView, isAdminView,
+    PL_NAV_ITEMS, BS_NAV_ITEMS, ANALYSIS_NAV_ITEMS, UPLOADS_NAV_ITEMS, ADMIN_NAV_ITEMS,
+} from '@/config/viewRegistry';
 import type { View } from '@/config/viewRegistry';
 import ExportButton from '@/components/ExportButton';
 
@@ -24,10 +27,74 @@ function NavButton({ view, label, currentView, onClick }: {
     );
 }
 
+interface NavSectionProps {
+    label: string;
+    icon: ReactNode;
+    items: readonly { view: View; label: string }[];
+    isOpen: boolean;
+    onToggle: () => void;
+    currentView: View;
+    onItemClick: (view: View) => void;
+}
 
+function NavSection({ label, icon, items, isOpen, onToggle, currentView, onItemClick }: NavSectionProps) {
+    if (items.length === 0) return null;
+    return (
+        <div className="mb-1">
+            <button
+                onClick={onToggle}
+                className="w-full flex items-center justify-between px-3 py-[7px] text-[13px] font-semibold text-nav-text hover:bg-nav-hover rounded-md transition-colors"
+            >
+                <span className="flex items-center gap-2.5">{icon}{label}</span>
+                <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${isOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+            </button>
+            {isOpen && (
+                <div className="space-y-0.5">
+                    {items.map(item => (
+                        <NavButton
+                            key={item.view}
+                            view={item.view}
+                            label={item.label}
+                            currentView={currentView}
+                            onClick={onItemClick}
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+const ICON_PL = (
+    <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+);
+const ICON_BS = (
+    <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+    </svg>
+);
+const ICON_ANALYSIS = (
+    <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+    </svg>
+);
+const ICON_UPLOAD = (
+    <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+    </svg>
+);
+const ICON_ADMIN = (
+    <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+    </svg>
+);
 
 export default function Sidebar() {
-    const { user, logout } = useAuth();
+    const { user, logout, canAccess } = useAuth();
     const {
         currentView, setCurrentView,
         reportData, exportFile, isExporting,
@@ -36,19 +103,68 @@ export default function Sidebar() {
     const isBs = isBsView(currentView);
     const isAnalysis = isAnalysisView(currentView);
     const isUploads = isUploadsView(currentView);
+    const isAdmin = isAdminView(currentView);
     const [plOpen, setPlOpen] = useState(true);
     const [bsOpen, setBsOpen] = useState(isBs);
     const [analysisOpen, setAnalysisOpen] = useState(isAnalysis);
     const [uploadsOpen, setUploadsOpen] = useState(isUploads);
+    const [adminOpen, setAdminOpen] = useState(isAdmin);
 
     // Auto-expand the section containing the active view
     const handleViewClick = (view: View) => {
-        if (isUploadsView(view)) setUploadsOpen(true);
+        if (isAdminView(view)) setAdminOpen(true);
+        else if (isUploadsView(view)) setUploadsOpen(true);
         else if (isAnalysisView(view)) setAnalysisOpen(true);
         else if (isBsView(view)) setBsOpen(true);
         else setPlOpen(true);
         setCurrentView(view);
     };
+
+    // Filter nav items by current user's permissions
+    const plItems = PL_NAV_ITEMS.filter(i => canAccess(i.view));
+    const bsItems = BS_NAV_ITEMS.filter(i => canAccess(i.view));
+    const analysisItems = ANALYSIS_NAV_ITEMS.filter(i => canAccess(i.view));
+    const uploadsItems = UPLOADS_NAV_ITEMS.filter(i => canAccess(i.view));
+    const adminItems = user?.is_admin ? ADMIN_NAV_ITEMS : [];
+
+    // Render dividers only between visible sections
+    const sections = [
+        { items: plItems, node: (
+            <NavSection
+                label="Estado de Resultados" icon={ICON_PL} items={plItems}
+                isOpen={plOpen} onToggle={() => setPlOpen(o => !o)}
+                currentView={currentView} onItemClick={handleViewClick}
+            />
+        )},
+        { items: bsItems, node: (
+            <NavSection
+                label="Balance General" icon={ICON_BS} items={bsItems}
+                isOpen={bsOpen} onToggle={() => setBsOpen(o => !o)}
+                currentView={currentView} onItemClick={handleViewClick}
+            />
+        )},
+        { items: analysisItems, node: (
+            <NavSection
+                label="Reportes Variados" icon={ICON_ANALYSIS} items={analysisItems}
+                isOpen={analysisOpen} onToggle={() => setAnalysisOpen(o => !o)}
+                currentView={currentView} onItemClick={handleViewClick}
+            />
+        )},
+        { items: uploadsItems, node: (
+            <NavSection
+                label="Carga de Datos" icon={ICON_UPLOAD} items={uploadsItems}
+                isOpen={uploadsOpen} onToggle={() => setUploadsOpen(o => !o)}
+                currentView={currentView} onItemClick={handleViewClick}
+            />
+        )},
+        { items: adminItems, node: (
+            <NavSection
+                label="Administración" icon={ICON_ADMIN} items={adminItems}
+                isOpen={adminOpen} onToggle={() => setAdminOpen(o => !o)}
+                currentView={currentView} onItemClick={handleViewClick}
+            />
+        )},
+    ].filter(s => s.items.length > 0);
 
     return (
         <aside className="w-[280px] bg-nav border-r border-nav-border flex flex-col min-h-screen shrink-0 overflow-y-auto">
@@ -62,138 +178,14 @@ export default function Sidebar() {
 
             {/* Navigation */}
             <nav className="flex-1 px-2">
-                {/* Estado de Resultados section */}
-                <div className="mb-1">
-                    <button
-                        onClick={() => setPlOpen(o => !o)}
-                        className="w-full flex items-center justify-between px-3 py-[7px] text-[13px] font-semibold text-nav-text hover:bg-nav-hover rounded-md transition-colors"
-                    >
-                        <span className="flex items-center gap-2.5">
-                            <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                            </svg>
-                            Estado de Resultados
-                        </span>
-                        <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${plOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                    </button>
-                    {plOpen && (
-                        <div className="space-y-0.5">
-                            {PL_NAV_ITEMS.map(item => (
-                                <NavButton
-                                    key={item.view}
-                                    view={item.view}
-                                    label={item.label}
-                                    currentView={currentView}
-                                    onClick={handleViewClick}
-                                />
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* Divider */}
-                <div className="h-px bg-nav-border mx-3 my-2" />
-
-                {/* Balance General section */}
-                <div className="mb-1">
-                    <button
-                        onClick={() => setBsOpen(o => !o)}
-                        className="w-full flex items-center justify-between px-3 py-[7px] text-[13px] font-semibold text-nav-text hover:bg-nav-hover rounded-md transition-colors"
-                    >
-                        <span className="flex items-center gap-2.5">
-                            <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
-                            </svg>
-                            Balance General
-                        </span>
-                        <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${bsOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                    </button>
-                    {bsOpen && (
-                        <div className="space-y-0.5">
-                            {BS_NAV_ITEMS.map(item => (
-                                <NavButton
-                                    key={item.view}
-                                    view={item.view}
-                                    label={item.label}
-                                    currentView={currentView}
-                                    onClick={handleViewClick}
-                                />
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* Divider */}
-                <div className="h-px bg-nav-border mx-3 my-2" />
-
-                {/* Analysis section */}
-                <div className="mb-1">
-                    <button
-                        onClick={() => setAnalysisOpen(o => !o)}
-                        className="w-full flex items-center justify-between px-3 py-[7px] text-[13px] font-semibold text-nav-text hover:bg-nav-hover rounded-md transition-colors"
-                    >
-                        <span className="flex items-center gap-2.5">
-                            <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                            </svg>
-                            Reportes Variados
-                        </span>
-                        <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${analysisOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                    </button>
-                    {analysisOpen && (
-                        <div className="space-y-0.5">
-                            {ANALYSIS_NAV_ITEMS.map(item => (
-                                <NavButton
-                                    key={item.view}
-                                    view={item.view}
-                                    label={item.label}
-                                    currentView={currentView}
-                                    onClick={handleViewClick}
-                                />
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* Divider */}
-                <div className="h-px bg-nav-border mx-3 my-2" />
-
-                {/* Carga de Datos section */}
-                <div className="mb-1">
-                    <button
-                        onClick={() => setUploadsOpen(o => !o)}
-                        className="w-full flex items-center justify-between px-3 py-[7px] text-[13px] font-semibold text-nav-text hover:bg-nav-hover rounded-md transition-colors"
-                    >
-                        <span className="flex items-center gap-2.5">
-                            <svg className="w-4 h-4 shrink-0 text-txt-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                            </svg>
-                            Carga de Datos
-                        </span>
-                        <svg className={`w-4 h-4 shrink-0 text-txt-muted transition-transform ${uploadsOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                    </button>
-                    {uploadsOpen && (
-                        <div className="space-y-0.5">
-                            {UPLOADS_NAV_ITEMS.map(item => (
-                                <NavButton
-                                    key={item.view}
-                                    view={item.view}
-                                    label={item.label}
-                                    currentView={currentView}
-                                    onClick={handleViewClick}
-                                />
-                            ))}
-                        </div>
-                    )}
-                </div>
+                {sections.map((section, idx) => (
+                    <div key={idx}>
+                        {section.node}
+                        {idx < sections.length - 1 && (
+                            <div className="h-px bg-nav-border mx-3 my-2" />
+                        )}
+                    </div>
+                ))}
             </nav>
 
             {/* Export */}

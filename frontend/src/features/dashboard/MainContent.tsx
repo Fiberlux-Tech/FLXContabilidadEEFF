@@ -8,6 +8,7 @@ import FlujoCajaTable from '@/features/dashboard/FlujoCajaTable';
 import PLNoteView from '@/features/dashboard/PLNoteView';
 import { useHeadcount } from '@/features/dashboard/useHeadcount';
 import UploadPlanilla from '@/features/dashboard/UploadPlanilla';
+import AdminUsersPage from '@/features/admin/AdminUsersPage';
 
 import { VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
 import { getDataKeyForTable } from '@/utils/dataKeyMapping';
@@ -42,9 +43,12 @@ export default function MainContent() {
     const plColumns = useMemo(() => getDisplayColumns('pl'), [getDisplayColumns]);
     const bsColumns = useMemo(() => getDisplayColumns('bs'), [getDisplayColumns]);
 
-    // Upload views don't need report data — render before loading/error checks
+    // Views that don't depend on report data — render before loading/error checks
     if (currentView === 'upload_planilla') {
         return <UploadPlanilla />;
+    }
+    if (currentView === 'admin_users') {
+        return <AdminUsersPage />;
     }
 
     if (isLoading) {

@@ -386,4 +386,45 @@
   .nav-item-active { @apply bg-nav-active text-accent font-semibold; }
   .nav-item-inactive { @apply text-nav-text hover:bg-nav-hover font-normal; }
   .nav-indicator { @apply absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[18px] bg-accent rounded-r-[3px]; }
+
+  /* ─── Admin: Usuarios y Permisos ─── */
+
+  /* Inline "Es administrador" toggle on user-row header */
+  .admin-inline {
+    @apply inline-flex items-center gap-2 px-2.5 py-1 border border-border rounded-md bg-surface
+           text-xs font-medium text-txt-secondary cursor-pointer select-none transition-colors;
+  }
+  .admin-inline input[type=checkbox] {
+    @apply w-3.5 h-3.5 cursor-pointer m-0;
+    accent-color: #D1453B;
+  }
+  .admin-inline.is-on { @apply bg-accent-light border-accent text-accent font-semibold; }
+  .admin-inline.is-disabled { @apply opacity-60 cursor-not-allowed; }
+
+  /* User row card */
+  .user-row { @apply bg-surface border border-border rounded-lg; }
+  .user-row > summary { list-style: none; cursor: pointer; }
+  .user-row > summary::-webkit-details-marker { display: none; }
+  .user-row .chev { transition: transform .15s; }
+  .user-row[open] .chev { transform: rotate(90deg); }
+
+  /* Permissions grid */
+  .perm-card { @apply bg-surface border border-border rounded-md; }
+  .perm-card-header {
+    @apply flex items-center justify-between px-3.5 py-2.5 bg-surface-alt border-b border-border;
+  }
+  .perm-card-title {
+    @apply text-[12px] font-semibold uppercase text-txt;
+    letter-spacing: .6px;
+  }
+  .perm-row {
+    @apply flex items-center justify-between px-3.5 py-2 text-[13px] text-txt-secondary cursor-pointer;
+    border-bottom: 1px dotted #efefef;
+  }
+  .perm-row:last-child { border-bottom: none; }
+  .perm-row:hover { @apply bg-surface-alt; }
+  .perm-row input[type=checkbox] {
+    @apply w-3.5 h-3.5 cursor-pointer;
+    accent-color: #D1453B;
+  }
 }

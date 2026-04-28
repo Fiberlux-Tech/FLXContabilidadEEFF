@@ -8,10 +8,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, jsonify, request, send_file, session
 
-from auth import login_required
+from auth import login_required, view_required, any_view_required, admin_required, require_view_or_403
 from helpers import ok, error
+from config.views import ALL_VIEW_IDS
 from config.calendar import MONTH_NAMES_SET, MIN_YEAR
 from config.company import VALID_COMPANIES, COMPANY_META, CONSOLIDADO
 from config.fields import (
@@ -35,6 +36,22 @@ from headcount_service import (
 
 api_bp = Blueprint('api', __name__)
 logger = logging.getLogger('flxcontabilidad.routes')
+
+# Drift guard: every PL section name must be a known view ID. Fails loudly
+# at module import if SECTION_REGISTRY adds a section that isn't a view.
+_unknown_sections = set(VALID_PL_SECTIONS) - set(ALL_VIEW_IDS)
+assert not _unknown_sections, (
+    f"VALID_PL_SECTIONS contains unknown view IDs: {_unknown_sections}. "
+    f"Add them to backend/config/views.py and frontend/src/config/viewRegistry.ts."
+)
+del _unknown_sections
+
+# In-memory map of generated export filename -> owning user_id. Populated by
+# the export handler, checked by the download handler. Not persisted — a
+# server restart drops the map and previously-generated files become
+# undownloadable, which is acceptable (users can regenerate).
+_export_owners: dict[str, int] = {}
+_export_owners_lock = threading.Lock()
 
 
 @api_bp.errorhandler(RequestValidationError)
@@ -71,7 +88,7 @@ def health():
 
 
 @api_bp.route('/cache-stats', methods=['GET'])
-@login_required
+@admin_required
 def cache_stats():
     """Return cache hit/miss counters and entry counts per store."""
     return ok(get_cache_stats())
@@ -118,7 +135,7 @@ def _timed_load(service_fn, body, company, year):
 # ── Data loading ────────────────────────────────────────────────────────
 
 @api_bp.route('/data/load', methods=['POST'])
-@login_required
+@any_view_required(['pl', 'bs'])
 @_handle_data_errors("loading data")
 def load_data(body, company, year):
     """Fetch and transform all report data for a company/year.
@@ -132,7 +149,7 @@ def load_data(body, company, year):
 
 
 @api_bp.route('/data/load-pl', methods=['POST'])
-@login_required
+@view_required('pl')
 @_handle_data_errors("loading P&L")
 def load_pl(body, company, year):
     """Fetch P&L data only (fast path). BS is pre-fetched in the background.
@@ -144,7 +161,7 @@ def load_pl(body, company, year):
 
 
 @api_bp.route('/data/load-bs', methods=['POST'])
-@login_required
+@view_required('bs')
 @_handle_data_errors("loading BS")
 def load_bs(body, company, year):
     """Fetch BS data. Requires P&L to be loaded first (for UTILIDAD NETA).
@@ -168,6 +185,11 @@ def load_pl_section_route(body, company, year):
     if not section or section not in VALID_PL_SECTIONS:
         raise RequestValidationError(
             f'Seccion invalida: {section!r}. Validas: {sorted(VALID_PL_SECTIONS)}')
+
+    # Section names are 1:1 with view IDs (asserted at module import).
+    forbidden = require_view_or_403(section)
+    if forbidden is not None:
+        return forbidden
 
     force_refresh = body.get('force_refresh', False)
 
@@ -200,12 +222,22 @@ _ALLOWED_FILTER_COLS = {
 @login_required
 @_handle_data_errors("getting detail")
 def get_detail(body, company, year):
-    """Return raw journal entries for a specific cell in the ingresos view.
+    """Return raw journal entries for a specific cell in a P&L view.
 
     Body: { "company": "FIBERLUX", "year": 2026,
+            "view_id": "ingresos",
             "partida": "INGRESOS ORDINARIOS", "month": "JAN",
             "filter_col": "CUENTA_CONTABLE", "filter_val": "7011101" }
     """
+    view_id = (body.get('view_id') or '').strip()
+    if not view_id:
+        raise RequestValidationError('view_id es requerido')
+    if view_id not in ALL_VIEW_IDS:
+        raise RequestValidationError(f'view_id invalido: {view_id}')
+    forbidden = require_view_or_403(view_id)
+    if forbidden is not None:
+        return forbidden
+
     partida = body.get('partida', '').strip()
     month = body.get('month', '').strip().upper() if body.get('month') else None
     filter_col = body.get('filter_col')
@@ -279,6 +311,12 @@ def _export_handler(export_type: str):
 
     try:
         result = _run_export(company, year, excel_only=_EXPORT_TYPE_MAP[export_type])
+        # Track ownership of generated files so other users can't download them.
+        user_id = session.get('user_id')
+        if user_id is not None:
+            with _export_owners_lock:
+                for fname in result.values():
+                    _export_owners[fname] = user_id
         return ok(result)
     except FileNotFoundError:
         return error('Archivo de reporte no encontrado', 404)
@@ -294,21 +332,21 @@ def _export_handler(export_type: str):
 
 
 @api_bp.route('/export/excel', methods=['POST'])
-@login_required
+@any_view_required(['pl', 'bs'])
 def export_excel():
     """Generate Excel report and return download filename."""
     return _export_handler('excel')
 
 
 @api_bp.route('/export/pdf', methods=['POST'])
-@login_required
+@any_view_required(['pl', 'bs'])
 def export_pdf():
     """Generate PDF report and return download filename."""
     return _export_handler('pdf')
 
 
 @api_bp.route('/export/all', methods=['POST'])
-@login_required
+@any_view_required(['pl', 'bs'])
 def export_all():
     """Generate both Excel and PDF reports."""
     return _export_handler('all')
@@ -317,7 +355,9 @@ def export_all():
 @api_bp.route('/export/download/<filename>', methods=['GET'])
 @login_required
 def download_file(filename):
-    """Download a generated report file."""
+    """Download a generated report file. Only the user who generated the
+    file (or an admin) can download it.
+    """
     cfg = get_config()
 
     # Sanitize: only allow basename, no path traversal
@@ -329,6 +369,13 @@ def download_file(filename):
     real_file = os.path.realpath(filepath)
     if not real_file.startswith(real_output + os.sep):
         return error('Acceso denegado', 403)
+
+    # Ownership check — admins bypass; everyone else must own the file.
+    if not session.get('is_admin'):
+        with _export_owners_lock:
+            owner_id = _export_owners.get(safe_name)
+        if owner_id != session.get('user_id'):
+            return error('Acceso denegado', 403)
 
     if not os.path.isfile(filepath):
         return error('Archivo no encontrado', 404)
@@ -358,7 +405,7 @@ def _validate_company_query() -> tuple[str, int]:
 
 
 @api_bp.route('/headcount', methods=['GET'])
-@login_required
+@view_required('analysis_planilla')
 def get_headcount():
     """Return headcount map for a company/year.
 
@@ -370,7 +417,7 @@ def get_headcount():
 
 
 @api_bp.route('/headcount/ym', methods=['GET'])
-@login_required
+@view_required('analysis_planilla')
 def get_headcount_ym():
     """Return headcount map keyed by year_month integers.
 
@@ -397,7 +444,7 @@ def get_headcount_ym():
 
 
 @api_bp.route('/admin/headcount/upload', methods=['POST'])
-@login_required
+@view_required('upload_planilla')
 def upload_headcount_csv():
     """Upload an employee-roster CSV to compute and store headcount per CECO.
 
@@ -425,7 +472,7 @@ def upload_headcount_csv():
 
 
 @api_bp.route('/headcount/roster', methods=['GET'])
-@login_required
+@view_required('analysis_planilla')
 def get_roster():
     """Return individual employees for a company/CECO/month.
 
