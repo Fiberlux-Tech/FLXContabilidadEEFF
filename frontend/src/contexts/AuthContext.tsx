@@ -7,6 +7,8 @@ interface IAuthContext {
     isAuthLoading: boolean;
     login: (username: string, password: string) => Promise<void>;
     logout: () => void;
+    canAccess: (viewId: string) => boolean;
+    refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<IAuthContext | null>(null);
@@ -42,8 +44,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
     }, []);
 
+    const refreshUser = useCallback(async () => {
+        try {
+            const data = await checkAuthStatus();
+            if (data.is_authenticated) setUser(data.user);
+        } catch (err) {
+            console.error('refreshUser failed', err);
+        }
+    }, []);
+
+    const canAccess = useCallback((viewId: string): boolean => {
+        if (!user) return false;
+        if (user.is_admin) return true;
+        return user.allowed_views.includes(viewId);
+    }, [user]);
+
     return (
-        <AuthContext.Provider value={{ user, isAuthLoading, login, logout }}>
+        <AuthContext.Provider value={{ user, isAuthLoading, login, logout, canAccess, refreshUser }}>
             {children}
         </AuthContext.Provider>
     );

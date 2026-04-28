@@ -2,8 +2,9 @@ import { createContext, useContext, useReducer, useCallback, useEffect, useMemo,
 import { api } from '@/lib/api';
 import { API_CONFIG } from '@/config';
 import type { ReportData, PLReportData, PLSectionData, BSReportData, CompanyMap, Granularity, PeriodRange, Quarter, DisplayColumn, MonthSource, ReportRow } from '@/types';
-import { isBsView, isAnalysisView } from '@/config/viewRegistry';
+import { isBsView, isAnalysisView, ALL_VIEW_IDS } from '@/config/viewRegistry';
 import type { View } from '@/config/viewRegistry';
+import { useAuth } from '@/contexts/AuthContext';
 import { getTrailing12MonthSources, buildDisplayColumns } from '@/utils/displayColumns';
 import { mergeTrailingRows, mergeTrailingDetailRows, mergeTrailingBSRows } from '@/utils/mergeTrailing';
 import { buildExpandedPLRows } from '@/utils/expandedPL';
@@ -255,6 +256,7 @@ const ReportContext = createContext<IReportContext | null>(null);
 
 export function ReportProvider({ children }: { children: React.ReactNode }) {
     const [state, dispatch] = useReducer(reportReducer, initialState);
+    const { user, canAccess } = useAuth();
 
     // Load companies on mount, default to NEXTNET
     useEffect(() => {
@@ -267,6 +269,19 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             dispatch({ type: 'SET_COMPANIES_ERROR', error: 'No se pudieron cargar las empresas. Verifique su conexion.' });
         });
     }, []);
+
+    // When the user object becomes available (login or refresh), redirect to a
+    // permitted view if the current one isn't accessible. This handles both the
+    // initial mount (state default is 'pl') and admin-side permission changes
+    // that arrive on the next /me refresh.
+    useEffect(() => {
+        if (!user) return;
+        if (canAccess(state.currentView)) return;
+        const fallback = ALL_VIEW_IDS.find(v => canAccess(v));
+        if (fallback) {
+            dispatch({ type: 'SET_VIEW', view: fallback as View });
+        }
+    }, [user, canAccess, state.currentView]);
 
     // ─── BS fetch (separate, on-demand) ────────────────────────
     const bsAbortRef = useRef<AbortController | null>(null);
@@ -560,7 +575,10 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             reportData: state.reportData,
             prevYearData: state.prevYearData,
             currentView: state.currentView,
-            setCurrentView: (v) => dispatch({ type: 'SET_VIEW', view: v }),
+            setCurrentView: (v) => {
+                if (!canAccess(v)) return;
+                dispatch({ type: 'SET_VIEW', view: v });
+            },
             isLoading: state.isLoading,
             error: state.error,
             companiesError: state.companiesError,
