@@ -56,6 +56,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const canAccess = useCallback((viewId: string): boolean => {
         if (!user) return false;
         if (user.is_admin) return true;
+        // admin_users is admin-only regardless of allowed_views contents
+        // (server enforces via @admin_required; this mirrors that on the UI).
+        if (viewId === 'admin_users') return false;
         return user.allowed_views.includes(viewId);
     }, [user]);
 
