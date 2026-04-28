@@ -11,7 +11,7 @@ interface AdminUser {
     created_at: string;
 }
 
-type SectionKey = 'pl' | 'bs' | 'analysis' | 'uploads';
+type SectionKey = 'pl' | 'bs' | 'analysis' | 'admin';
 
 interface SectionDef {
     key: SectionKey;
@@ -53,8 +53,10 @@ const SECTIONS: SectionDef[] = [
         { id: 'analysis_proveedores', label: 'Análisis de Proveedores' },
         { id: 'analysis_flujo_caja', label: 'Proxy Flujo de Caja' },
     ]},
-    { key: 'uploads', title: 'Carga de Datos', items: [
+    { key: 'admin', title: 'Administración', items: [
         { id: 'upload_planilla', label: 'Cargar Planilla' },
+        // 'admin_users' is admin-only and not grantable per-user — toggled via
+        // the "Es administrador" switch, so it doesn't appear in this grid.
     ]},
 ];
 
