@@ -66,13 +66,15 @@ function detailReducer(state: DetailState, action: DetailAction): DetailState {
 
 
 export default function PLNoteView({ tables, columns, year, showTitles }: PLNoteViewProps) {
-    const { selectedCompany, selectedYear, periodRange, trailingMonthSources, intercompanyFilter } = useReport();
+    const { selectedCompany, selectedYear, periodRange, trailingMonthSources, intercompanyFilter, currentView } = useReport();
     const [state, dispatch] = useReducer(detailReducer, detailInitialState);
 
     const companyRef = useRef(selectedCompany);
     const yearRef = useRef(selectedYear);
+    const viewIdRef = useRef(currentView);
     useEffect(() => { companyRef.current = selectedCompany; }, [selectedCompany]);
     useEffect(() => { yearRef.current = selectedYear; }, [selectedYear]);
+    useEffect(() => { viewIdRef.current = currentView; }, [currentView]);
 
     const filteredRows = useMemo(() => {
         const activeFilters = Object.entries(state.filters).filter(([, v]) => v.length > 0);
@@ -104,6 +106,7 @@ export default function PLNoteView({ tables, columns, year, showTitles }: PLNote
             const body: Record<string, unknown> = {
                 company: companyRef.current,
                 year: yr,
+                view_id: viewIdRef.current,
                 partida: sel.partida,
             };
             if (month) body.month = month;
