@@ -23,7 +23,7 @@ Each environment has its own `SECRET_KEY`, so a session cookie signed by one is 
 ## Golden rules
 
 1. **Always commit before running `./deploy.sh`.** Both working trees may be edited (via SSH / VSCode Remote-SSH), but `git status` must say *"working tree clean"* before deploying. Otherwise the build will bake uncommitted work into the bundle and the running site will be code that doesn't exist in git — impossible to reproduce or roll back.
-2. **Never push directly to `main`.** All changes land on `dev` first, get verified in staging, then merge to `main`.
+2. **Never push directly to `main`.** All changes land on `dev` first, get verified in staging, then promoted to `main` via `./promote.sh` (fast-forward only).
 3. **Prod (`main`) always reflects what's running live.** If `git log main` disagrees with the site, something is wrong — investigate, don't paper over it.
 4. **Accounting logic changes need extra care.** Re-read [CODING_PATTERNS.md](CODING_PATTERNS.md) "SACRED" section before touching `backend/services/accounting/` or `backend/data/queries.py`.
 
@@ -59,24 +59,19 @@ If broken: fix on laptop → push to `dev` → re-run `deploy.sh` on staging. Re
 
 ### 4. Promote to prod
 
-Preferred (reviewable): open a PR `dev` → `main` on GitHub, review the diff, merge there.
-
-Alternative (local, for trivial changes):
-```bash
-# on laptop
-git checkout main
-git pull origin main
-git merge dev
-git push origin main
-```
-
-### 5. Deploy to prod
-
-SSH to the server:
+Once staging looks right, promote with a single command from the prod tree:
 ```bash
 cd /home/administrator/FLXContabilidad
-./deploy.sh
+./promote.sh
 ```
+
+`promote.sh` does the full release in one shot:
+- Verifies you're on `main` with a clean tree and that local `main` matches `origin/main`
+- Refuses if `origin/dev` and `origin/main` have diverged (i.e. someone committed directly to `main`)
+- Shows the commits about to ship and asks for confirmation
+- Fast-forwards `main` to `origin/dev`, pushes `main`, then runs `./deploy.sh`
+
+No PRs, no GitHub UI, no merge commits — `main` is just a fast-forward pointer to whatever was verified on staging.
 
 Verify `http://10.100.50.4` loads and the change is live.
 
@@ -98,10 +93,10 @@ Then fix the bug on `dev`, verify in staging, re-promote. Do **not** leave prod 
 When asked to "deploy", "push to staging", "release", "ship", etc., follow this exactly:
 
 1. **Confirm the target environment.** Ask "staging or production?" if not specified. Default to staging if in doubt.
-2. **Never `git push origin main` without explicit user approval in the current turn.** Pushing to `main` is a release action.
-3. **Never run `./deploy.sh` in the prod directory without explicit user approval in the current turn.**
+2. **Never `git push origin main` or run `./promote.sh` without explicit user approval in the current turn.** Both are release actions.
+3. **Never run `./deploy.sh` in the prod directory without explicit user approval in the current turn.** (`./promote.sh` ends by calling it — same rule applies.)
 4. **Edit only in the staging working tree (`/home/administrator/FLXContabilidad-staging/`), never in the prod tree (`/home/administrator/FLXContabilidad/`).** The prod tree exists only for `git pull` + build + restart. Any code change goes through staging via `dev`. Before running `./deploy.sh` in either tree, always verify `git status` shows a clean tree — uncommitted changes must be committed or stashed first.
-5. **Never bypass staging.** If the user says "push this fix to prod", respond with: "I'll push to `dev` first so it lands in staging — verify at `http://10.100.50.4:8081`, then merge `dev` → `main` to release." Only skip staging if the user explicitly overrides with something like "hotfix straight to main, I've already verified".
+5. **Never bypass staging.** If the user says "push this fix to prod", respond with: "I'll push to `dev` first so it lands in staging — verify at `http://10.100.50.4:8081`, then run `./promote.sh` to release." Only skip staging if the user explicitly overrides with something like "hotfix straight to main, I've already verified".
 6. **No `--no-verify`, no force-push to `main`, no `git reset --hard` on `main`.** Ever.
 7. **Accounting-logic changes are gated by the SACRED rules** ([CODING_PATTERNS.md](CODING_PATTERNS.md)). Flag them explicitly before committing.
 8. **After suggesting a deploy, remind the user of the verification step** ("open `http://10.100.50.4:8081` and check X"). Don't mark work complete until the user confirms staging looks right.
@@ -114,6 +109,7 @@ When asked to "deploy", "push to staging", "release", "ship", etc., follow this 
 - **Staging auth DB directory:** `/home/administrator/flxcontabilidad-staging-data/` — owned by `administrator:administrator`, mode `770`
 - **Nginx:** `/etc/nginx/sites-available/flx-prod` (listens on `:80`, serves prod dist, proxies `/api` + `/auth` to `:5000`) and `/etc/nginx/sites-available/flx-staging` (listens on `:8081`, serves staging dist, proxies to `:5001`). Both symlinked into `sites-enabled/`.
 - **`deploy.sh`:** identical script in both working tree roots — infers target service and branch from the directory name.
+- **`promote.sh`:** prod-tree-only script that fast-forwards `main` to `origin/dev`, pushes, and chains into `./deploy.sh`. Replaces the old PR-based promotion flow.
 - **Firewall (ufw):** allows incoming `80` (prod) and `8081` (staging). **Any new port exposed to the LAN needs `sudo ufw allow <port>/tcp`** or connections will time out silently.
 
 ## Visual distinction between staging and prod
