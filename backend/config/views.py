@@ -12,7 +12,7 @@ import re
 ALL_VIEW_IDS: frozenset[str] = frozenset({
     # Estado de Resultados
     'pl', 'ingresos', 'costo', 'gasto_venta', 'gasto_admin',
-    'otros_egresos', 'dya', 'resultado_financiero',
+    'otros_egresos', 'dya', 'resultado_financiero', 'diferencia_cambio',
     # Balance General
     'bs', 'bs_efectivo', 'bs_cxc_comerciales', 'bs_cxc_otras', 'bs_cxc_relacionadas',
     'bs_ppe', 'bs_otros_activos', 'bs_cxp_comerciales', 'bs_cxp_otras', 'bs_cxp_relacionadas',
