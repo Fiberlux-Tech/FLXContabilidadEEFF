@@ -19,7 +19,7 @@ from accounting.transforms import (
 from accounting.aggregation import (
     preaggregate, pivot_by_month,
     detail_by_ceco, detail_ceco_by_cuenta,
-    detail_resultado_financiero,
+    detail_resultado_financiero, detail_diferencia_cambio,
     sales_details, proyectos_especiales,
     bs_detail_by_cuenta,
     bs_top20_by_nit,
@@ -139,6 +139,9 @@ def build_excel_data(raw: pd.DataFrame) -> PnLReportData:
         futures["res_fin"] = pool.submit(
             detail_resultado_financiero, df_stmt, preagg=preagg,
         )
+        futures["dif_cambio"] = pool.submit(
+            detail_diferencia_cambio, df_stmt, preagg=preagg,
+        )
         futures["sales"] = pool.submit(
             sales_details, df_stmt, with_total_row=True, preagg=preagg,
         )
@@ -178,6 +181,8 @@ def build_excel_data(raw: pd.DataFrame) -> PnLReportData:
         otros_egresos_expanded=results["otros_egresos_exp"],
         resultado_financiero_ingresos=results["res_fin"].ingresos,
         resultado_financiero_gastos=results["res_fin"].gastos,
+        diferencia_cambio_ingresos=results["dif_cambio"].ingresos,
+        diferencia_cambio_gastos=results["dif_cambio"].gastos,
         dya_costo=results["dya_costo"],
         dya_gasto=results["dya_gasto"],
         dya_costo_expanded=results["dya_costo_exp"],

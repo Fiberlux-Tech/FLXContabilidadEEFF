@@ -30,7 +30,7 @@ from accounting.aggregation import (
     ensure_month_columns, preaggregate, sales_details,
     proyectos_especiales,
     detail_by_ceco, detail_by_cuenta, detail_ceco_by_cuenta,
-    detail_resultado_financiero, detail_planilla,
+    detail_resultado_financiero, detail_diferencia_cambio, detail_planilla,
     detail_proveedores_by_ceco, ALLOWED_PROVEEDORES_CECOS,
     bs_detail_by_cuenta, bs_top20_by_nit, append_total_row,
 )
@@ -396,6 +396,20 @@ def _compute_resultado_financiero(df_stmt, preagg, preagg_ex_ic, preagg_only_ic)
                             _compute_resultado_financiero_base)
 
 
+def _compute_diferencia_cambio_base(df_stmt, preagg):
+    res = detail_diferencia_cambio(df_stmt, preagg=preagg)
+    return {
+        "diferencia_cambio_ingresos": res.ingresos,
+        "diferencia_cambio_gastos": res.gastos,
+    }
+
+
+def _compute_diferencia_cambio(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
+    base = _compute_diferencia_cambio_base(df_stmt, preagg)
+    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+                            _compute_diferencia_cambio_base)
+
+
 def _compute_analysis_pl_finanzas_base(df_stmt, preagg):
     return {
         "costo_by_cuenta": detail_ceco_by_cuenta(df_stmt, ["COSTO"], preagg=preagg),
@@ -473,6 +487,7 @@ SECTION_REGISTRY: dict[str, callable] = {
     "otros_egresos": _compute_otros_egresos,
     "dya": _compute_dya,
     "resultado_financiero": _compute_resultado_financiero,
+    "diferencia_cambio": _compute_diferencia_cambio,
     "analysis_pl_finanzas": _compute_analysis_pl_finanzas,
     "analysis_planilla": _compute_analysis_planilla,
     "analysis_proveedores": _compute_analysis_proveedores,

@@ -24,6 +24,8 @@ export function getDataKeyForTable(table: TableConfig, data: ReportData): keyof 
         ['planilla_by_cuenta', data.planilla_by_cuenta],
         ['resultado_financiero_ingresos', data.resultado_financiero_ingresos],
         ['resultado_financiero_gastos', data.resultado_financiero_gastos],
+        ['diferencia_cambio_ingresos', data.diferencia_cambio_ingresos],
+        ['diferencia_cambio_gastos', data.diferencia_cambio_gastos],
         ['otros_ingresos_by_cuenta', data.otros_ingresos_by_cuenta],
         ['participacion_by_cuenta', data.participacion_by_cuenta],
         ['provision_by_cuenta', data.provision_by_cuenta],

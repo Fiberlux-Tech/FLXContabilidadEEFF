@@ -190,6 +190,13 @@ def detail_resultado_financiero(df: pd.DataFrame,
     return split_resultado_financiero(res_fin)
 
 
+def detail_diferencia_cambio(df: pd.DataFrame,
+                             preagg: pd.DataFrame | None = None) -> ResultadoFinanciero:
+    """Split DIFERENCIA DE CAMBIO into ingresos (prefix '77.6') and gastos (prefix '67.6')."""
+    dif_cambio = detail_by_cuenta(df, ["DIFERENCIA DE CAMBIO"], preagg=preagg)
+    return split_resultado_financiero(dif_cambio)
+
+
 def sales_details(df: pd.DataFrame, with_total_row: bool = False,
                   preagg: pd.DataFrame | None = None) -> pd.DataFrame:
     """Pivot INGRESOS ORDINARIOS by CUENTA_CONTABLE + DESCRIPCION."""

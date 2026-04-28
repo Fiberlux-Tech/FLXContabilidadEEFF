@@ -220,4 +220,11 @@ NOTA_GROUPS: tuple[NotaGroup, ...] = (
         _pl_cuenta("Gastos Financieros", "resultado_financiero_gastos",
                    partida_labels=("RESULTADO FINANCIERO",)),
     )),
+
+    NotaGroup(entries=(
+        _pl_cuenta("Ingresos por Diferencia de Cambio", "diferencia_cambio_ingresos",
+                   partida_labels=("DIFERENCIA DE CAMBIO",)),
+        _pl_cuenta("Gastos por Diferencia de Cambio", "diferencia_cambio_gastos",
+                   partida_labels=("DIFERENCIA DE CAMBIO",)),
+    )),
 )

@@ -5,7 +5,7 @@ export { VIEW_TITLE_MAP } from '@/config/viewRegistry';
 
 // ── Note view table configs ──────────────────────────────────────────
 
-export type NoteView = 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'otros_egresos' | 'dya' | 'resultado_financiero'
+export type NoteView = 'ingresos' | 'costo' | 'gasto_venta' | 'gasto_admin' | 'otros_egresos' | 'dya' | 'resultado_financiero' | 'diferencia_cambio'
     | 'bs_efectivo' | 'bs_cxc_comerciales' | 'bs_cxc_otras' | 'bs_cxc_relacionadas'
     | 'bs_ppe' | 'bs_otros_activos'
     | 'bs_cxp_comerciales' | 'bs_cxp_otras' | 'bs_cxp_relacionadas'
@@ -60,6 +60,13 @@ export const VIEW_TABLE_CONFIGS: Record<NoteView, NoteViewConfig> = {
         tables: (d) => [
             { title: 'Ingresos Financieros', rows: d.resultado_financiero_ingresos ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
             { title: 'Gastos Financieros', rows: d.resultado_financiero_gastos ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'RESULTADO FINANCIERO', filterCol: 'CUENTA_CONTABLE' },
+        ],
+        labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
+    },
+    diferencia_cambio: {
+        tables: (d) => [
+            { title: 'Ingresos por Diferencia de Cambio', rows: d.diferencia_cambio_ingresos ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'DIFERENCIA DE CAMBIO', filterCol: 'CUENTA_CONTABLE' },
+            { title: 'Gastos por Diferencia de Cambio', rows: d.diferencia_cambio_gastos ?? [], labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'], headerLabels: ['Cuenta', 'Descripcion'], partida: 'DIFERENCIA DE CAMBIO', filterCol: 'CUENTA_CONTABLE' },
         ],
         labelKeys: ['CUENTA_CONTABLE', 'DESCRIPCION'],
     },

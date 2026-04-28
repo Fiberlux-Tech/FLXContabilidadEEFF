@@ -938,6 +938,7 @@ def export_to_pdf(output_path, data: PdfReportData):
         "sales_details", "proyectos_especiales",
         "costo", "gasto_venta",
         "gasto_admin", "resultado_financiero_ingresos", "resultado_financiero_gastos",
+        "diferencia_cambio_ingresos", "diferencia_cambio_gastos",
         "dya_costo", "dya_gasto",
     ]
     from config.nota import NOTA_GROUPS
