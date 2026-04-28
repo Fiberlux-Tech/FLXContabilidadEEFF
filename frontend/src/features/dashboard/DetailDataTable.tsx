@@ -21,6 +21,7 @@ export const DEFAULT_PAGE_SIZE = PAGE_SIZES[0];
 const COL_WIDTHS: Record<string, string> = {
     ASIENTO: '90px',
     RAZON_SOCIAL: '180px',
+    FECHA: '100px',
 };
 
 interface DetailDataTableProps {
