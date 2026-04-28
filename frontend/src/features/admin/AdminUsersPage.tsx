@@ -279,15 +279,6 @@ export default function AdminUsersPage() {
 
     return (
         <div className="flex-1 flex flex-col min-h-0">
-            <header className="bg-surface border-b border-border px-8 py-3 sticky top-0 z-30">
-                <div>
-                    <h2 className="text-xl font-bold text-txt tracking-tight">Usuarios y Permisos</h2>
-                    <p className="text-xs text-txt-muted mt-0.5">
-                        Administración — controla a qué vistas tiene acceso cada usuario.
-                    </p>
-                </div>
-            </header>
-
             <main className="flex-1 px-8 py-6 space-y-3 overflow-y-auto">
                 {loadError && (
                     <div className="bg-accent-light border border-border rounded-md p-4 text-sm text-negative">
