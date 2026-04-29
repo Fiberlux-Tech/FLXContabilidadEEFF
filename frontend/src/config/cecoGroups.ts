@@ -24,6 +24,10 @@ export function getCuentaPrefix(cuenta: string): string | null {
     return KNOWN_PREFIXES.includes(prefix) ? prefix : null;
 }
 
+export function getCuentaPrefixAny(cuenta: string | null | undefined): string {
+    return String(cuenta ?? '').substring(0, 2) || '—';
+}
+
 // ── Cuenta category structures ───────────────────────────────────────
 
 export interface CuentaCategory {

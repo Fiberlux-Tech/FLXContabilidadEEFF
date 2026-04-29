@@ -1,4 +1,4 @@
-import { useReducer, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useReducer, useRef, useEffect, useMemo, useCallback, useState } from 'react';
 import { api } from '@/lib/api';
 import { API_CONFIG } from '@/config';
 import { useReport } from '@/contexts/ReportContext';
@@ -68,6 +68,7 @@ function detailReducer(state: DetailState, action: DetailAction): DetailState {
 export default function PLNoteView({ tables, columns, year, showTitles }: PLNoteViewProps) {
     const { selectedCompany, selectedYear, periodRange, trailingMonthSources, intercompanyFilter, currentView } = useReport();
     const [state, dispatch] = useReducer(detailReducer, detailInitialState);
+    const [grouped, setGrouped] = useState(false);
 
     const companyRef = useRef(selectedCompany);
     const yearRef = useRef(selectedYear);
@@ -200,6 +201,7 @@ export default function PLNoteView({ tables, columns, year, showTitles }: PLNote
                 setPage={(fn) => dispatch({ type: 'SET_PAGE', page: fn(state.page) })}
                 pageSize={state.pageSize}
                 setPageSize={(size) => dispatch({ type: 'SET_PAGE_SIZE', size })}
+                grouped={grouped}
             />
         );
     };
@@ -223,11 +225,21 @@ export default function PLNoteView({ tables, columns, year, showTitles }: PLNote
                 onClose={() => dispatch({ type: 'CLEAR_SELECTION' })}
                 title={`Detalle: ${state.selection?.label ?? ''}`}
                 headerActions={
-                    <ExportButton
-                        variant="excel"
-                        onClick={handleExportDetail}
-                        disabled={filteredRows.length === 0 || state.isLoadingDetail}
-                    />
+                    <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-2 text-xs text-txt-secondary cursor-pointer select-none">
+                            <input
+                                type="checkbox"
+                                checked={grouped}
+                                onChange={e => setGrouped(e.target.checked)}
+                            />
+                            Agrupar por cuenta (2 díg.)
+                        </label>
+                        <ExportButton
+                            variant="excel"
+                            onClick={handleExportDetail}
+                            disabled={filteredRows.length === 0 || state.isLoadingDetail}
+                        />
+                    </div>
                 }
             >
                 {renderDetailContent()}
