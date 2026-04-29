@@ -54,13 +54,12 @@ export default function FinancialTable({
                         const clickable = !!onLabelClick && (isLabelClickable?.(label) ?? true);
 
                         return (
-                            <tr key={idx} className={rowClass}>
-                                <td
-                                    className={`rpt-sticky ${clickable ? 'cursor-pointer hover:underline' : ''}`}
-                                    onClick={clickable ? () => onLabelClick!(label) : undefined}
-                                >
-                                    {label}
-                                </td>
+                            <tr
+                                key={idx}
+                                className={`${rowClass} ${clickable ? 'cursor-pointer hover:bg-accent-light' : ''}`}
+                                onClick={clickable ? () => onLabelClick!(label) : undefined}
+                            >
+                                <td className="rpt-sticky">{label}</td>
                                 {columns.map(col => {
                                     const val = getCellValue(row, col);
                                     return (
