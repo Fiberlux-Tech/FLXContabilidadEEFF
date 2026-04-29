@@ -20,9 +20,15 @@ export const PAGE_SIZES: number[] = [25, 50, 100];
 export const DEFAULT_PAGE_SIZE = PAGE_SIZES[0];
 
 const COL_WIDTHS: Record<string, string> = {
-    ASIENTO: '90px',
-    RAZON_SOCIAL: '180px',
-    FECHA: '100px',
+    ASIENTO: '110px',
+    CUENTA_CONTABLE: '110px',
+    DESCRIPCION: '260px',
+    NIT: '120px',
+    RAZON_SOCIAL: '220px',
+    CENTRO_COSTO: '110px',
+    DESC_CECO: '160px',
+    FECHA: '110px',
+    SALDO: '110px',
 };
 
 interface DetailDataTableProps {
@@ -65,23 +71,22 @@ function renderDataRow(row: ReportRow, key: string | number): ReactNode {
             {DETAIL_COLS.map(col => {
                 const val = row[col];
                 const isSaldo = col === 'SALDO';
-                const isRazon = col === 'RAZON_SOCIAL';
                 const numVal = isSaldo ? (val as number) : null;
                 const baseStyle: CSSProperties = isSaldo
                     ? { textAlign: 'right', fontWeight: 500 }
-                    : { textAlign: 'left' };
-                if (isRazon) {
-                    baseStyle.overflow = 'hidden';
-                    baseStyle.textOverflow = 'ellipsis';
-                    baseStyle.whiteSpace = 'nowrap';
-                }
+                    : {
+                        textAlign: 'left',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                    };
                 const display = isSaldo ? formatNumber(val as number) : (val ?? '');
                 return (
                     <td
                         key={col}
                         className={isSaldo && numVal !== null && numVal < 0 ? 'rpt-neg' : ''}
                         style={baseStyle}
-                        title={isRazon ? String(val ?? '') : undefined}
+                        title={!isSaldo ? String(val ?? '') : undefined}
                     >
                         {display}
                     </td>
@@ -126,7 +131,7 @@ export default function DetailDataTable({ detailRows, filteredRows, filters, upd
             )}
 
             <div className="overflow-x-auto">
-                <table className="rpt-table-auto" style={{ tableLayout: 'fixed', width: '100%' }}>
+                <table className="rpt-table-auto" style={{ tableLayout: 'fixed', width: '100%', minWidth: '1310px' }}>
                     <colgroup>
                         {DETAIL_COLS.map(col => (
                             <col key={col} style={COL_WIDTHS[col] ? { width: COL_WIDTHS[col] } : undefined} />
