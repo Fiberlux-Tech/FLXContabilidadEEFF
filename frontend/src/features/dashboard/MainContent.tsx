@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import { useReport, isBsView } from '@/contexts/ReportContext';
+import { useAuth } from '@/contexts/AuthContext';
+import type { View } from '@/config/viewRegistry';
 import FinancialTable from '@/features/dashboard/FinancialTable';
 import ExpandableFinancialTable from '@/features/dashboard/ExpandableFinancialTable';
 import PlanillaTable from '@/features/dashboard/PlanillaTable';
@@ -12,6 +14,24 @@ import AdminUsersPage from '@/features/admin/AdminUsersPage';
 
 import { VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
 import { getDataKeyForTable } from '@/utils/dataKeyMapping';
+
+/** PARTIDA_PL labels in the RESUMEN that link to a detail tab. Subtotal/bold
+ *  rows (UTILIDAD BRUTA, INGRESOS TOTALES, etc.) and partidas without a
+ *  dedicated tab (PARTICIPACION, PROVISION INCOBRABLE, IMPUESTO A LA RENTA,
+ *  POR CLASIFICAR) are intentionally absent. */
+const PL_LABEL_TO_VIEW: Record<string, View> = {
+    'INGRESOS ORDINARIOS': 'ingresos',
+    'INGRESOS PROYECTOS': 'ingresos',
+    'COSTO': 'costo',
+    'D&A - COSTO': 'dya',
+    'GASTO VENTA': 'gasto_venta',
+    'GASTO ADMIN': 'gasto_admin',
+    'D&A - GASTO': 'dya',
+    'OTROS INGRESOS': 'otros_egresos',
+    'OTROS EGRESOS': 'otros_egresos',
+    'RESULTADO FINANCIERO': 'resultado_financiero',
+    'DIFERENCIA DE CAMBIO': 'diferencia_cambio',
+};
 
 /** P&L views that require on-demand section loading. */
 const PL_SECTION_VIEWS: Record<string, string> = {
@@ -35,8 +55,9 @@ export default function MainContent() {
         getDisplayColumns, periodRange, getMergedRows, getMergedDetailRows,
         isBsLoading, bsError, selectedCompany, selectedYear,
         trailingMonthSources, loadedSections,
-        proveedoresCeco,
+        proveedoresCeco, setCurrentView,
     } = useReport();
+    const { canAccess } = useAuth();
 
     const { headcount: headcountMap } = useHeadcount(selectedCompany, selectedYear, periodRange);
 
@@ -246,6 +267,14 @@ export default function MainContent() {
                     labelKey="PARTIDA_PL"
                     showTotal
                     variant="pl"
+                    isLabelClickable={(label) => {
+                        const target = PL_LABEL_TO_VIEW[label];
+                        return !!target && canAccess(target);
+                    }}
+                    onLabelClick={(label) => {
+                        const target = PL_LABEL_TO_VIEW[label];
+                        if (target) setCurrentView(target);
+                    }}
                 />
             );
         }

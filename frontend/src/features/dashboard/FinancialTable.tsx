@@ -9,9 +9,14 @@ interface FinancialTableProps {
     labelKey: string;
     showTotal?: boolean;
     variant: 'pl' | 'bs';
+    onLabelClick?: (label: string) => void;
+    isLabelClickable?: (label: string) => boolean;
 }
 
-export default function FinancialTable({ rows, columns, labelKey, showTotal = false, variant }: FinancialTableProps) {
+export default function FinancialTable({
+    rows, columns, labelKey, showTotal = false, variant,
+    onLabelClick, isLabelClickable,
+}: FinancialTableProps) {
     const boldSet = variant === 'pl' ? BOLD_ROWS_PL : BOLD_ROWS_BS;
 
     return (
@@ -46,9 +51,16 @@ export default function FinancialTable({ rows, columns, labelKey, showTotal = fa
 
                         const rowClass = isBold ? 'rpt-row-bold' : isSection ? 'rpt-row-section' : isIcRow ? 'rpt-row-ic' : 'rpt-row-data';
 
+                        const clickable = !!onLabelClick && (isLabelClickable?.(label) ?? true);
+
                         return (
                             <tr key={idx} className={rowClass}>
-                                <td className="rpt-sticky">{label}</td>
+                                <td
+                                    className={`rpt-sticky ${clickable ? 'cursor-pointer hover:underline' : ''}`}
+                                    onClick={clickable ? () => onLabelClick!(label) : undefined}
+                                >
+                                    {label}
+                                </td>
                                 {columns.map(col => {
                                     const val = getCellValue(row, col);
                                     return (
