@@ -56,7 +56,7 @@ export default function FinancialTable({
                         return (
                             <tr
                                 key={idx}
-                                className={`${rowClass} ${clickable ? 'cursor-pointer hover:bg-accent-light' : ''}`}
+                                className={`${rowClass} ${clickable ? 'rpt-row-clickable' : ''}`}
                                 onClick={clickable ? () => onLabelClick!(label) : undefined}
                             >
                                 <td className="rpt-sticky">{label}</td>

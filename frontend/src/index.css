@@ -301,6 +301,11 @@
     background: white;
   }
 
+  /* ─── Clickable row (PL Resumen → drill into detail tab) ─── */
+  .rpt-row-clickable { @apply cursor-pointer; }
+  .rpt-row-clickable:hover td,
+  .rpt-row-clickable:hover .rpt-sticky { @apply bg-accent-light; }
+
   /* ═══════════════════════════════════════════════════════════════
      Non-table components (kept as-is)
      ═══════════════════════════════════════════════════════════════ */
