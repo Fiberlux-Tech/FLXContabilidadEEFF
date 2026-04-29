@@ -20,15 +20,15 @@ export const PAGE_SIZES: number[] = [25, 50, 100];
 export const DEFAULT_PAGE_SIZE = PAGE_SIZES[0];
 
 const COL_WIDTHS: Record<string, string> = {
-    ASIENTO: '110px',
-    CUENTA_CONTABLE: '110px',
-    DESCRIPCION: '260px',
-    NIT: '120px',
-    RAZON_SOCIAL: '220px',
-    CENTRO_COSTO: '110px',
-    DESC_CECO: '160px',
-    FECHA: '110px',
-    SALDO: '110px',
+    ASIENTO: '9%',
+    CUENTA_CONTABLE: '9%',
+    DESCRIPCION: '22%',
+    NIT: '10%',
+    RAZON_SOCIAL: '18%',
+    CENTRO_COSTO: '9%',
+    DESC_CECO: '11%',
+    FECHA: '8%',
+    SALDO: '9%',
 };
 
 interface DetailDataTableProps {
@@ -131,7 +131,7 @@ export default function DetailDataTable({ detailRows, filteredRows, filters, upd
             )}
 
             <div className="overflow-x-auto">
-                <table className="rpt-table-auto" style={{ tableLayout: 'fixed', width: '100%', minWidth: '1310px' }}>
+                <table className="rpt-table-auto" style={{ tableLayout: 'fixed', width: '100%' }}>
                     <colgroup>
                         {DETAIL_COLS.map(col => (
                             <col key={col} style={COL_WIDTHS[col] ? { width: COL_WIDTHS[col] } : undefined} />
