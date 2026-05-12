@@ -11,6 +11,7 @@ Detail P&L sections (ingresos, costo, etc.) are computed lazily via
 load_pl_section() — only when the user navigates to that view.
 """
 
+import fcntl
 import logging
 import time
 import threading
@@ -106,6 +107,81 @@ class LRUTTLCache:
         """Return hit/miss counters and current entry count."""
         with self._lock:
             return {"hits": self.hits, "misses": self.misses, "entries": len(self._store)}
+
+
+# ── Single-flight: deduplicate concurrent fetches ─────────────────────
+#
+# When the in-memory + disk cache both miss, multiple threads landing on
+# the same (company, year, kind) must not all fire the same SQL query.
+# A per-key lock serializes them: the first thread fetches and populates
+# the cache; later threads re-check the cache under the lock and return
+# the just-fetched data without a second DB hit.
+#
+# `force_refresh=True` callers (explicit user "refresh" action) bypass this
+# coalescing — they intentionally want a fresh fetch.
+
+_inflight_locks: dict[tuple[str, int, str], threading.Lock] = {}
+_inflight_lock_guard = threading.Lock()
+
+
+def _get_inflight_lock(company: str, year: int, kind: str) -> threading.Lock:
+    """Return (creating if missing) the single-flight lock for a fetch key."""
+    key = (company, year, kind)
+    with _inflight_lock_guard:
+        lock = _inflight_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _inflight_locks[key] = lock
+        return lock
+
+
+# Cross-process single-flight via fcntl.flock. The in-process lock only serializes
+# threads within one gunicorn worker — across workers we need a kernel-level lock.
+# Lockfiles live under /tmp; PrivateTmp=true in the systemd unit means all workers
+# of this service share the same /tmp namespace but it is isolated from the host.
+
+_FLOCK_DIR = Path("/tmp")
+
+
+class _CrossProcLock:
+    """fcntl.flock acquired on a per-key file. Use as a context manager.
+
+    Acquires LOCK_EX (blocking) on enter, releases + closes on exit. If the
+    file cannot be opened (e.g. /tmp not writable), falls back to a no-op so
+    fetches still complete — degrades single-flight to per-worker but does
+    not break correctness.
+    """
+
+    def __init__(self, company: str, year: int, kind: str):
+        self.path = _FLOCK_DIR / f"flx_inflight_{kind}_{company}_{year}.lock"
+        self._fh = None
+
+    def __enter__(self):
+        try:
+            self._fh = open(self.path, "w")
+            fcntl.flock(self._fh, fcntl.LOCK_EX)
+        except OSError as e:
+            logger.warning("cross-proc lock unavailable for %s: %s", self.path.name, e)
+            if self._fh is not None:
+                try:
+                    self._fh.close()
+                except OSError:
+                    pass
+                self._fh = None
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self._fh is not None:
+            try:
+                fcntl.flock(self._fh, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                self._fh.close()
+            except OSError:
+                pass
+            self._fh = None
+        return False
 
 
 _caches: dict[str, LRUTTLCache] = {
@@ -670,6 +746,46 @@ def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd
     return df_stmt, pl, records
 
 
+def _try_pl_stmt_from_cache(company: str, year: int):
+    """Return (df_stmt, preagg, preagg_ex_ic, preagg_only_ic) if all four are
+    in the in-memory cache, else None. Pure read — no side effects."""
+    df_stmt = _caches["pl_stmt"].get(company, year)
+    preagg = _caches["pl_preagg"].get(company, year)
+    preagg_ex_ic = _caches["pl_preagg_ex_ic"].get(company, year)
+    preagg_only_ic = _caches["pl_preagg_only_ic"].get(company, year)
+    if (df_stmt is not None and preagg is not None
+            and preagg_ex_ic is not None and preagg_only_ic is not None):
+        return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
+    return None
+
+
+def _try_pl_stmt_from_disk(company: str, year: int):
+    """Try to load df_stmt + preaggs from disk; if found, populate memory caches.
+    Returns the 4-tuple on hit, None on miss."""
+    df_stmt = _load_from_disk(company, year, "df_stmt")
+    if df_stmt is None:
+        return None
+    preagg = _load_from_disk(company, year, "preagg")
+    if preagg is None:
+        preagg = preaggregate(df_stmt)
+    preagg_ex_ic = _load_from_disk(company, year, "preagg_ex_ic")
+    preagg_only_ic = _load_from_disk(company, year, "preagg_only_ic")
+    if preagg_ex_ic is None or preagg_only_ic is None:
+        preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
+        preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
+        _save_to_disk(company, year, preagg_ex_ic, "preagg_ex_ic")
+        _save_to_disk(company, year, preagg_only_ic, "preagg_only_ic")
+    _caches["pl_stmt"].set(company, year, df_stmt)
+    _caches["pl_preagg"].set(company, year, preagg)
+    _caches["pl_preagg_ex_ic"].set(company, year, preagg_ex_ic)
+    _caches["pl_preagg_only_ic"].set(company, year, preagg_only_ic)
+    _caches["df"].set(company, year, df_stmt)
+    pl = pl_summary(df_stmt)
+    pl = ensure_month_columns(pl)
+    _caches["pl_df"].set(company, year, pl)
+    return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
+
+
 def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return (df_stmt, preagg, preagg_ex_ic, preagg_only_ic) for a company/year.
 
@@ -677,65 +793,71 @@ def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = Fal
     Also populates pl_df cache for BS dependency. The two IC-filtered preaggs
     are cached alongside the base preagg so _add_ic_variants doesn't have to
     re-aggregate on every section call.
+
+    Concurrent calls for the same (company, year) coalesce on a single-flight
+    lock: only one thread does the fetch; the rest re-check the cache and
+    return the just-populated data. force_refresh callers bypass coalescing.
     """
     if not force_refresh:
-        df_stmt = _caches["pl_stmt"].get(company, year)
-        preagg = _caches["pl_preagg"].get(company, year)
-        preagg_ex_ic = _caches["pl_preagg_ex_ic"].get(company, year)
-        preagg_only_ic = _caches["pl_preagg_only_ic"].get(company, year)
-        if (df_stmt is not None and preagg is not None
-                and preagg_ex_ic is not None and preagg_only_ic is not None):
-            return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
+        hit = _try_pl_stmt_from_cache(company, year)
+        if hit is not None:
+            return hit
+        hit = _try_pl_stmt_from_disk(company, year)
+        if hit is not None:
+            return hit
 
-        # Try disk cache
-        df_stmt = _load_from_disk(company, year, "df_stmt")
-        if df_stmt is not None:
-            preagg = _load_from_disk(company, year, "preagg")
-            if preagg is None:
-                preagg = preaggregate(df_stmt)
-            preagg_ex_ic = _load_from_disk(company, year, "preagg_ex_ic")
-            preagg_only_ic = _load_from_disk(company, year, "preagg_only_ic")
-            if preagg_ex_ic is None or preagg_only_ic is None:
-                preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
-                preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
-                _save_to_disk(company, year, preagg_ex_ic, "preagg_ex_ic")
-                _save_to_disk(company, year, preagg_only_ic, "preagg_only_ic")
+    # Slow path: acquire the in-process lock, then the cross-process flock,
+    # re-checking caches after each acquire so we never duplicate a fetch
+    # that a sibling worker just completed.
+    lock = _get_inflight_lock(company, year, "pl")
+    with lock:
+        if not force_refresh:
+            hit = _try_pl_stmt_from_cache(company, year)
+            if hit is not None:
+                logger.info("P&L %s/%d: served from cache after lock wait", company, year)
+                return hit
+            hit = _try_pl_stmt_from_disk(company, year)
+            if hit is not None:
+                logger.info("P&L %s/%d: served from disk after lock wait", company, year)
+                return hit
+
+        with _CrossProcLock(company, year, "pl"):
+            if not force_refresh:
+                hit = _try_pl_stmt_from_cache(company, year)
+                if hit is not None:
+                    logger.info("P&L %s/%d: served from cache after cross-proc wait", company, year)
+                    return hit
+                hit = _try_pl_stmt_from_disk(company, year)
+                if hit is not None:
+                    logger.info("P&L %s/%d: served from disk after cross-proc wait", company, year)
+                    return hit
+
+            # Elected fetcher — actually hit the DB.
+            t0 = time.perf_counter()
+            raw = (fetch_pnl_consolidated(year)
+                   if company == CONSOLIDADO
+                   else fetch_pnl_only(company, year))
+            logger.info("P&L fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
+
+            df_stmt, preagg, pl, _ = _run_pl_summary_only(raw)
+            preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
+            preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
+
             _caches["pl_stmt"].set(company, year, df_stmt)
             _caches["pl_preagg"].set(company, year, preagg)
             _caches["pl_preagg_ex_ic"].set(company, year, preagg_ex_ic)
             _caches["pl_preagg_only_ic"].set(company, year, preagg_only_ic)
             _caches["df"].set(company, year, df_stmt)
-            # Also compute and cache pl_df for BS dependency
-            pl = pl_summary(df_stmt)
-            pl = ensure_month_columns(pl)
             _caches["pl_df"].set(company, year, pl)
+
+            # Persist to disk BEFORE releasing the cross-proc lock so sibling
+            # workers waiting on the flock see the disk pickles on their recheck.
+            _save_to_disk(company, year, df_stmt, "df_stmt")
+            _save_to_disk(company, year, preagg, "preagg")
+            _save_to_disk(company, year, preagg_ex_ic, "preagg_ex_ic")
+            _save_to_disk(company, year, preagg_only_ic, "preagg_only_ic")
+
             return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
-
-    # Full fetch + transform
-    t0 = time.perf_counter()
-    raw = (fetch_pnl_consolidated(year)
-           if company == CONSOLIDADO
-           else fetch_pnl_only(company, year))
-    logger.info("P&L fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
-
-    df_stmt, preagg, pl, _ = _run_pl_summary_only(raw)
-    preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
-    preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
-
-    _caches["pl_stmt"].set(company, year, df_stmt)
-    _caches["pl_preagg"].set(company, year, preagg)
-    _caches["pl_preagg_ex_ic"].set(company, year, preagg_ex_ic)
-    _caches["pl_preagg_only_ic"].set(company, year, preagg_only_ic)
-    _caches["df"].set(company, year, df_stmt)
-    _caches["pl_df"].set(company, year, pl)
-
-    # Persist to disk for future restarts
-    _save_to_disk(company, year, df_stmt, "df_stmt")
-    _save_to_disk(company, year, preagg, "preagg")
-    _save_to_disk(company, year, preagg_ex_ic, "preagg_ex_ic")
-    _save_to_disk(company, year, preagg_only_ic, "preagg_only_ic")
-
-    return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
 
 
 def load_pl_data(company: str, year: int, *, force_refresh: bool = False) -> dict:
@@ -835,88 +957,121 @@ def load_pl_section(company: str, year: int, section: str,
     return section_records
 
 
+def _try_bs_result_from_cache(company: str, year: int) -> dict | None:
+    """Return cached BS result dict if available, promoting from the full
+    `result` cache when needed. Pure read with one cache-promotion side effect."""
+    cached = _caches["bs_result"].get(company, year)
+    if cached:
+        logger.info("Serving cached BS data for %s/%d", company, year)
+        return cached
+    full = _caches["result"].get(company, year)
+    if full and "bs_efectivo" in full:
+        logger.info("Serving BS from full cache for %s/%d", company, year)
+        bs_result = {k: v for k, v in full.items()
+                     if k == "bs_summary" or k.startswith("bs_") or k in ("company", "year", "months")}
+        _caches["bs_result"].set(company, year, bs_result)
+        return bs_result
+    return None
+
+
 def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dict:
     """Fetch and transform BS data.  Requires P&L to have been loaded first
     (for UTILIDAD NETA injection into PATRIMONIO).
 
     If P&L is not cached, loads it first as a safety net.
+
+    Concurrent calls for the same (company, year) coalesce on a single-flight
+    lock so only one thread fires the BS DB query.
     """
     if company not in VALID_COMPANIES:
         raise ValueError(f"Unknown company: {company!r}")
 
     if not force_refresh:
-        cached = _caches["bs_result"].get(company, year)
-        if cached:
-            logger.info("Serving cached BS data for %s/%d", company, year)
-            return cached
-        full = _caches["result"].get(company, year)
-        if full:
-            logger.info("Serving BS from full cache for %s/%d", company, year)
-            # The old full cache may not have BS detail keys — fall through
-            # to recompute if it only has bs_summary
-            if "bs_efectivo" in full:
-                bs_result = {k: v for k, v in full.items()
-                             if k == "bs_summary" or k.startswith("bs_") or k in ("company", "year", "months")}
-                _caches["bs_result"].set(company, year, bs_result)
-                return bs_result
+        hit = _try_bs_result_from_cache(company, year)
+        if hit is not None:
+            return hit
 
-    t0 = time.perf_counter()
+    # Slow path: serialize concurrent fetchers of the same (company, year).
+    # NOTE: BS has no disk cache, so unlike P&L, sibling workers across processes
+    # do not benefit from a "winner writes disk, losers read disk" pattern — they
+    # will still each fetch when the flock releases. The cross-proc flock here
+    # still helps by serializing those fetches one at a time instead of letting
+    # them all run concurrently, which is the contention pattern we are avoiding.
+    # Full cross-worker dedup for BS arrives with Tier 2.1 (Redis shared cache).
+    lock = _get_inflight_lock(company, year, "bs")
+    with lock:
+        if not force_refresh:
+            hit = _try_bs_result_from_cache(company, year)
+            if hit is not None:
+                logger.info("BS %s/%d: served from cache after lock wait", company, year)
+                return hit
 
-    # Ensure P&L summary is available (needed for Resultados del Ejercicio)
-    pl_df = _caches["pl_df"].get(company, year)
-    if pl_df is None:
-        logger.info("P&L not cached for %s/%d — loading first (BS dependency)", company, year)
-        load_pl_data(company, year)
-        pl_df = _caches["pl_df"].get(company, year)
+        with _CrossProcLock(company, year, "bs"):
+            if not force_refresh:
+                hit = _try_bs_result_from_cache(company, year)
+                if hit is not None:
+                    logger.info("BS %s/%d: served from cache after cross-proc wait", company, year)
+                    return hit
 
-    raw_bs = (fetch_bs_consolidated(year)
-              if company == CONSOLIDADO
-              else fetch_bs_only(company, year))
-    logger.info("BS fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw_bs))
+            t0 = time.perf_counter()
 
-    t1 = time.perf_counter()
-    if not raw_bs.empty:
-        df_bs = prepare_bs_stmt(raw_bs)
-        bs = bs_summary(df_bs, include_detail=False, pl_summary_df=pl_df)
-    else:
-        df_bs = None
-        bs = pd.DataFrame()
-    logger.info("BS transforms: %.2fs", time.perf_counter() - t1)
+            # Ensure P&L summary is available (needed for Resultados del Ejercicio).
+            # load_pl_data has its own single-flight lock on ("pl"), distinct from
+            # ours on ("bs"), so this nested call cannot self-deadlock.
+            pl_df = _caches["pl_df"].get(company, year)
+            if pl_df is None:
+                logger.info("P&L not cached for %s/%d — loading first (BS dependency)", company, year)
+                load_pl_data(company, year)
+                pl_df = _caches["pl_df"].get(company, year)
 
-    result = {
-        "bs_summary": _df_to_records(bs),
-        "company": company,
-        "year": year,
-        "months": MONTH_NAMES_LIST,
-    }
+            raw_bs = (fetch_bs_consolidated(year)
+                      if company == CONSOLIDADO
+                      else fetch_bs_only(company, year))
+            logger.info("BS fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw_bs))
 
-    # BS note detail tables (reuse the same aggregation functions as Excel/PDF)
-    if df_bs is not None:
-        for key, partidas, include_pf, exclude_pf in BS_DETAIL_ENTRIES:
-            detail = bs_detail_by_cuenta(
-                df_bs, partidas,
-                cuenta_prefixes=include_pf,
-                exclude_cuenta_prefixes=exclude_pf,
-            )
-            detail = append_total_row(detail, DESCRIPCION)
-            result[key] = _df_to_records(detail)
+            t1 = time.perf_counter()
+            if not raw_bs.empty:
+                df_bs = prepare_bs_stmt(raw_bs)
+                bs = bs_summary(df_bs, include_detail=False, pl_summary_df=pl_df)
+            else:
+                df_bs = None
+                bs = pd.DataFrame()
+            logger.info("BS transforms: %.2fs", time.perf_counter() - t1)
 
-        # NIT top-20 ranking tables
-        _BS_NIT_RANKINGS = [
-            ("bs_cxc_comerciales_nit_top20", ["Cuentas por cobrar comerciales (neto)"]),
-            ("bs_cxc_otras_nit_top20",       ["Otras cuentas por cobrar (neto)"]),
-            ("bs_cxp_comerciales_nit_top20", ["Cuentas por pagar comerciales"]),
-            ("bs_cxp_otras_nit_top20",       ["Otras cuentas por pagar"]),
-        ]
-        for key, partidas in _BS_NIT_RANKINGS:
-            result[key] = _df_to_records(bs_top20_by_nit(df_bs, partidas))
+            result = {
+                "bs_summary": _df_to_records(bs),
+                "company": company,
+                "year": year,
+                "months": MONTH_NAMES_LIST,
+            }
 
-    _caches["bs_result"].set(company, year, result)
-    if df_bs is not None:
-        _caches["bs"].set(company, year, df_bs)
-    logger.info("Total load_bs_data: %.2fs", time.perf_counter() - t0)
+            # BS note detail tables (reuse the same aggregation functions as Excel/PDF)
+            if df_bs is not None:
+                for key, partidas, include_pf, exclude_pf in BS_DETAIL_ENTRIES:
+                    detail = bs_detail_by_cuenta(
+                        df_bs, partidas,
+                        cuenta_prefixes=include_pf,
+                        exclude_cuenta_prefixes=exclude_pf,
+                    )
+                    detail = append_total_row(detail, DESCRIPCION)
+                    result[key] = _df_to_records(detail)
 
-    return result
+                # NIT top-20 ranking tables
+                _BS_NIT_RANKINGS = [
+                    ("bs_cxc_comerciales_nit_top20", ["Cuentas por cobrar comerciales (neto)"]),
+                    ("bs_cxc_otras_nit_top20",       ["Otras cuentas por cobrar (neto)"]),
+                    ("bs_cxp_comerciales_nit_top20", ["Cuentas por pagar comerciales"]),
+                    ("bs_cxp_otras_nit_top20",       ["Otras cuentas por pagar"]),
+                ]
+                for key, partidas in _BS_NIT_RANKINGS:
+                    result[key] = _df_to_records(bs_top20_by_nit(df_bs, partidas))
+
+            _caches["bs_result"].set(company, year, result)
+            if df_bs is not None:
+                _caches["bs"].set(company, year, df_bs)
+            logger.info("Total load_bs_data: %.2fs", time.perf_counter() - t0)
+
+            return result
 
 
 # ── Background BS pre-fetch ───────────────────────────────────────────

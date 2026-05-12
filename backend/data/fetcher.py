@@ -109,15 +109,17 @@ def fetch_all_data(company: str, year: int, month: int | None, conn_factory=None
 
     # Collect results — per-query timeout prevents hung DB connections from blocking.
     # fut.result(timeout) measures from submission, so each query gets its own budget.
-    _PER_QUERY_TIMEOUT = 240
+    # Add slack over pyodbc's conn.timeout so HYT00 fires first with a real SQL error
+    # instead of the executor wrapping it in a generic FuturesTimeoutError.
+    per_query_timeout = get_config().db.query_timeout + 30
     results = {}
     for name, fut in futures.items():
         try:
             t_wait = time.perf_counter()
-            results[name] = fut.result(timeout=_PER_QUERY_TIMEOUT)
+            results[name] = fut.result(timeout=per_query_timeout)
             logger.info("Query '%s': %.2fs, %d rows", name, time.perf_counter() - t_wait, len(results[name]))
         except FuturesTimeoutError:
-            raise RuntimeError(f"DB query '{name}' timed out after {_PER_QUERY_TIMEOUT}s")
+            raise RuntimeError(f"DB query '{name}' timed out after {per_query_timeout}s")
         except Exception:
             logger.exception("DB query '%s' failed", name)
             raise
@@ -192,6 +194,7 @@ def _fetch_consolidated(fetch_fn, year: int, month: int | None, conn_factory) ->
         conn_factory = connect
     t0 = time.perf_counter()
     max_workers = get_config().db.fetch_max_workers
+    per_query_timeout = get_config().db.query_timeout + 30
     futures = {}
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         for company in REAL_COMPANIES:
@@ -200,7 +203,7 @@ def _fetch_consolidated(fetch_fn, year: int, month: int | None, conn_factory) ->
             )
     dfs = []
     for company, fut in futures.items():
-        dfs.append(fut.result(timeout=240))
+        dfs.append(fut.result(timeout=per_query_timeout))
     result = pd.concat(dfs, ignore_index=True)
     logger.info("fetch_consolidated %s/%d: %.2fs, %d rows", fetch_fn.__name__, year, time.perf_counter() - t0, len(result))
     return result
