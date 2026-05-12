@@ -184,15 +184,19 @@ class _CrossProcLock:
         return False
 
 
+# Phase 0 (docs/SCALING_ROADMAP.md): cap the 4 heavy buckets that hold full
+# DataFrames at max_entries=6 (5 companies × 2 years = 10 cells; 6 evicts
+# untouched companies after ~30 min TTL). Light/aggregated buckets keep the
+# constructor default max_entries=20 from LRUTTLCache.__init__.
 _caches: dict[str, LRUTTLCache] = {
     "result": LRUTTLCache("result"),
-    "df": LRUTTLCache("df"),
-    "bs": LRUTTLCache("bs"),
-    "raw": LRUTTLCache("raw"),
+    "df": LRUTTLCache("df", max_entries=6),
+    "bs": LRUTTLCache("bs", max_entries=6),
+    "raw": LRUTTLCache("raw", max_entries=6),
     "pl_result": LRUTTLCache("pl_result"),
     "bs_result": LRUTTLCache("bs_result"),
     "pl_df": LRUTTLCache("pl_df"),
-    "pl_stmt": LRUTTLCache("pl_stmt"),
+    "pl_stmt": LRUTTLCache("pl_stmt", max_entries=6),
     "pl_preagg": LRUTTLCache("pl_preagg"),
     "pl_preagg_ex_ic": LRUTTLCache("pl_preagg_ex_ic"),
     "pl_preagg_only_ic": LRUTTLCache("pl_preagg_only_ic"),
