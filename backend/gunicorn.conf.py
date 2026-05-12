@@ -19,23 +19,3 @@ capture_output = True
 
 proc_name = "flxcontabilidad"
 daemon = False
-
-
-def post_worker_init(worker):
-    """Spawn a background cache warmup thread after each worker forks.
-
-    The warmup module uses an fcntl flock so exactly one worker across the
-    service does the actual fetching — the rest no-op. Runs in a daemon
-    thread so worker startup is not blocked.
-
-    Set FLX_DISABLE_WARMUP=1 to skip warmup (useful for concurrency tests
-    where you want to control when caches are empty).
-    """
-    if os.environ.get("FLX_DISABLE_WARMUP", "").lower() in ("1", "true", "yes"):
-        worker.log.info("post_worker_init: warmup disabled via FLX_DISABLE_WARMUP")
-        return
-    try:
-        from services.warmup import warmup_async
-        warmup_async()
-    except Exception:
-        worker.log.exception("post_worker_init: warmup_async() raised")
