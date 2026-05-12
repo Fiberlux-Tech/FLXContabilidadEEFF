@@ -123,6 +123,10 @@ def create_app():
             )
         return response
 
+    # Phase 0: per-worker memory log (see docs/SCALING_ROADMAP.md)
+    from services.mem_monitor import start as _start_mem_monitor
+    _start_mem_monitor()
+
     return app
 
 
