@@ -127,10 +127,14 @@ def _handle_data_errors(label: str):
 
 
 def _timed_load(service_fn, body, company, year):
-    """Call a data-loading service function with timing."""
-    force_refresh = body.get('force_refresh', False)
+    """Call a data-loading service function with timing.
+
+    Data freshness is governed by the hourly scheduler (see
+    docs/SCHEDULED_REFRESH.md). The legacy `force_refresh` request field
+    is silently ignored if any old client still sends it.
+    """
     t0 = time.perf_counter()
-    data = service_fn(company, year, force_refresh=force_refresh)
+    data = service_fn(company, year)
     result = {k: v for k, v in data.items() if not k.startswith('_')}
     result['_timing_ms'] = round((time.perf_counter() - t0) * 1000)
     return ok(result)
@@ -145,7 +149,6 @@ def load_data(body, company, year):
     """Fetch and transform all report data for a company/year.
 
     Body: { "company": "FIBERLUX", "year": 2026 }
-    Optional: { "force_refresh": true }
     """
     if company == CONSOLIDADO:
         raise RequestValidationError('Use load-pl y load-bs para vista consolidada')
@@ -159,7 +162,6 @@ def load_pl(body, company, year):
     """Fetch P&L data only (fast path). BS is pre-fetched in the background.
 
     Body: { "company": "FIBERLUX", "year": 2026 }
-    Optional: { "force_refresh": true }
     """
     return _timed_load(load_pl_data, body, company, year)
 
@@ -171,7 +173,6 @@ def load_bs(body, company, year):
     """Fetch BS data. Requires P&L to be loaded first (for UTILIDAD NETA).
 
     Body: { "company": "FIBERLUX", "year": 2026 }
-    Optional: { "force_refresh": true }
     """
     return _timed_load(load_bs_data, body, company, year)
 
@@ -195,8 +196,6 @@ def load_pl_section_route(body, company, year):
     if forbidden is not None:
         return forbidden
 
-    force_refresh = body.get('force_refresh', False)
-
     # Extra params for specific sections
     extra = {}
     if section == 'analysis_proveedores':
@@ -209,7 +208,7 @@ def load_pl_section_route(body, company, year):
             extra['ceco'] = ceco
 
     t0 = time.perf_counter()
-    data = load_pl_section(company, year, section, force_refresh=force_refresh, **extra)
+    data = load_pl_section(company, year, section, **extra)
     result = {**data, '_timing_ms': round((time.perf_counter() - t0) * 1000)}
     return ok(result)
 
