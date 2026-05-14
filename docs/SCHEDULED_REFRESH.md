@@ -21,17 +21,17 @@ Concretely, during a normal day:
 
 | Time (Lima)  | What happens                                                                 |
 |--------------|------------------------------------------------------------------------------|
-| 07:00        | Scheduler fires. Walks 10 refresh units (5 companies × 2 years), serial, smallest first. Each unit: `invalidate_cache` → `load_pl_data` → `load_bs_data`. Cycle runs ~5–10 min (verify on staging). |
-| 07:30        | First user lands. If they hit the elected worker, sub-second. If they hit one of the other 2 workers, they pay a pickle-load cost (5–15 s for the big companies — see "Known limitation" below). Either way, **no DB hit**. |
-| 07:30–08:00  | Users click around. Each `(company, year)` × worker combination pays the pickle cost once, then is instant from then on. After ~10 min of organic browsing all 3 workers are fully warm. Drill-down to detail journal entries hits row-level cache (already populated by the scheduler via `load_pl_data` → `_ensure_pl_stmt_cached`). |
-| 08:00        | Scheduler fires again. Re-invalidates and re-fetches. Active users transiently see a sub-second blip on their next click if they happen to land between `invalidate_cache` and the cache repopulation for the company they are viewing (see "Architecture" below for the ordering that minimizes this). |
-| 09:00, 10:00, … 21:00 | Refresh cycles continue. 15 cycles per day total. |
-| 21:00 – next 07:00 | Scheduler idle. Cache stays warm with the 21:00 snapshot for overnight viewing. After-hours users (rare) still hit fresh-enough data. |
+| 08:00        | Scheduler fires. Walks 10 refresh units (5 companies × 2 years), serial, smallest first. Each unit: `invalidate_cache` → `load_pl_data` → `load_bs_data`. Cycle runs ~5–10 min (verify on staging). |
+| 08:30        | First user lands. If they hit the elected worker, sub-second. If they hit one of the other 2 workers, they pay a pickle-load cost (5–15 s for the big companies — see "Known limitation" below). Either way, **no DB hit**. |
+| 08:30–09:00  | Users click around. Each `(company, year)` × worker combination pays the pickle cost once, then is instant from then on. After ~10 min of organic browsing all 3 workers are fully warm. Drill-down to detail journal entries hits row-level cache (already populated by the scheduler via `load_pl_data` → `_ensure_pl_stmt_cached`). |
+| 09:00        | Scheduler fires again. Re-invalidates and re-fetches. Active users transiently see a sub-second blip on their next click if they happen to land between `invalidate_cache` and the cache repopulation for the company they are viewing (see "Architecture" below for the ordering that minimizes this). |
+| 10:00, 11:00, … 22:00 | Refresh cycles continue. 15 cycles per day total. |
+| 22:00 – next 08:00 | Scheduler idle. Cache stays warm with the 22:00 snapshot for overnight viewing. After-hours users (rare) still hit fresh-enough data. |
 
 **Cold start (post-deploy or post-restart)**: the gunicorn workers restart, the in-memory `_caches` dicts are empty, but the disk pickle cache at `backend/services/.stmt_cache/` survives — `_try_pl_stmt_from_disk` at [data_service.py:766](../backend/services/data_service.py#L766) rehydrates from disk. Two scenarios:
 
-- **Restart during 07:00–21:00**: first user request after restart pays the pickle-load cost (5–15 s for FIBERLINE/FIBERTECH, ~10 s for CONSOLIDADO_2025 — observed on staging 2026-05-14), then the next scheduled cycle refreshes from the DB. No user ever triggers a DB fetch on the summary path.
-- **Restart outside 07:00–21:00**: disk pickle is up to 10 hours old. First user gets the 21:00-previous-day snapshot until 07:00 fires. This is the same staleness window the user already accepted.
+- **Restart during 08:00–22:00**: first user request after restart pays the pickle-load cost (5–15 s for FIBERLINE/FIBERTECH, ~10 s for CONSOLIDADO_2025 — observed on staging 2026-05-14), then the next scheduled cycle refreshes from the DB. No user ever triggers a DB fetch on the summary path.
+- **Restart outside 08:00–22:00**: disk pickle is up to 10 hours old. First user gets the 22:00-previous-day snapshot until 08:00 fires. This is the same staleness window the user already accepted.
 
 **No manual refresh.** The Refresh button at [frontend/src/features/dashboard/TopBar.tsx:278-280](../frontend/src/features/dashboard/TopBar.tsx#L278) is removed. The `force_refresh` field in API request bodies is ignored (see Implementation). Internal `force_refresh=True` callers inside `get_detail_records` at [data_service.py:1220](../backend/services/data_service.py#L1220) and [data_service.py:1230](../backend/services/data_service.py#L1230) stay — those are the drill-down fallback for when a user clicks into a row that is not yet in the row-level cache; they are not user-facing refresh buttons.
 
@@ -103,7 +103,7 @@ Approximately 80–110 lines. Mirrors the structure of [mem_monitor.py](../backe
 """Hourly cache refresh.
 
 One elected worker runs a daemon thread that, every hour on the hour
-between 7am and 9pm Lima time, walks all (company, year) pairs and
+between 8am and 10pm Lima time, walks all (company, year) pairs and
 refreshes the cache. Other workers' calls to start() see the flock
 held and no-op.
 
@@ -122,7 +122,7 @@ logger = logging.getLogger("flxcontabilidad.refresh_scheduler")
 
 _TZ = ZoneInfo("America/Lima")
 _LOCK_PATH = Path("/tmp/flx_refresh.lock")
-_REFRESH_HOURS = range(7, 22)   # 7,8,...,21 → cycles fire at 07:00..21:00
+_REFRESH_HOURS = range(8, 23)   # 8,9,...,22 → cycles fire at 08:00..22:00
 
 # Smallest-first; CONSOLIDADO last. See "Company order" in the doc.
 _COMPANIES = ("FIBERLUX", "NEXTNET", "FIBERTECH", "FIBERLINE", "CONSOLIDADO")
@@ -177,11 +177,12 @@ def _run(lockfile) -> None:
         # A surviving crashed scheduler is the worst-case risk; see Risks.
 ```
 
-The cycle body and sleep math are written out in the actual implementation; this skeleton captures the structure. Three boundary tests for `_seconds_until_next_cycle` to pass before shipping:
-- 06:59 → ~1 s
-- 21:00 → ~3600 s (next fire 22:00 falls outside the window, so re-target to 07:00 next day = ~10 h)
-- 23:00 → ~8 h
-- 03:00 → ~4 h
+The cycle body and sleep math are written out in the actual implementation; this skeleton captures the structure. Boundary tests for `_seconds_until_next_cycle` (verified 2026-05-14 against the actual implementation):
+- 07:59 → 60 s (next fire 08:00)
+- 08:00 → 3600 s (next fire 09:00)
+- 22:00 → ~10 h (next fire is tomorrow 08:00; today 23:00 is outside the window)
+- 23:00 → ~9 h
+- 03:00 → ~5 h
 
 Lima does **not** observe DST, which removes one whole class of bug. `zoneinfo` is stdlib since Python 3.9; verified Python 3.12 on the staging box.
 
@@ -232,7 +233,7 @@ Lessons from the 2026-05-12 warmup OOM, restated for the scheduler:
 - **Do not try to be clever with "refresh in the background while users are active."** The serial cost is the cost. A 5–10 min cycle running in one daemon thread is fine; squeezing it down by interleaving with user requests reintroduces the OOM risk.
 - **Do not pull in APScheduler, Celery, or cron.** Stdlib `threading` + `time.sleep` + `zoneinfo` is enough. Adding a scheduler library means another dependency to upgrade, another failure mode to debug.
 - **Do not move the elector to a Redis `SET NX EX`.** Redis is not installed; that was Phase 1's premise. `fcntl.flock` is what we have and what already works on this host.
-- **Do not warmup at boot.** That was the reverted warmup's mistake. The scheduler's first cycle is governed by `_seconds_until_next_cycle` and will not fire until the next 7am–9pm top-of-the-hour. Cold-start service-from-disk-pickle is the contract.
+- **Do not warmup at boot.** That was the reverted warmup's mistake. The scheduler's first cycle is governed by `_seconds_until_next_cycle` and will not fire until the next 8am–10pm top-of-the-hour. Cold-start service-from-disk-pickle is the contract.
 
 ## Risks
 
@@ -241,7 +242,7 @@ Lessons from the 2026-05-12 warmup OOM, restated for the scheduler:
 | **Scheduler thread dies silently**; cache goes stale for hours/days, finance team eventually notices the dashboard date is yesterday's. | Low to medium | High | (a) `_run` wraps the loop in `try/except` and logs `exception` on crash. (b) `mem_monitor` log lines continue regardless and act as a heartbeat — if the worker is alive, it logs every 300 s. (c) Surface a `last_refresh_at` timestamp via an admin endpoint and in the dashboard footer (see "Validation criteria" below); a missing/stale timestamp is the user-visible signal. |
 | **Refresh cycle OOMs on CONSOLIDADO** (the same scenario that killed warmup). | Low (with smallest-first ordering and Phase 0 cgroup ceiling) | Medium | Smallest-first order ensures the four real companies are already fresh when CONSOLIDADO is attempted. `MemoryHigh=4G` triggers cgroup reclaim before the kernel OOM-killer. `FETCH_MAX_WORKERS=2` keeps `fetch_pnl_consolidated`'s parallel fan-out from doubling memory inside one fetch. |
 | **Elector flock leaks** if the elected worker is killed -9. | Low | Low | `fcntl.flock` is held by the file descriptor; when the process dies, the kernel releases the lock. The next worker's `start()` call (after restart) re-elects. No manual cleanup needed. |
-| **Time-of-day gate math wrong** (off-by-one on the 21:00 boundary, wrong year-rollover). | Medium pre-shipping, low after one cycle of soak | Medium | Unit-test `_seconds_until_next_cycle` with the boundary cases listed in the skeleton above before shipping. Lima does **not** observe DST. |
+| **Time-of-day gate math wrong** (off-by-one on the 22:00 boundary, wrong year-rollover). | Medium pre-shipping, low after one cycle of soak | Medium | Unit-test `_seconds_until_next_cycle` with the boundary cases listed in the skeleton above before shipping. Lima does **not** observe DST. |
 | **Disk pickles grow during the year and exceed the disk cache budget.** | Low | Low | Current total ~700 MB across 10 pickles; even tripling that is well under the host's free disk. `mem_monitor` doesn't measure disk; spot-check `du -sh backend/services/.stmt_cache/` after the first week. |
 | **Refresh fires while a user is mid-drill-down** and clobbers their row-level cache. | Low | Low | `invalidate_cache` clears the per-`(company, year)` entry; the user's next click rehydrates from the just-written disk pickle. Sub-second blip, not a failure. |
 | **Logging volume grows** (15 cycles × 5 companies × 2 years × 2 statements × multiple log lines per fetch). | Medium | Low | Existing log rotation at `backend/logs/error.log` should absorb it; verify rotation policy before shipping. If too noisy, tune the `_refresh_cycle` log to a single line per company-year pair. |
@@ -260,9 +261,9 @@ All Phase 0 work stays. Specifically:
 Scriptable, in order of how soon they need to pass.
 
 1. **Scheduler is elected exactly once.** After service restart on staging, `grep "refresh_scheduler: elected" backend/logs/error.log` returns exactly one line; `grep "refresh_scheduler: another worker"` returns exactly two (the non-elected workers).
-2. **First cycle fires at the next 7am–9pm top-of-the-hour.** After restart, no DB fetch logs (`grep "P&L fetch"`) appear until the next on-the-hour timestamp; then a burst of fetches over ~5–10 min, then silence until the next hour.
+2. **First cycle fires at the next 8am–10pm top-of-the-hour.** After restart, no DB fetch logs (`grep "P&L fetch"`) appear until the next on-the-hour timestamp; then a burst of fetches over ~5–10 min, then silence until the next hour.
 3. **All 10 units complete in one cycle.** Per cycle, the log shows exactly 10 `refresh: <COMPANY>/<YEAR> done` lines (or a mix of `done` and `FAILED` with the failure logged via `exception`). Cycle ends with `refresh: cycle complete`.
-4. **User requests fire no DB queries during 7am–9pm steady state.** After one full cycle, exercise the dashboard for 10 min (5 companies, both years, drill into a few details). `grep -c "P&L fetch" backend/logs/error.log` should not increment during that window (drill-down may increment it if the user lands on an uncached partida — expected, covered by the kept internal `force_refresh=True` callers).
+4. **User requests fire no DB queries during 8am–10pm steady state.** After one full cycle, exercise the dashboard for 10 min (5 companies, both years, drill into a few details). `grep -c "P&L fetch" backend/logs/error.log` should not increment during that window (drill-down may increment it if the user lands on an uncached partida — expected, covered by the kept internal `force_refresh=True` callers).
 5. **No OOM during refresh.** After 24 h of soak, `journalctl -u flxcontabilidad-staging | grep -i "killed\|oom"` returns nothing. `mem_monitor` log shows `sys_available` never below 800 MB.
 6. **Last-refresh visibility.** (Recommended additional work, not blocking.) Add an admin endpoint `/api/admin/refresh-status` returning `{ "last_cycle_complete": "2026-05-13T15:00:42-05:00", "elected_pid": 12345, "next_cycle_at": "2026-05-13T16:00:00-05:00" }`. The scheduler writes its own state into a module-level dict; the endpoint reads it. Track this as a follow-up commit if not in the initial PR.
 
@@ -271,7 +272,7 @@ Scriptable, in order of how soon they need to pass.
 1. **Land the remaining Phase 0 ops steps on staging** (`.env` edit, systemd edit, `daemon-reload`, restart). Confirm `mem_monitor` is logging. **Do not skip this** — the cgroup ceiling is the safety net for step 4 below.
 2. **Commit the scheduler + `app.py` + `routes.py` + frontend changes on `dev`.** Suggested commit message subject: `feat(refresh): hourly scheduled cache refresh (supersedes Phase 1)`. Two commits is fine: backend, then frontend Refresh-button removal.
 3. **Push and `./deploy.sh` from the staging tree.**
-4. **Watch for at least one full cycle inside the 7am–9pm window.** `tail -f backend/logs/error.log | grep refresh` should show `refresh: cycle starting`, ten `refresh: <COMPANY>/<YEAR> done` lines over ~5–10 min, and `refresh: cycle complete`.
+4. **Watch for at least one full cycle inside the 8am–10pm window.** `tail -f backend/logs/error.log | grep refresh` should show `refresh: cycle starting`, ten `refresh: <COMPANY>/<YEAR> done` lines over ~5–10 min, and `refresh: cycle complete`.
 5. **Run the dashboard manually for ~10 min after the cycle completes.** Verify no `P&L fetch` log lines appear from user requests.
 6. **Soak for 24 h.** Tail `error.log` once per hour to confirm each cycle runs cleanly. Spot-check `mem_monitor` lines for memory regressions.
 7. **Promote to prod** via `./promote.sh` from the prod tree, then apply the same `.env` + systemd edits on prod manually.
@@ -292,7 +293,7 @@ Scriptable, in order of how soon they need to pass.
 
 ## What this doc is not
 
-This is not a plan to remove the disk pickle cache. The disk cache is the durable layer that survives restarts and bridges the gap between the 21:00 cycle and the next 07:00 cycle. It stays.
+This is not a plan to remove the disk pickle cache. The disk cache is the durable layer that survives restarts and bridges the gap between the 22:00 cycle and the next 08:00 cycle. It stays.
 
 This is not a plan to remove single-flight locking. Drill-down still hits the row-level path, which still needs `_get_inflight_lock` and `_CrossProcLock` to coalesce simultaneous DB hits.
 

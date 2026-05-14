@@ -1,7 +1,7 @@
 """Hourly cache refresh.
 
 One elected worker runs a daemon thread that, every hour on the hour
-between 7am and 9pm Lima time, walks all (company, year) pairs and
+between 8am and 10pm Lima time, walks all (company, year) pairs and
 refreshes the cache. Other workers' calls to start() see the flock
 held and no-op.
 
@@ -24,8 +24,9 @@ logger = logging.getLogger("flxcontabilidad.refresh_scheduler")
 _TZ = ZoneInfo("America/Lima")
 _LOCK_PATH = Path("/tmp/flx_refresh.lock")
 
-# Cycles fire at 07:00, 08:00, ..., 21:00 inclusive. 15 cycles per day.
-_REFRESH_HOURS = range(7, 22)
+# Cycles fire at 08:00, 09:00, ..., 22:00 inclusive. 15 cycles per day.
+# Aligned with the finance team's working hours.
+_REFRESH_HOURS = range(8, 23)
 
 # Smallest-first; CONSOLIDADO last. See "Company order" in the doc.
 # If CONSOLIDADO refresh fails, the 4 real companies are already fresh.
@@ -70,18 +71,18 @@ def _try_acquire_lock():
 def _seconds_until_next_cycle(now: datetime) -> float:
     """Sleep target = next top-of-the-hour that lies inside _REFRESH_HOURS.
 
-    Examples (with _REFRESH_HOURS = 7..21):
-      now=06:59  -> ~1s   (next fire = today 07:00)
-      now=07:00  -> ~3600 (next fire = today 08:00)
-      now=21:00  -> ~36000 (next fire = tomorrow 07:00; today 22:00 is outside window)
-      now=23:00  -> ~28800 (next fire = tomorrow 07:00)
-      now=03:00  -> ~14400 (next fire = today 07:00)
+    Examples (with _REFRESH_HOURS = 8..22):
+      now=07:59  -> ~1s   (next fire = today 08:00)
+      now=08:00  -> ~3600 (next fire = today 09:00)
+      now=22:00  -> ~36000 (next fire = tomorrow 08:00; today 23:00 is outside window)
+      now=23:00  -> ~32400 (next fire = tomorrow 08:00)
+      now=03:00  -> ~18000 (next fire = today 08:00)
     """
     nxt = (now.replace(minute=0, second=0, microsecond=0)
            + timedelta(hours=1))
     if nxt.hour not in _REFRESH_HOURS:
         # We've passed the last cycle of the day (or it's the middle of the night).
-        # Target 07:00 of the next eligible day.
+        # Target 08:00 of the next eligible day.
         target_day = nxt.date()
         if nxt.hour >= max(_REFRESH_HOURS) + 1:
             target_day = target_day + timedelta(days=1)
