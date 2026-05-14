@@ -53,7 +53,7 @@ Targets, not benchmarks. Each phase's validation section defines how to confirm 
 - The box is **5.8 GB RAM + 3.8 GB swap**, confirmed by the user 2026-05-12; not expandable in this fiscal window.
 - Swap is effectively useless under interactive load — observed exhaustion during the warmup OOM. Treat the working set as if swap doesn't exist.
 - Past Phase 3, the realistic ceiling on this hardware is roughly **25–30 concurrent active users** (verify by load test before promising more). Beyond that, only more RAM helps; no software change in this plan removes that wall.
-- The SQL Server view `REPORTES.VISTA_ANALISIS_CECOS` (~8.4 M rows) is owned by the DBA team. Phase 2 and Phase 4 require their cooperation; nothing in this plan circumvents that.
+- The SQL Server view `REPORTES.VISTA_ANALISIS_CECOS` (~8.4 M rows) is owned by the DBA team and is **live** (changes posted by finance appear immediately). Phase 4 requires DBA cooperation. Phase 2 does **not** — it builds local fact pickles from data we already fetch hourly via the scheduler.
 - The accounting transformation pipeline ([CODING_PATTERNS.md](CODING_PATTERNS.md) "Accounting Logic — SACRED, DO NOT MODIFY") is fixed. Any phase that touches data flowing into it must produce bit-identical numbers.
 
 ---
@@ -225,59 +225,54 @@ None. Phase 0 starts immediately.
 
 ---
 
-## Phase 2 — Shrink the working set (monthly fact table)
+## Phase 2 — Shrink the working set (monthly fact pickles)
 
-> **Goal**: Stop pulling 8.4 M-row journal-entry result sets through pandas for summary views. Replace with pre-aggregated monthly rows that are 10–20× smaller in memory and faster to query.
+> **Goal**: Shrink the cached `df_stmt` DataFrames ~16× by aggregating to monthly grain. Cold-worker pickle load drops from ~10 s to <1 s, eliminating the user-visible tax left by the scheduler.
+>
+> **Status**: Implementation spec in [FACT_TABLE.md](FACT_TABLE.md). This section is the roadmap-level summary; do not duplicate detail here.
 
-**Why**: `df_stmt_CONSOLIDADO_2025.pkl` is 257 MB on disk and ~600 MB in memory (verify with `sys.getsizeof` post-Phase-0). The summary endpoints — the ones the dashboard hits on every page load — only need `(CIA, year, month, cuenta_contable, centro_costo, debito, credito)` sums. A nightly-built fact table at that grain gives summary queries a row count in the tens of thousands instead of millions, and a pickle a fraction of the current size. Detail drill-down (clicking into a single number to see the underlying journal entries) keeps the row-level path unchanged.
+**Why**: `df_stmt_CONSOLIDADO_2025.pkl` is 257 MB on disk and ~600 MB in memory. The summary endpoints — the ones the dashboard hits on every page load — only need `(CIA, year, month, cuenta_contable, centro_costo, debito, credito)` sums. A pre-aggregated DataFrame at that grain is ~10 MB. Detail drill-down (clicking into a single number to see the underlying journal entries) keeps the row-level path unchanged.
 
-This is the only phase that meaningfully reduces the *size* of cached data, as opposed to deduplicating it across workers (Phase 1) or capping it (Phase 0). It's also the slowest because it requires DBA cooperation.
+**Design summary** (full spec in [FACT_TABLE.md](FACT_TABLE.md)):
 
-### What changes
+1. **No DBA dependency.** The fact pickles are built on our box by extending the existing [refresh_scheduler.py](../backend/services/refresh_scheduler.py) cycle — after each `load_pl_data`, we `groupby + sum` the cached `df_stmt` and write `fact_{company}_{year}.pkl` to `backend/services/.stmt_cache/`.
+2. **Same freshness as today.** Because the ETL piggybacks on the existing hourly scheduler, fact pickles refresh every hour during 7am–9pm Lima. Summary and drill-down share the same ~1 hour staleness window the system already has. **No "data as of yesterday" regression.**
+3. **Per-company feature flag.** `USE_FACT_TABLE_<COMPANY>` env vars; flip one company at a time. Order: FIBERLUX → FIBERTECH → FIBERLINE → NEXTNET → CONSOLIDADO. CONSOLIDADO reads the 4 real-company pickles and concats — no separate ETL.
+4. **Diff harness gate.** [backend/scripts/diff_fact_vs_view.py](../backend/scripts/diff_fact_vs_view.py) (new) must return zero diffs at the `(PARTIDA_PL, month)` grain for all triples before any flag flips.
 
-1. **New SQL artifact (DBA-owned)**: `REPORTES.FACT_ANALISIS_MENSUAL`, built nightly at 02:00 PE from the same underlying tables behind `REPORTES.VISTA_ANALISIS_CECOS`. Grain: `(CIA, ANIO, MES, CUENTA_CONTABLE, CENTRO_COSTO)`, columns: `SUM(DEBITO_LOCAL) AS DEBITO`, `SUM(CREDITO_LOCAL) AS CREDITO`, `MIN(FECHA_ACT) AS FECHA_ACT`. Clustered index on `(CIA, ANIO, MES, CUENTA_CONTABLE)`. The SQL script and SQL Agent job live in the DBA's repo, not ours.
-   - **Fallback if the DBA cannot expose the underlying tables**: build the fact table in a database we own, ETL nightly via a Python job that reads `VISTA_ANALISIS_CECOS` once at 02:00 PE and writes the aggregate. Slower nightly, but unblocks us. Decide this in the kickoff meeting.
-2. **Modify `backend/data/queries.py`**: add `fetch_pnl_summary_fast(conn, company, year, month=None)` that runs `SELECT ... FROM REPORTES.FACT_ANALISIS_MENSUAL WHERE CIA=? AND ANIO=? AND (MES <= ? OR ? IS NULL)`. Keep `fetch_pnl_data` and `fetch_bs_data` untouched for detail drill-down.
-3. **Modify `backend/services/data_service.py`**: behind a feature flag `USE_FACT_TABLE` (env-driven), summary load paths (`load_pl_data`, `load_bs_data`) call the fast path; detail-section loaders (`load_pl_section`) keep using `_ensure_pl_stmt_cached`.
-4. **Validation harness**: a one-shot script `backend/scripts/diff_fact_vs_view.py` that runs both paths for `(company, year, month)` triples covering FIBERLINE/FIBERLUX/FIBERTECH/NEXTNET/CONSOLIDADO × 2025/2026 × all months, and prints any non-zero diff. Must produce **zero diffs** before the feature flag flips for any company. SACRED rules apply: see [CODING_PATTERNS.md](CODING_PATTERNS.md) "Accounting Logic — SACRED, DO NOT MODIFY" — `pl_summary`, `bs_summary`, the prefix-by-prefix sums, and the `np.select` priority order in `prepare_stmt` must be preserved bit-identically.
-5. **Rollout**: feature flag flips per-company. Start with FIBERLUX (smallest, lowest blast radius), watch for 48 h, then FIBERTECH, FIBERLINE, NEXTNET, CONSOLIDADO last.
+> **Earlier revisions of this section proposed a DBA-owned nightly fact table on SQL Server.** That design was abandoned on 2026-05-14 once we confirmed `VISTA_ANALISIS_CECOS` is live (changes appear immediately). Nightly would have made P&L summary lag drill-down by up to a day — a user-visible regression worse than the cold-pickle tax. The current self-built hourly design preserves today's freshness contract. See [FACT_TABLE.md](FACT_TABLE.md) "What about the original Path A?" for the audit trail.
 
 ### Effort
 
-| Item                                                | Days |
-|-----------------------------------------------------|------|
-| DBA spec + kickoff                                  | 1.0 (ops + waiting) |
-| Fact table DDL + ETL (DBA-side, not us)             | 3–5 (external, blocks us) |
-| `fetch_pnl_summary_fast` + flag wiring              | 2.0 (implementation) |
-| Diff harness + cross-company validation             | 2.0 (validation) |
-| Per-company rollout + soak                          | 2.0 (validation) |
-| **Total elapsed**                                   | **~2 weeks, dominated by DBA dependency** |
+| Item                                                                                       | Days |
+|--------------------------------------------------------------------------------------------|------|
+| Scheduler ETL extension + `fetch_pnl_summary_fast` + flag wiring + intercept in `_ensure_pl_stmt_cached` | 2.0 |
+| Diff harness + cross-company validation                                                    | 1.0  |
+| Per-company rollout + 48 h soak each (~2 days active, ~10 days elapsed)                    | 2.0 active |
+| **Total elapsed**                                                                          | **~2 weeks, dominated by per-company soak windows** |
 
 ### Risks
 
-- **SACRED violation**: aggregating server-side risks subtle differences from the in-process `prepare_stmt` + `preaggregate` pipeline (sign conventions, account filtering, intercompany flagging — verify the column set the fact table needs supports `IS_INTERCOMPANY` derivation, since that's a derived boolean and not a raw column today). Mitigation: the diff harness must be zero before promotion, no exceptions. If diffs are non-zero, fix the fact table SQL, not the harness threshold.
-- **Fact table staleness**: the table rebuilds nightly. Mid-day journal entries don't show up in summary view until tomorrow. Mitigation: surface "data as of YYYY-MM-DD 02:00 PE" in the dashboard footer; detail view still hits the live view. Confirm with finance team this is acceptable for summary use (verify before shipping).
-- **DBA timeline is outside our control.** Mitigation: start the conversation in the same week Phase 1 ships; this is the long pole of the entire roadmap.
-- **Flag-flip rollback**: if a regression surfaces after a per-company flip, set `USE_FACT_TABLE_FIBERLINE=false` (or whichever) in `.env`, restart staging, validate, promote. Roll back individual companies, not the whole flag.
+See [FACT_TABLE.md](FACT_TABLE.md) "Risks". Headline items: SACRED drift via the aggregation step (mitigated by zero-diff gate), first-boot race before the scheduler builds the pickle (mitigated by `FileNotFoundError` fallback to row-level path), and disk-pickle staleness on flip-back (mitigated by `invalidate_cache`).
 
 ### Validation criteria
 
 - Diff harness returns zero diffs across all `(company, year, month)` triples.
-- Summary endpoint p95 latency drops below 1 s for cold cache (versus ~10–30 s today on FIBERLINE — verify before shipping).
-- Worker peak RSS under steady-state browsing drops by another ~150–250 MB (the `df_stmt` caches shrink because the fast path doesn't load row-level data unless a user drills in).
+- Cold-worker first-click latency on FIBERLINE/FIBERTECH/CONSOLIDADO drops from ~10 s to <1 s.
+- Worker peak RSS under steady-state browsing drops by ~150–250 MB (the `df_stmt` cache is now ~10 MB per cell instead of ~150–250 MB).
 - Memory budget "After Phase 2" row holds.
 
 ### Hard prerequisites
 
-- Phase 1 is done and stable. Reason: the feature flag's per-company flip is much safer when caches are shared via Redis — otherwise each worker independently exercises both code paths and we get an inconsistent rollout.
-- DBA has agreed to build (or let us build) the fact table.
+- Scheduled refresh ([SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md)) is shipped and stable. The Phase 2 ETL piggybacks on its hourly cycle.
+- **No DBA prerequisites.** Phase 2 is entirely in our hands.
 
 ### What NOT to do
 
-- Do **not** modify `prepare_stmt`, `pl_summary`, `bs_summary`, the `np.select` rules in `transforms.py`, or any file under `backend/services/accounting/`. The fact table is an upstream replacement for the *fetch* step, not the *transform* step. Aggregations downstream of the fetch must keep their existing behavior.
-- Do **not** flip the flag for CONSOLIDADO first to "see the biggest win." CONSOLIDADO is `UNION ALL` of 4 real companies; if the fact table has a bug for one company, you'll spot it faster on a single-company rollout.
-- Do **not** delete the row-level path. Detail drill-down depends on it, and so does the dual-run diff harness.
-- Do **not** read raw row counts from the fact table to "double-check" against the view. Row counts won't match (the fact table is aggregated). Compare summed measures (debit, credit, saldo) by account.
+- Do **not** modify `prepare_stmt`, `pl_summary`, `bs_summary`, the `np.select` rules in `transforms.py`, or any file under `backend/services/accounting/`. The fact pickle replaces the *fetch* step, not the *transform* step. The aggregation runs *after* `prepare_stmt`, on the SACRED-transformed DataFrame.
+- Do **not** flip the flag for CONSOLIDADO first to "see the biggest win." CONSOLIDADO reads the 4 real-company pickles; if one company's aggregation has a bug, you'll spot it faster on a single-company rollout.
+- Do **not** delete the row-level path. Detail drill-down depends on it, and so does the diff harness's reference side.
+- Do **not** revive the nightly DBA-owned design without first re-evaluating the freshness contract. The current design exists because `VISTA_ANALISIS_CECOS` is live; if that changes, revisit.
 
 ---
 

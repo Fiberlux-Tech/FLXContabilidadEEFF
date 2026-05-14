@@ -320,6 +320,8 @@ A shared Redis cache means **one fetch serves all workers**. It also enables Tie
 
 ### 2.2 — Build a monthly aggregate fact table
 
+> **Superseded 2026-05-14.** This section described a DBA-owned nightly fact table on SQL Server. That design was replaced by self-built hourly fact pickles after we confirmed `VISTA_ANALISIS_CECOS` is live; nightly would have made P&L summary lag drill-down by up to a day. **Active spec lives in [FACT_TABLE.md](FACT_TABLE.md); roadmap-level summary in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) Phase 2.** The text below is preserved as the original Tier 2.2 proposal for historical context only — do not implement against it.
+
 **Why**: `REPORTES.VISTA_ANALISIS_CECOS` returns row-level journal entries — 8.4M rows, growing. Almost everything the dashboard does is sum-by-month. A nightly job that pre-aggregates to `(CIA, year, month, cuenta_contable, centro_costo, debito, credito)` gives you a table with **~100K rows total, not 8.4M**, and queries against it run in ms.
 
 The detail drilldown still needs row-level data, but only for one `(partida, month)` at a time — that's a small filtered slice, not a full-year scan.

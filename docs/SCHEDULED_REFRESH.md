@@ -285,7 +285,7 @@ Scriptable, in order of how soon they need to pass.
 | Phase 0 `.env` edit (`FETCH_MAX_WORKERS=2`) on staging + prod | Manual ops | Pending, do before scheduler ships. |
 | Phase 0 systemd edit (`MemoryHigh=4G` / `MemoryMax=5G`) on staging + prod | Manual ops | Pending, do before scheduler ships. |
 | **Scheduled refresh (this doc)** | New code on `dev` | **Next** after Phase 0 ops steps land. |
-| Phase 2 (monthly fact table) | DBA conversation | Queued. Helps the scheduler's working memory; revisit after the scheduler has soaked for a week. |
+| Phase 2 (monthly fact pickles) | New code on `dev` (extends this scheduler) | Queued. Shrinks the cached `df_stmt` ~16× and closes the per-worker pickle-load limitation. No DBA dependency; see [FACT_TABLE.md](FACT_TABLE.md). |
 | Phase 1 (Redis) | [SCALING_ROADMAP.md](SCALING_ROADMAP.md) Phase 1 | Deferred indefinitely. |
 | Phase 3 (gthread workers) | [SCALING_ROADMAP.md](SCALING_ROADMAP.md) Phase 3 | Deferred. |
 | Phase 4 (DBA index) | [SQL_INDEX_RECOMMENDATIONS.md](SQL_INDEX_RECOMMENDATIONS.md) | Unblocked, gated on DBA only. |
