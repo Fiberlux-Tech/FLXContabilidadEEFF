@@ -96,7 +96,9 @@ def _run(lockfile) -> None:
     # and so circular-import risk is avoided.
     from services.data_service import (
         invalidate_cache, load_pl_data, load_bs_data,
+        _caches, _build_fact, _save_to_disk,
     )
+    from config.company import CONSOLIDADO
     try:
         while True:
             now = datetime.now(_TZ)
@@ -108,7 +110,8 @@ def _run(lockfile) -> None:
                 # Defensive: in case sleep returned early or DST drift (Lima
                 # doesn't observe DST, but cheap to check).
                 continue
-            _refresh_cycle(now, invalidate_cache, load_pl_data, load_bs_data)
+            _refresh_cycle(now, invalidate_cache, load_pl_data, load_bs_data,
+                           _caches, _build_fact, _save_to_disk, CONSOLIDADO)
     except Exception:
         logger.exception("refresh_scheduler: thread crashed; lock retained")
         # Do not release the lock — re-election only on worker restart.
@@ -116,7 +119,8 @@ def _run(lockfile) -> None:
         # docs/SCHEDULED_REFRESH.md Risks section.
 
 
-def _refresh_cycle(start_at: datetime, invalidate_cache, load_pl_data, load_bs_data) -> None:
+def _refresh_cycle(start_at: datetime, invalidate_cache, load_pl_data, load_bs_data,
+                   caches, build_fact, save_to_disk, consolidado) -> None:
     global _last_cycle_complete_at, _last_cycle_failures
     year_now = start_at.year
     years = (year_now - 1, year_now)
@@ -129,6 +133,15 @@ def _refresh_cycle(start_at: datetime, invalidate_cache, load_pl_data, load_bs_d
                 invalidate_cache(company, year)
                 load_pl_data(company, year)
                 load_bs_data(company, year)
+                if company != consolidado:
+                    # Build the Phase 2 fact pickle from the just-cached df_stmt.
+                    # CONSOLIDADO has no separate pickle — it's reconstructed at
+                    # read time by concat-ing the 4 real-company fact pickles.
+                    # See docs/FACT_TABLE.md "CONSOLIDADO handling".
+                    df_stmt = caches["pl_stmt"].get(company, year)
+                    if df_stmt is not None:
+                        fact = build_fact(df_stmt)
+                        save_to_disk(company, year, fact, kind="fact")
                 logger.info("refresh: %s/%d done", company, year)
             except Exception as e:
                 failures.append(f"{company}/{year}: {e}")

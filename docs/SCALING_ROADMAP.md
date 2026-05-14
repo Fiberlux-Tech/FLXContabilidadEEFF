@@ -372,6 +372,21 @@ None — Phase 4 can run in parallel with any other phase. It's gated only on DB
 
 ---
 
+## Future considerations (not yet scoped phases)
+
+### CONSOLIDADO removal — product decision pending
+
+CONSOLIDADO is the single biggest contributor to memory pressure on the 5.8 GB box: its `df_stmt` pickle is ~257 MB (3× the next-largest), its cold-load is ~80 s (verified 2026-05-14 — see [FACT_TABLE.md](FACT_TABLE.md) "Why"), it's the recurring cause of stale-snapshot artifacts (separate refresh path from the 4 real companies), and it adds a `company == CONSOLIDADO` exception branch to every data-fetch code path.
+
+Phase 2 mitigates the worst of this by reading the consolidated summary as `pd.concat` of the 4 real-company fact pickles at fetch time — small, lockstep-refreshed, ~100 ms. But the legacy row-level path (`fetch_pnl_consolidated`, `_fetch_consolidated`) and the legacy `df_stmt_CONSOLIDADO.pkl` are still around for detail drill-down, and they retain the original complexity.
+
+**Open question for the finance team**: how often is the consolidated view actually used, and is it worth keeping?
+
+- If "rarely or never": drop the company from the picker, delete `_fetch_consolidated` and the legacy pickles, simplify five code paths. Frees ~360 MB of disk and removes the largest single OOM risk vector.
+- If "constantly": keep it as-is post-Phase-2. The fact-pickle concat already handles the summary path well; drill-down complexity is the residual cost.
+
+This is a product decision, not a tech one — needs a finance conversation before any code change. Listed here so it isn't forgotten; not a queued engineering phase.
+
 ## Sequencing summary
 
 Active path as of 2026-05-12:
@@ -388,6 +403,7 @@ Phase 0 (in flight) ──▶ Scheduled refresh ──▶ Phase 2 (queued)
 - **Phase 2** stays queued; it shrinks the working set the scheduler has to handle.
 - **Phase 1 + Phase 3** are deferred. They are not part of the active plan.
 - **Phase 4** is gated on the DBA only and unrelated to the scope change.
+- **CONSOLIDADO removal** is a product decision parked above. Not engineered yet.
 
 ## What this doc is not
 

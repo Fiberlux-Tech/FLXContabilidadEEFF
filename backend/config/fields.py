@@ -6,6 +6,7 @@ statements, export, and data service modules.
 """
 
 # ── Account & description columns ───────────────────────────────────────
+CIA = "CIA"
 CUENTA_CONTABLE = "CUENTA_CONTABLE"
 DESCRIPCION = "DESCRIPCION"
 ASIENTO = "ASIENTO"

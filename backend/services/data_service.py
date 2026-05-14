@@ -41,7 +41,7 @@ from excel.builder import build_excel_data, build_bs_data
 from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MIN_YEAR
 from config.company import VALID_COMPANIES
 from config.fields import (
-    ASIENTO, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL,
+    CIA, ASIENTO, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL,
     CENTRO_COSTO, DESC_CECO, FECHA, SALDO, PARTIDA_PL, PARTIDA_BS, MES,
     IS_INTERCOMPANY,
 )
@@ -275,9 +275,30 @@ def _save_to_disk(company: str, year: int, df: pd.DataFrame, kind: str = "df_stm
 
 def _delete_disk_cache(company: str, year: int) -> None:
     """Delete disk cache files for a specific company/year."""
-    for kind in ("df_stmt", "preagg", "preagg_ex_ic", "preagg_only_ic"):
+    for kind in ("df_stmt", "preagg", "preagg_ex_ic", "preagg_only_ic", "fact"):
         path = _stmt_disk_path(company, year, kind)
         path.unlink(missing_ok=True)
+
+
+def _build_fact(df_stmt: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate df_stmt to (CIA, MES, CUENTA, CECO) grain.
+
+    Bit-identical guarantee: PARTIDA_PL and IS_INTERCOMPANY are deterministic
+    functions of (CUENTA_CONTABLE, CENTRO_COSTO), which are grain keys here.
+    Aggregating by these keys preserves the per-row classification, so
+    pl_summary(df_stmt) == pl_summary(fact) at the (PARTIDA_PL, MES) grain.
+
+    See docs/FACT_TABLE.md for the full design.
+    """
+    grain = [CIA, MES, CUENTA_CONTABLE, CENTRO_COSTO]
+    agg = {
+        PARTIDA_PL: "first",
+        IS_INTERCOMPANY: "first",
+        SALDO: "sum",
+        DESCRIPCION: "first",
+        DESC_CECO: "first",
+    }
+    return df_stmt.groupby(grain, observed=True, sort=False).agg(agg).reset_index()
 
 
 def _clear_all_disk_cache() -> None:
