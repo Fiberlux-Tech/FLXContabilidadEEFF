@@ -13,6 +13,7 @@ See docs/SCHEDULED_REFRESH.md for the design rationale.
 
 import fcntl
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timedelta
@@ -45,6 +46,14 @@ def start() -> None:
     global _started
     with _start_lock:
         if _started:
+            return
+        # Set FLX_DISABLE_SCHEDULER=1 to skip the hourly refresh cycle.
+        # Used on staging so it doesn't compete with prod for memory on
+        # the shared 5.8 GB box. Staging gets fresh data via the manual
+        # backend/scripts/refresh_cache.py CLI on demand.
+        if os.environ.get("FLX_DISABLE_SCHEDULER", "").lower() in ("1", "true", "yes"):
+            logger.info("refresh_scheduler: disabled via FLX_DISABLE_SCHEDULER")
+            _started = True   # don't retry on subsequent calls
             return
         fh = _try_acquire_lock()
         if fh is None:
