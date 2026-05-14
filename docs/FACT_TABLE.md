@@ -1,7 +1,7 @@
 # Phase 2 — Monthly Fact Table
 
-> **Status**: Plan agreed 2026-05-14. Not yet implemented.
-> **Owner**: Backend team + DBA team (Path A) or Backend team alone (Path B).
+> **Status**: Plan revised 2026-05-14 after confirming `REPORTES.VISTA_ANALISIS_CECOS` is live (changes posted by finance appear immediately). Not yet implemented.
+> **Owner**: Backend team. No DBA dependency.
 > **Supersedes**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) Phase 2 section — that section is the agreement; this doc is the implementation spec.
 > **Depends on**: [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md) shipped and stable. Phase 2 closes the "Known limitation: per-worker pickle reload" left open by the scheduler.
 > **Last updated**: 2026-05-14.
@@ -14,85 +14,128 @@ The pickles are big because `df_stmt` contains row-level journal entries: ~165 M
 
 > **What Phase 2 does NOT touch**: detail drill-down (clicking into a number to see the underlying journal entries) still needs row-level data. That path keeps calling `fetch_pnl_data` and `fetch_pnl_only`. Only the *summary* path moves to the fact table. The BS path is also out of scope — Phase 2 ships a P&L fast path only.
 
-**User experience after Phase 2**: a cold-worker first click on any company drops from ~10 s to <1 s. Subsequent clicks on the same worker stay sub-second as today. The footer gains a "data as of YYYY-MM-DD 02:00 PE" indicator so users know summary numbers are nightly. Drill-down latency is unchanged and continues to hit the live view.
+**User experience after Phase 2**: a cold-worker first click on any company drops from ~10 s to <1 s. Subsequent clicks on the same worker stay sub-second as today. Freshness contract is preserved — summary, BS, and drill-down all reflect data at most one hour old, same as today's scheduler. No "data as of yesterday" footer; nothing changes from the user's perspective except speed.
 
-## DBA decision
+## Freshness contract (the constraint that drives this design)
 
-The fact table lives on a SQL Server we don't own. Two paths; we decide in the kickoff meeting based on what the DBA agrees to.
+`REPORTES.VISTA_ANALISIS_CECOS` is a **live view**: journal entries posted by the finance team appear in the view, and therefore in the dashboard's drill-down, immediately. Today's hourly scheduler caches that live data on a 60-minute window for the summary and BS paths. The whole dashboard shares one freshness clock: **at most 1 hour old**.
 
-### Questions to ask the DBA
+This is non-negotiable for Phase 2. If the summary path's clock drifts past 1 hour — say, to "data as of last night at 02:00" — users would see P&L totals that don't match the sum of journal entries visible in drill-down beneath them. That's a regression worse than the cold-worker latency Phase 2 is trying to fix.
 
-1. Can you expose the **underlying tables** behind `REPORTES.VISTA_ANALISIS_CECOS` so a SQL Agent job in your shop can `INSERT ... SELECT` from them into a new fact table?
-2. If not, can you give us **read access to the view** plus permission to write the fact table into a database **we own**, and we run the ETL on our side?
-3. What is your SLA for adding a new SQL Agent job? (We need the table rebuilt nightly at 02:00 PE.)
-4. Will the closing-entries filter (`FUENTE NOT LIKE 'CIERRE%'`, applied today in [backend/data/queries.py:57](../backend/data/queries.py#L57)) be applied at fact-table build time, or do we apply it post-fetch on our side?
-5. Can you index the fact table with a clustered index on `(CIA, ANIO, MES, CUENTA_CONTABLE)`?
-6. Where does the FECHA_ACT timestamp live in the source tables, so we can surface `MAX(FECHA_ACT)` as a "data as of" indicator?
+**Consequence**: any fact table we build must be **rebuilt hourly**, not nightly. The original (2026-05-13) version of this doc proposed nightly because it modeled the fact table after a typical DBA-owned data-warehouse artifact. That was wrong for our freshness contract. This revision corrects it.
 
-### Path A — DBA-owned (preferred)
+## How we build it (one path, not two)
 
-DBA builds `REPORTES.FACT_ANALISIS_MENSUAL` via a SQL Agent job running nightly at 02:00 PE against the underlying tables behind `VISTA_ANALISIS_CECOS`. We get read access and nothing else changes on their side.
+We build the fact table **ourselves**, on **our** server, **hourly**. No DBA conversation, no SQL Agent jobs, no SQL Server permissions beyond what we already have.
 
-| Pros | Cons |
-|------|------|
-| Single source of truth; no second database to operate | Schedule + index choices outside our control |
-| No new infra on our box | DBA timeline is the long pole |
-| `FECHA_ACT` derivable from source tables natively | Question 1 above is the gating answer |
+### What we already have
 
-### Path B — Ours (fallback)
+- Read access to `REPORTES.VISTA_ANALISIS_CECOS` via the existing pyodbc connection pool ([backend/data/queries.py:15](../backend/data/queries.py#L15)).
+- A daemon-thread scheduler pattern at [backend/services/refresh_scheduler.py](../backend/services/refresh_scheduler.py) (159 lines) that already runs hourly between 7am and 9pm Lima and reads from the view 15 times a day.
+- A disk cache directory at `backend/services/.stmt_cache/` with the `{kind}_{company}_{year}.pkl` naming convention.
 
-We build the fact table in a database we own (a new SQLite file at `backend/data/fact_table.db`, or a dedicated MSSQL instance if available), populated nightly by a Python ETL job that reads `VISTA_ANALISIS_CECOS` once at 02:00 PE and writes the aggregate. The ETL is a new daemon thread or systemd timer modeled after [backend/services/refresh_scheduler.py](../backend/services/refresh_scheduler.py).
+### What we add
 
-| Pros | Cons |
-|------|------|
-| Unblocks us if DBA cannot expose underlying tables | Two databases to keep in sync conceptually |
-| Schedule + schema entirely in our control | The nightly ETL still hits `VISTA_ANALISIS_CECOS` — slower than DBA-side, but only at 02:00 PE |
-| FECHA_ACT recorded by us at write time | New file in our deploy: ETL script + table DDL + systemd timer (or thread) |
+- A small **SQLite database** at `backend/data/fact_table.db` (or a directory of pickle files — see "Storage choice" below). Holds one row per `(CIA, ANIO, MES, CUENTA, CECO)` per company-year. Estimated size: ~10 MB total across all 5 companies × 2 years. Trivial.
+- An **hourly ETL** built into the existing scheduler. The current scheduler at [refresh_scheduler.py](../backend/services/refresh_scheduler.py) already runs each hour and for each company calls `invalidate_cache → load_pl_data → load_bs_data`. We modify it (or extend it) to also write the aggregated rows out to the fact table during each cycle. **No new daemon, no new schedule.**
+- A **fast-path read function** `fetch_pnl_summary_fast(company, year)` that reads from our SQLite/pickles instead of from the SQL Server view.
+- A **per-company feature flag** so we can flip companies one at a time during rollout, with rollback per company.
 
-### Decision criteria
+### What we do NOT add
 
-- Choose **Path A** if the DBA answers "yes" to question 1 or 2(a) (exposing tables) within the kickoff meeting.
-- Choose **Path B** if the DBA says "view only" or "we cannot add SQL Agent jobs in <2 weeks." Path B is the escape hatch; the rest of this doc is written so the code paths under both options are nearly identical, differing only in the connection string and DDL location.
+- No new SQL artifact on the DBA's server.
+- No DBA kickoff meeting.
+- No "Path A vs Path B" decision tree.
+- No new SQL Agent jobs.
+- No additional reads of `VISTA_ANALISIS_CECOS` — the scheduler already reads it 15× per day; the ETL piggybacks on those existing reads.
+
+### Storage choice: SQLite vs. pickles
+
+Either works. Default to **pickles** (`fact_{company}_{year}.pkl` in `.stmt_cache/`) because:
+
+- Symmetric with the existing disk cache convention.
+- No new database driver, no schema migration tooling, no concurrent-writer concerns.
+- Read by `pd.read_pickle` in <100 ms (the file is ~10 MB), well below the latency budget.
+- The existing `_save_to_disk` / `_try_pl_stmt_from_disk` helpers at [data_service.py:264](../backend/services/data_service.py#L264) generalize to a new `kind="fact"` value with no structural change.
+
+Only switch to SQLite if a future requirement needs cross-row queries against the fact (e.g., "show me all accounts where DEBITO > 1M across all companies"). The summary path does not need that.
+
+## What about the original Path A?
+
+Path A in the earlier revision proposed asking the DBA to build the fact table on their side via a SQL Agent job. **That is dropped from this plan.** Two reasons:
+
+1. **It doesn't help freshness.** A DBA-owned SQL Agent job rebuilds on whatever schedule the DBA agrees to. Hourly isn't a typical SQL Agent cadence — they'd need a recurring "every 60 min, 8am–10pm Lima" job, which is a non-standard ask. Even if granted, we don't gain anything over building it ourselves on the same cadence.
+2. **It adds latency to changes.** Any tweak to the fact table's grain, filtering, or schema requires a DBA ticket. Owning the ETL means we can change the schema by editing one Python file and redeploying.
+
+Path A might still be worth pursuing later if Phase 4 (DBA index work) reveals that the underlying tables behind the view need indexes the DBA hasn't built. But that's a separate conversation; the fact table doesn't need it.
 
 ## Architecture
 
-### Fact table schema
+### Fact-table shape (on disk)
+
+Stored as pickle files in `backend/services/.stmt_cache/`, one per real company per year. CONSOLIDADO is **not** stored — it is built at fetch time by concatenating the 4 real-company fact files (see "CONSOLIDADO handling" below).
 
 ```
-REPORTES.FACT_ANALISIS_MENSUAL  (or  flx.FACT_ANALISIS_MENSUAL  under Path B)
-
-  CIA               VARCHAR / NVARCHAR    -- 'FIBERLINE' | 'FIBERLUX' | 'FIBERTECH' | 'NEXTNET'
-  ANIO              SMALLINT
-  MES               TINYINT               -- 1..12
-  CUENTA_CONTABLE   VARCHAR / NVARCHAR
-  CENTRO_COSTO      VARCHAR / NVARCHAR
-  DEBITO            DECIMAL(18, 2)        -- SUM(DEBITO_LOCAL)  with FUENTE NOT LIKE 'CIERRE%'
-  CREDITO           DECIMAL(18, 2)        -- SUM(CREDITO_LOCAL) with FUENTE NOT LIKE 'CIERRE%'
-  FECHA_ACT         DATETIME              -- MIN(FECHA_ACT) of source rows in the bucket
-
-  Clustered index: (CIA, ANIO, MES, CUENTA_CONTABLE)
-  Rebuilt nightly at 02:00 PE.
+backend/services/.stmt_cache/fact_FIBERLUX_2025.pkl     ~2 MB
+backend/services/.stmt_cache/fact_FIBERLUX_2026.pkl     ~1 MB
+backend/services/.stmt_cache/fact_FIBERTECH_2025.pkl    ~5 MB
+... (one per company per year, 8 files total for real companies)
 ```
 
-Grain: one row per `(CIA, ANIO, MES, CUENTA_CONTABLE, CENTRO_COSTO)`. Real companies only; **CONSOLIDADO is not stored** in the fact table — it is built at fetch time by concatenating the 4 real-company fast fetches in Python. This is bit-identical with the existing path's behaviour, where [_fetch_consolidated](../backend/data/fetcher.py#L191) already runs 4 single-company queries in parallel and `pd.concat`s the results (line 207). The handoff prompt's empirical commutativity proof (2026-05-14, this session) extends to the aggregated case because `prepare_stmt` and `pl_summary` commute with `pd.concat`.
+Each pickle holds a pandas DataFrame at the grain `(CIA, ANIO, MES, CUENTA_CONTABLE, CENTRO_COSTO)` with columns matching the existing row-level fetch's column set so the downstream pipeline runs unchanged:
 
-> **Why not pre-derive `PARTIDA_PL` and `IS_INTERCOMPANY` into the fact table columns?** Because [assign_partida_pl](../backend/services/accounting/transforms.py#L97) and the `IS_INTERCOMPANY` derivation at [transforms.py:152-154](../backend/services/accounting/transforms.py#L152) are SACRED. Materializing them in SQL forks the definition. Keep the columns at their raw grain (`CUENTA_CONTABLE`, `CENTRO_COSTO`) and let the Python layer derive both from them — the small aggregated DataFrame is still 10 MB, the derivation is microseconds.
+| Column            | Source                                                 |
+|-------------------|--------------------------------------------------------|
+| `CIA`             | grain key                                              |
+| `ANIO`            | grain key                                              |
+| `MES`             | grain key                                              |
+| `CUENTA_CONTABLE` | grain key                                              |
+| `CENTRO_COSTO`    | grain key                                              |
+| `DEBITO_LOCAL`    | `SUM(DEBITO_LOCAL)` over the grain                     |
+| `CREDITO_LOCAL`   | `SUM(CREDITO_LOCAL)` over the grain                    |
+| `FECHA`           | synthesized as `date(year, MES, 1)`                    |
+| `DESCRIPCION`     | first non-null value per cuenta (cardinality is finite)|
+| `DESC_CECO`       | first non-null value per ceco                          |
+| `NIT`             | empty string (summary path doesn't read it)            |
+| `RAZON_SOCIAL`    | empty string                                           |
+| `ASIENTO`         | empty string                                           |
 
-### New fast-path queries
+The CIERRE filter (`FUENTE NOT LIKE 'CIERRE%'`, today at [queries.py:57](../backend/data/queries.py#L57)) is applied in the SQL that reads the view, **before** the aggregation runs. Same semantics as today's `fetch_pnl_data`.
+
+> **Why not pre-derive `PARTIDA_PL` and `IS_INTERCOMPANY` into the fact-table columns?** Because [assign_partida_pl](../backend/services/accounting/transforms.py#L97) and the `IS_INTERCOMPANY` derivation at [transforms.py:152-154](../backend/services/accounting/transforms.py#L152) are SACRED. Materializing them in the ETL forks the definition. Keep the columns at their raw grain (`CUENTA_CONTABLE`, `CENTRO_COSTO`) and let the Python layer derive both — the small aggregated DataFrame is still ~10 MB; the derivation runs in microseconds.
+
+### Hourly ETL (extending the existing scheduler)
+
+The existing scheduler at [refresh_scheduler.py](../backend/services/refresh_scheduler.py) already runs each hour during 7am–9pm Lima and reads `VISTA_ANALISIS_CECOS` for each `(company, year)` cell. We extend its `_refresh_cycle` body to also write the aggregated fact pickle for each cell:
+
+```
+for each (company, year) in smallest-first order:
+    invalidate_cache(company, year)
+    raw = fetch_pnl_data(company, year)                  # row-level, same as today
+    fact = raw.groupby([CIA, ANIO, MES, CUENTA, CECO]).agg(...)
+    pd.to_pickle(fact, ".stmt_cache/fact_{company}_{year}.pkl")
+    load_pl_data(company, year)                          # populates in-memory caches
+    load_bs_data(company, year)
+```
+
+**This piggybacks on existing work.** We don't add a second daemon thread, a second flock, or a second schedule. The aggregation step adds <1 s per company-year — negligible relative to the existing 5–10 min cycle.
+
+**Window**: the existing scheduler runs 07:00–21:00. If you want 08:00–22:00, that's a one-line change at [refresh_scheduler.py](../backend/services/refresh_scheduler.py) (constant `_REFRESH_HOURS`). Independent of the fact-table decision.
+
+### CONSOLIDADO handling
+
+CONSOLIDADO's fact data is **not stored** as a separate pickle. At fact-read time, `fetch_pnl_summary_fast(CONSOLIDADO, year)` reads the 4 real-company fact pickles and `pd.concat`s them — bit-identical to today's behaviour where [_fetch_consolidated](../backend/data/fetcher.py#L191) fans out 4 single-company queries and concatenates (line 207). The empirical commutativity proof from 2026-05-14 confirms this is safe: `prepare_stmt(concat([fact_FIBERLINE, fact_FIBERLUX, ...]))` produces the same PARTIDA_PL totals as the existing row-level path.
+
+This saves one ETL cycle per hour (we skip the CONSOLIDADO query entirely).
+
+### New fast-path read functions
 
 | Function | Lives in | Replaces (when flag is on) | Returns |
 |----------|----------|---------------------------|---------|
-| `fetch_pnl_summary_fast(conn, company, year)` | `backend/data/queries.py` (new, alongside `fetch_pnl_data`) | The per-company arm of [fetch_pnl_only](../backend/data/fetcher.py#L169) (which today calls `fetch_pnl_data`). | Aggregated DataFrame at fact-table grain |
-| `fetch_pnl_consolidated_fast(year, conn_factory)` | `backend/data/fetcher.py` (new, alongside `fetch_pnl_consolidated`) | [fetch_pnl_consolidated](../backend/data/fetcher.py#L212), which today fans out 4 row-level queries. | `pd.concat` of 4 fast-fetch results |
+| `fetch_pnl_summary_fast(company, year)` | `backend/data/queries.py` (new, alongside `fetch_pnl_data`) | The per-company arm of [fetch_pnl_only](../backend/data/fetcher.py#L169) | Aggregated DataFrame from `fact_{company}_{year}.pkl` |
+| `fetch_pnl_consolidated_fast(year)` | `backend/data/fetcher.py` (new, alongside `fetch_pnl_consolidated`) | [fetch_pnl_consolidated](../backend/data/fetcher.py#L212) | `pd.concat` of the 4 real-company fact pickles |
 
-Both functions return a DataFrame with **the same columns the current row-level fetch returns** (`CIA, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL, CENTRO_COSTO, DESC_CECO, FECHA, DEBITO_LOCAL, CREDITO_LOCAL, ASIENTO`), but with **far fewer rows** (one per `(MES, CUENTA, CECO)` instead of one per journal entry). The non-grain columns are filled as follows:
-
-- `DESCRIPCION`, `DESC_CECO`: lookup against a small descriptions cache (today these come straight from the view; under the fact table we need to populate them post-fetch from the same source). If the lookup is non-trivial, the simpler option is to add `DESCRIPCION` and `DESC_CECO` as additional grain-adjacent columns in the fact table, accepting the cardinality bump (one description per cuenta-ceco pair is finite). **Decide in kickoff.**
-- `NIT`, `RAZON_SOCIAL`: not present in the summary path; set to empty strings. The summary pipeline does not read them. Drill-down hits the row-level path which still has them.
-- `FECHA`: synthesize as `date(year, mes, 1)` — the summary path only uses month, not exact date.
-- `ASIENTO`: not used downstream of `prepare_stmt` for summary. Set to empty.
-
-The downstream pipeline (`_run_pl_summary_only` → `prepare_stmt` → `pl_summary`) sees a DataFrame of the same shape and runs unchanged.
+Both functions return a DataFrame with the column set listed in "Fact-table shape" above. The downstream pipeline (`_run_pl_summary_only` → `prepare_stmt` → `pl_summary`) sees the same shape it does today and runs unchanged.
 
 ### Per-company feature flag
 
@@ -112,31 +155,59 @@ CONSOLIDADO's flag is **logically gated** on all 4 real companies' flags being o
 
 File-by-file. Lines refer to the staging tree at the time this doc was written (2026-05-14); verify with `sed -n '<line>p' <file>` before editing.
 
-### New file: nothing in `backend/data/queries.py` itself yet — just an addition
+### New addition to `backend/data/queries.py`
 
-Add `fetch_pnl_summary_fast(conn, company, year)` after [fetch_pnl_data](../backend/data/queries.py#L79). Skeleton:
+Add `fetch_pnl_summary_fast(company, year)` after [fetch_pnl_data](../backend/data/queries.py#L79). Reads from disk, not from the SQL view:
 
 ```python
-def fetch_pnl_summary_fast(conn, company: str, year: int) -> pd.DataFrame:
-    """Fast P&L summary fetch from REPORTES.FACT_ANALISIS_MENSUAL.
+def fetch_pnl_summary_fast(company: str, year: int) -> pd.DataFrame:
+    """Fast P&L summary fetch from the hourly-built fact pickle.
 
     Returns rows at (CIA, ANIO, MES, CUENTA, CECO) grain, shaped to match
     the existing fetch_pnl_data column set so downstream transforms are
-    unchanged.  Used only on the summary path; drill-down keeps using
+    unchanged. Used only on the summary path; drill-down keeps using
     fetch_pnl_data.
+
+    Raises FileNotFoundError if the fact pickle is missing (the scheduler
+    hasn't built it yet; caller falls back to fetch_pnl_data).
     """
-    # SELECT ... FROM REPORTES.FACT_ANALISIS_MENSUAL WHERE CIA = ? AND ANIO = ?
-    # Then post-process: add DESCRIPCION/DESC_CECO via the joined columns
-    # (Path A: in the fact table; Path B: looked up from a cached map),
-    # synthesize FECHA = date(year, MES, 1), fill NIT/RAZON_SOCIAL/ASIENTO=''.
-    ...
+    path = STMT_CACHE_DIR / f"fact_{company}_{year}.pkl"
+    return pd.read_pickle(path)
 ```
 
-The exact SQL depends on Path A vs Path B (different schema/database). Both return the same DataFrame.
+No SQL connection needed — the pickle is local. The scheduler is responsible for keeping it fresh.
 
 ### Edit: `backend/data/fetcher.py`
 
-Add `fetch_pnl_consolidated_fast(year, conn_factory=None)` alongside [fetch_pnl_consolidated](../backend/data/fetcher.py#L212). Implementation: same shape as [_fetch_consolidated](../backend/data/fetcher.py#L191), substituting `fetch_pnl_summary_fast` for `fetch_pnl_data`. No new SQL — just a different per-company fetch function fed into the same ThreadPoolExecutor + `pd.concat` pattern.
+Add `fetch_pnl_consolidated_fast(year)` alongside [fetch_pnl_consolidated](../backend/data/fetcher.py#L212). Reads the 4 real-company fact pickles and concatenates:
+
+```python
+def fetch_pnl_consolidated_fast(year: int) -> pd.DataFrame:
+    """Fast CONSOLIDADO fetch: concat of 4 real-company fact pickles."""
+    dfs = [fetch_pnl_summary_fast(c, year) for c in REAL_COMPANIES]
+    return pd.concat(dfs, ignore_index=True)
+```
+
+No ThreadPoolExecutor, no SQL — disk reads in serial are fast enough (~100 ms total).
+
+### Edit: `backend/services/refresh_scheduler.py` — extend the cycle to write fact pickles
+
+The existing scheduler at [refresh_scheduler.py](../backend/services/refresh_scheduler.py) runs each hour and walks all `(company, year)` cells. Extend its per-cell body to write the fact pickle after the row-level data has been fetched:
+
+```python
+# Existing per-cell body (paraphrased from refresh_scheduler._refresh_cycle):
+invalidate_cache(company, year)
+load_pl_data(company, year)        # populates df_stmt cache + disk pickle
+load_bs_data(company, year)
+
+# New: also write the fact pickle.
+df_stmt = _caches["pl_stmt"].get(company, year)
+if df_stmt is not None:
+    fact = _aggregate_to_fact(df_stmt)
+    _save_to_disk(company, year, fact, kind="fact")
+```
+
+`_aggregate_to_fact` is a new helper (~15 lines) that groups by the grain keys and sums DEBITO_LOCAL / CREDITO_LOCAL. It lives in `data_service.py` next to `_save_to_disk`. The scheduler doesn't do any DB work for CONSOLIDADO — we still fetch CONSOLIDADO's row-level data via the existing path (for the drill-down cache), but we **don't** write a CONSOLIDADO fact pickle since `fetch_pnl_consolidated_fast` rebuilds it from the 4 real-company pickles at read time.
 
 ### Edit: `backend/config/settings.py`
 
@@ -164,10 +235,19 @@ Becomes:
 
 ```python
 if get_config().use_fact_table_for(company):
-    raw = (fetch_pnl_consolidated_fast(year)
-           if company == CONSOLIDADO
-           else _fetch_with_own_conn(fetch_pnl_summary_fast, connect, company, year))
-    logger.info("P&L fetch (fast path): %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
+    try:
+        raw = (fetch_pnl_consolidated_fast(year)
+               if company == CONSOLIDADO
+               else fetch_pnl_summary_fast(company, year))
+        logger.info("P&L fetch (fast path): %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
+    except FileNotFoundError:
+        # Fact pickle not built yet (first boot before scheduler runs).
+        # Fall through to the row-level path; the next scheduler cycle
+        # will populate the pickle.
+        logger.warning("fact pickle missing for %s/%d; falling back to row-level", company, year)
+        raw = (fetch_pnl_consolidated(year)
+               if company == CONSOLIDADO
+               else fetch_pnl_only(company, year))
 else:
     raw = (fetch_pnl_consolidated(year)
            if company == CONSOLIDADO
@@ -175,7 +255,7 @@ else:
     logger.info("P&L fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
 ```
 
-Everything downstream of this — `_run_pl_summary_only(raw)` at line 846, the four `_caches[...].set(...)` calls at 850-855, and the four [_save_to_disk](../backend/services/data_service.py#L264) calls at 859-862 — runs unchanged. The pickles on disk become smaller (the new fast path's `raw` is ~10 MB vs. the row-level path's ~250 MB for CONSOLIDADO), which is exactly the point.
+Everything downstream of this — `_run_pl_summary_only(raw)` at line 846, the four `_caches[...].set(...)` calls at 850-855, and the four [_save_to_disk](../backend/services/data_service.py#L264) calls at 859-862 — runs unchanged. The `df_stmt` pickle that gets cached after `prepare_stmt` is now ~10 MB instead of ~250 MB for CONSOLIDADO, which is exactly the point: the cold-worker pickle-load drops from ~10 s to <1 s.
 
 Intercepting in `_ensure_pl_stmt_cached` rather than separately in `load_pl_data` and `load_bs_data` (the handoff prompt's literal phrasing) is a deliberate simplification: `load_pl_data` at [data_service.py:888](../backend/services/data_service.py#L888) and `load_pl_section` at [data_service.py:947](../backend/services/data_service.py#L947) both go through this single helper. One intercept point, two consumers covered.
 
@@ -203,11 +283,11 @@ def main():
 
 The script imports from `services.data_service` and toggles the flag in-process by mutating an env var before calling — it does **not** restart gunicorn. Run from the staging tree CLI before flipping each company's flag in production.
 
-### Frontend: "data as of" footer
+### Frontend: no new UI
 
-The dashboard currently shows no last-refresh timestamp (verified by searching `frontend/src/` for "data as of", "last updated", "refreshed", "timestamp" — no hits). Add a small pill in [frontend/src/features/dashboard/TopBar.tsx](../frontend/src/features/dashboard/TopBar.tsx) (or in the existing main dashboard frame, designer's call) that displays a `data_as_of` value returned from the API. The value comes from the fact table's `MAX(FECHA_ACT)` per `(company, year)` and is propagated through `load_pl_data`'s return dict.
+Freshness is unchanged from today's scheduler (~1 hour). The dashboard already serves whatever the scheduler last loaded; users perceive no difference in freshness, only in speed. **No "data as of" footer is needed** — adding one would invite confusion about a staleness window that hasn't changed.
 
-Ship the footer with the FIBERTECH flag flip, not the FIBERLUX one — that way one company's worth of soak has confirmed the fast path before users see "yesterday's data" as a visible UX promise.
+If a follow-up project later wants a freshness indicator, that can be its own work; it isn't part of Phase 2.
 
 ## Validation
 
@@ -219,54 +299,47 @@ For every `(company, year, month)` triple across `{FIBERLINE, FIBERLUX, FIBERTEC
 
 ### Per-company rollback
 
-If a regression surfaces after a per-company flag flip on prod, set the corresponding `USE_FACT_TABLE_<COMPANY>=false` in `.env`, restart the service (`sudo systemctl restart flxcontabilidad`), validate that the dashboard re-serves correct numbers from the row-level path, file an issue for the underlying SQL fix. Other companies' flags stay on. The disk pickle cache should be invalidated on rollback so subsequent fetches re-populate from the live view; verify [invalidate_cache](../backend/services/data_service.py#L223) clears both `df_stmt_*` and the new `fact_*` pickles before shipping.
+If a regression surfaces after a per-company flag flip on prod, set the corresponding `USE_FACT_TABLE_<COMPANY>=false` in `.env`, restart the service (`sudo systemctl restart flxcontabilidad`), validate that the dashboard re-serves correct numbers from the row-level path, file an issue for the underlying aggregation fix. Other companies' flags stay on. The disk pickle cache should be invalidated on rollback so subsequent fetches re-populate from the live view; verify [invalidate_cache](../backend/services/data_service.py#L223) clears both `df_stmt_*` and the new `fact_*` pickles before shipping.
 
 ## Risks
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| **SACRED drift via the fact table SQL.** Server-side `SUM` may differ from pandas `sum`: NULL handling, decimal rounding, CIERRE filter applied at the wrong stage. | Medium pre-validation, zero after diff harness passes | High | Diff harness must be zero for every triple. No exceptions. If diffs are non-zero, fix the SQL, never the threshold. |
-| **Fact table staleness**: rebuilt nightly at 02:00 PE; mid-day journal entries don't appear in summary view until the next rebuild. | Certain (it's the design) | Medium | Footer "data as of YYYY-MM-DD 02:00 PE". Detail drill-down still hits the live view. Finance team confirmation before CONSOLIDADO flips. |
-| **DBA timeline outside our control.** | Medium | Medium | Path B is the escape valve; decide in kickoff. |
-| **`IS_INTERCOMPANY` derivation drift** if the fact table omits CUENTA or CECO from the grain. | Very low (grain explicitly includes both) | High | Schema review in kickoff. Diff harness catches it regardless. |
-| **Flag-flip inconsistency across workers** if `.env` is reloaded mid-flight. | Low | Medium | Env vars are read at boot only. Restart is the contract; document in DEPLOYMENT.md. |
-| **CIERRE-filter parity broken** in fact table. | Medium pre-validation | High | Diff harness catches it; verify with DBA at kickoff. Today the filter lives at [queries.py:57](../backend/data/queries.py#L57); the fact table must replicate it. |
-| **Disk-pickle staleness on flip-back.** If we flip a company off, the `fact_*.pkl` is no longer the authoritative cached representation; the row-level path doesn't read it. | Low | Low | `invalidate_cache(company, year)` already clears the per-`(company, year)` slot in every cache bucket. Add a check that the `fact` kind is included in `_delete_disk_cache` before shipping. |
-| **Descriptions cardinality** if we add `DESCRIPCION` and `DESC_CECO` to the fact table grain. | Low | Low | Description per `(cuenta, ceco)` pair is bounded; rough estimate ~50K rows per company-year, still 10× smaller than today's row-level pickle. |
+| **SACRED drift via the aggregation step.** A `groupby + sum` in the ETL may behave differently from pandas `sum` after `prepare_stmt`: NULL handling, decimal rounding, CIERRE filter applied at the wrong stage. | Medium pre-validation, zero after diff harness passes | High | Diff harness must be zero for every `(company, year, month)` triple. No exceptions. If diffs are non-zero, fix the aggregator, never the threshold. |
+| **Stale fact pickle when scheduler skips a cycle** (e.g., DB outage during 14:00 cycle leaves the 13:00 pickle in place). | Low | Low | Same risk applies today to the row-level pickle. The scheduler logs its outcome per cell; spot-check after deploys. No new exposure. |
+| **First-boot race**: gunicorn starts, a user request lands before the first scheduler cycle has built the fact pickle. | Medium during initial deploy | Low | The intercept code falls back to the row-level path on `FileNotFoundError`. The user pays a one-time cold-fetch cost; the next scheduler cycle populates the pickle and subsequent requests hit the fast path. |
+| **`IS_INTERCOMPANY` derivation drift** if the aggregation step accidentally drops CUENTA or CECO from the grain. | Very low (grain explicitly includes both) | High | Diff harness catches it; the assertion is at the `(PARTIDA_PL, month)` grain after the SACRED derivation. |
+| **Flag-flip inconsistency across workers** if `.env` is reloaded mid-flight. | Low | Medium | Env vars are read at boot only. Restart is the contract; documented in DEPLOYMENT.md. |
+| **CIERRE-filter parity broken** in the aggregation step. | Medium pre-validation | High | Diff harness catches it. The ETL reads `df_stmt` *after* `prepare_stmt` has already applied the filter via [queries.py:57](../backend/data/queries.py#L57), so we inherit the correct filter for free. |
+| **Disk-pickle staleness on flip-back.** If we flip a company off, the `fact_*.pkl` is no longer the authoritative cached representation; the row-level path doesn't read it. | Low | Low | `invalidate_cache(company, year)` already clears the per-`(company, year)` slot. Confirm `_delete_disk_cache` includes the `fact` kind before shipping. |
+| **Scheduler cycle time grows** by the cost of the aggregation step. | Very low (aggregation is sub-second vs. ~10 min cycle) | None | No mitigation needed; measure on staging soak. |
 
 ## Rollout
 
-In order, with go/no-go gates between steps.
+In order, with go/no-go gates between steps. **No DBA dependency** — every step is in our hands.
 
-1. **DBA kickoff** (~1 day). Send the schema + the six questions above. Decide Path A vs Path B at the end of the meeting. If Path B, scope our ETL job in the same meeting.
-2. **SQL artifact built** (~3-5 days, external). Blocks us. Path A: DBA's SQL Agent job lands and we validate one row by hand. Path B: we write `backend/scripts/build_fact_table.py` plus a systemd timer modeled after [refresh_scheduler.py](../backend/services/refresh_scheduler.py), and run it nightly on the prod box.
-3. **Fast-path code + flag + diff harness on `dev`** (~2 days). New `fetch_pnl_summary_fast`, `fetch_pnl_consolidated_fast`, settings flags, intercept in `_ensure_pl_stmt_cached`, new `backend/scripts/diff_fact_vs_view.py`. Commit message: `feat(fact-table): fast-path P&L summary fetch behind per-company flags`.
-4. **Diff harness validates zero diffs across all triples** (~1 day). Run on staging with all 5 flags toggled on in-process by the harness. Zero diffs is the gate. If any diff is non-zero, return to step 2 — fix the SQL.
-5. **Per-company flip + 48 h soak on staging**, in order:
+1. **Scheduler ETL extension + fast-path code + flag + diff harness on `dev`** (~2 days). Edits to `queries.py`, `fetcher.py`, `settings.py`, `data_service.py`, `refresh_scheduler.py`, plus new `backend/scripts/diff_fact_vs_view.py`. Commit message: `feat(fact-table): hourly P&L summary fact pickles behind per-company flags`.
+2. **Staging deploy + soak one scheduler cycle** (~1 day). Confirm fact pickles appear in `.stmt_cache/` after the next hourly cycle; spot-check file sizes (~10 MB or less).
+3. **Diff harness validates zero diffs across all triples** (~1 day). Run on staging with all 5 flags toggled on in-process. Zero diffs is the gate. If any diff is non-zero, return to step 1 — fix the aggregator.
+4. **Per-company flip + 48 h soak on staging**, in order:
    - FIBERLUX (smallest, lowest blast radius)
    - FIBERTECH
    - FIBERLINE
    - NEXTNET
-   - CONSOLIDADO last (depends on the 4 real-company flags being stable)
-6. **Footer "data as of"** ships alongside the FIBERTECH flip after FIBERLUX soaks cleanly.
-7. **Promote to prod** via `./promote.sh` from the prod tree per [DEPLOYMENT.md](DEPLOYMENT.md). Same flag flips repeated on prod, 48 h soak per company. Promotion of the flag is a `.env` edit on prod plus `sudo systemctl restart flxcontabilidad`.
+   - CONSOLIDADO last (depends on the 4 real-company flags being stable, since it reads their pickles)
+5. **Promote to prod** via `./promote.sh` from the prod tree per [DEPLOYMENT.md](DEPLOYMENT.md). Same flag flips repeated on prod, 48 h soak per company. Promotion of each flag is a `.env` edit on prod plus `sudo systemctl restart flxcontabilidad`.
 
-> **Do not flip CONSOLIDADO first to "see the biggest win."** CONSOLIDADO is `pd.concat` of 4 real-company fast fetches; if the fact table has a bug for one company, you will spot it faster on a single-company rollout.
+> **Do not flip CONSOLIDADO first to "see the biggest win."** CONSOLIDADO reads 4 real-company fact pickles; if one company's aggregation has a bug, you'll spot it faster on a single-company rollout.
 
 ## Effort and timeline
 
-Split between our team and the DBA.
-
-| Item                                       | Days | Owner |
-|--------------------------------------------|------|-------|
-| DBA kickoff spec + meeting                 | 1.0  | Ours  |
-| Fact table DDL + nightly job               | 3–5  | DBA (blocks us). Path B reduces to ~2 days ours. |
-| `fetch_pnl_summary_fast` + flag wiring + intercept in `_ensure_pl_stmt_cached` | 2.0  | Ours  |
-| Diff harness + cross-company validation    | 1.0  | Ours  |
-| Per-company rollout + 48 h soak each       | ~10 days elapsed (~2 days active) | Ours |
-| Footer "data as of"                        | 0.5  | Ours  |
-| **Ours, active**                           | **~5 days** | |
-| **Elapsed, dominated by DBA + soak**       | **~2 weeks** | |
+| Item                                                                            | Days | Owner |
+|---------------------------------------------------------------------------------|------|-------|
+| Scheduler ETL extension + `fetch_pnl_summary_fast` + flag wiring + intercept    | 2.0  | Ours  |
+| Diff harness + cross-company validation                                         | 1.0  | Ours  |
+| Per-company rollout + 48 h soak each                                            | ~10 days elapsed (~2 days active) | Ours |
+| **Ours, active**                                                                | **~5 days**       | |
+| **Elapsed, dominated by per-company soak windows**                              | **~2 weeks**      | |
 
 ## What this doc is not
 
