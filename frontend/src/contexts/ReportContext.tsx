@@ -231,7 +231,7 @@ interface IReportContext {
     isLoading: boolean;
     error: string | null;
     companiesError: string | null;
-    loadData: (force?: boolean) => Promise<void>;
+    loadData: () => Promise<void>;
     exportFile: (type: 'excel' | 'pdf' | 'all') => Promise<void>;
     isExporting: boolean;
     isBsLoading: boolean;
@@ -287,14 +287,13 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
     // ─── BS fetch (separate, on-demand) ────────────────────────
     const bsAbortRef = useRef<AbortController | null>(null);
 
-    const fetchBsData = useCallback(async (force = false, signal?: AbortSignal) => {
+    const fetchBsData = useCallback(async (signal?: AbortSignal) => {
         if (!state.selectedCompany) return;
         dispatch({ type: 'BS_LOAD_START' });
         try {
             const bsPromise = api.post<BSReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD_BS, {
                 company: state.selectedCompany,
                 year: state.selectedYear,
-                force_refresh: force,
             }, { signal });
 
             let prevBsPromise: Promise<BSReportData> | null = null;
@@ -302,7 +301,6 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
                 prevBsPromise = api.post<BSReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD_BS, {
                     company: state.selectedCompany,
                     year: state.selectedYear - 1,
-                    force_refresh: force,
                 }, { signal });
             }
 
@@ -315,7 +313,7 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
     }, [state.selectedCompany, state.selectedYear, state.periodRange]);
 
     // ─── P&L fetch (primary, fast path) ──────────────────────
-    const loadData = useCallback(async (force = false, signal?: AbortSignal) => {
+    const loadData = useCallback(async (signal?: AbortSignal) => {
         if (!state.selectedCompany) return;
         // Abort any in-flight section request before resetting state
         if (sectionAbortRef.current) { sectionAbortRef.current.abort(); sectionAbortRef.current = null; }
@@ -324,7 +322,6 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             const plPromise = api.post<PLReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD_PL, {
                 company: state.selectedCompany,
                 year: state.selectedYear,
-                force_refresh: force,
             }, { signal });
 
             let prevPlPromise: Promise<PLReportData> | null = null;
@@ -332,7 +329,6 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
                 prevPlPromise = api.post<PLReportData>(API_CONFIG.ENDPOINTS.DATA_LOAD_PL, {
                     company: state.selectedCompany,
                     year: state.selectedYear - 1,
-                    force_refresh: force,
                 }, { signal });
             }
 
@@ -358,7 +354,7 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
         debounceRef.current = setTimeout(() => {
             const controller = new AbortController();
             abortRef.current = controller;
-            loadData(false, controller.signal);
+            loadData(controller.signal);
         }, 300);
 
         return () => {
@@ -380,7 +376,7 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             if (bsAbortRef.current) bsAbortRef.current.abort();
             const controller = new AbortController();
             bsAbortRef.current = controller;
-            fetchBsData(false, controller.signal);
+            fetchBsData(controller.signal);
         }
     }, [state.currentView, state.reportData, state.isBsLoading, state.bsError, fetchBsData]);
 
