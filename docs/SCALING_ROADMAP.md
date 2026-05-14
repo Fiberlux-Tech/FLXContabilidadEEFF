@@ -67,7 +67,7 @@ What this changes for the roadmap:
 | Phase | Previous status | New status |
 |-------|-----------------|------------|
 | Phase 0 — Safety nets                  | In flight | **Still required**, work continues unchanged. The cgroup ceiling, smaller LRU caps, `FETCH_MAX_WORKERS=2`, and `mem_monitor` are belt-and-suspenders for the scheduler's working memory. |
-| Phase 1 — Redis-backed cache           | Next      | **Deferred indefinitely.** The scheduler removes the multi-worker duplicate-fetch problem Phase 1 was designed to solve. Re-open only if hourly staleness proves insufficient. |
+| Phase 1 — Redis-backed cache           | Next      | **De-phased.** The scheduler removes the duplicate-fetch problem Phase 1 was designed to solve, and Phase 2 makes the cache duplication economically irrelevant. Phase 1 only buys *sub-hour freshness* over the current design, which finance has not requested. Spec retained as audit trail and contingency. Do not implement unless (a) Phase 2 has shipped and (b) finance explicitly asks for sub-hour data freshness. |
 | Phase 2 — Monthly fact table           | Queued    | **Still relevant.** Shrinks the DataFrames the scheduler has to hold, helping the 5.8 GB envelope. |
 | Phase 3 — gthread workers              | Queued    | **Deferred.** Concurrency contention on the summary path stops being a bottleneck once the cache is always warm. Revisit only if drill-down (which still hits row-level data) becomes a queue-depth problem. |
 | Phase 4 — DBA index work               | Parallel  | **Unchanged.** Helps both scheduler-driven fetches and detail drill-down. |
@@ -154,9 +154,19 @@ None. Phase 0 starts immediately.
 
 ## Phase 1 — Move state out of workers (Redis-backed cache) (DEFERRED 2026-05-12)
 
-> **Goal**: Take the DataFrames out of gunicorn process memory entirely, so worker RSS is dominated by code + per-request scratch, not by accumulated cache state.
+> **Status**: De-phased. Not worth implementing under the current constraints. Kept in this document as an audit trail of the design decision and as a contingency spec if the constraints change.
+>
+> **Why this is no longer the right move**: Phase 1 was written to solve two problems at once — (a) cross-worker cache duplication and (b) slow cold cache reads. The scheduled-refresh design + Phase 2 (fact table) together address the user-visible symptoms of both:
+> - The **scheduler** (shipped 2026-05-12) removes all DB queries from the user request path. The "duplicate fetch" problem Phase 1 was the canonical answer to no longer exists, because no user request fetches anything; the scheduler does, in a single elected worker.
+> - **Phase 2** shrinks each cached DataFrame from ~150 MB pickled to ~10 MB. Once pickle loads are sub-second, the fact that each worker keeps its own copy stops being economically interesting — 3 × 10 MB × 10 entries = ~300 MB across all workers, well inside the 5.8 GB budget. The cross-worker duplication that Phase 1 was designed to eliminate becomes a footnote, not a bottleneck.
+>
+> **What Phase 1 would still uniquely solve**: real-time freshness. The scheduler caps freshness at one hour by design; the user accepted that on 2026-05-12. If finance ever needs sub-minute freshness — for example, if a workflow emerges where users post a journal entry and immediately refresh to confirm it appeared — Phase 1 is the way to deliver that. The scheduler can't, because it's structurally hourly. Redis-backed caching with on-request fills is the answer if and only if that requirement appears.
+>
+> **Do not implement Phase 1 unless**: (a) Phase 2 has shipped and is stable, and (b) finance has explicitly asked for sub-hour data freshness. Without both, Phase 1's complexity (new dependency, new failure mode, new ops surface) buys nothing the current design doesn't already deliver.
+>
+> **Goal (if revived)**: Take the DataFrames out of gunicorn process memory entirely, so worker RSS is dominated by code + per-request scratch, not by accumulated cache state.
 
-**Why**: Today, 3 workers × peak ~1.5 GB resident is the structural ceiling, and most of that 1.5 GB is cached DataFrames duplicated across workers. Moving the cache into a single Redis process with `maxmemory 2gb maxmemory-policy allkeys-lru` reclaims roughly 2 GB of duplicated state while bounding the cache itself with an eviction policy we control. Workers become almost stateless. As a free upgrade, cross-process single-flight (`_CrossProcLock`) collapses from a `fcntl.flock` dance into a one-liner `SET NX EX`.
+**Why (original framing, pre-pivot)**: Today, 3 workers × peak ~1.5 GB resident is the structural ceiling, and most of that 1.5 GB is cached DataFrames duplicated across workers. Moving the cache into a single Redis process with `maxmemory 2gb maxmemory-policy allkeys-lru` reclaims roughly 2 GB of duplicated state while bounding the cache itself with an eviction policy we control. Workers become almost stateless. As a free upgrade, cross-process single-flight (`_CrossProcLock`) collapses from a `fcntl.flock` dance into a one-liner `SET NX EX`.
 
 ### What changes
 
