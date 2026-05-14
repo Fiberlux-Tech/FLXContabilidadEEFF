@@ -1,8 +1,8 @@
 # Scaling Roadmap
 
-> **Status**: Draft — phases agreed 2026-05-12, none yet implemented.
+> **Status**: Phase 0 partially shipped 2026-05-12 (3 commits on `dev`); Phase 1 and Phase 3 **deferred** in favor of hourly scheduled refresh (see "Scope change" below and [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md)).
 > **Owner**: Backend team.
-> **Last updated**: 2026-05-12.
+> **Last updated**: 2026-05-12 (scope change).
 > **Supersedes**: Tier 2 and Tier 3 of [CONCURRENCY_SCALING.md](CONCURRENCY_SCALING.md). That doc's Tier 1 (timeout bump, single-flight, warmup post-mortem) remains the historical record for the 2026-05-05 incident and the 2026-05-12 warmup revert; do not re-litigate those sections here.
 
 ## Why this document exists
@@ -55,6 +55,26 @@ Targets, not benchmarks. Each phase's validation section defines how to confirm 
 - Past Phase 3, the realistic ceiling on this hardware is roughly **25–30 concurrent active users** (verify by load test before promising more). Beyond that, only more RAM helps; no software change in this plan removes that wall.
 - The SQL Server view `REPORTES.VISTA_ANALISIS_CECOS` (~8.4 M rows) is owned by the DBA team. Phase 2 and Phase 4 require their cooperation; nothing in this plan circumvents that.
 - The accounting transformation pipeline ([CODING_PATTERNS.md](CODING_PATTERNS.md) "Accounting Logic — SACRED, DO NOT MODIFY") is fixed. Any phase that touches data flowing into it must produce bit-identical numbers.
+
+---
+
+## Scope change 2026-05-12: scheduled refresh supersedes Phase 1
+
+After weighing the architectural cost of introducing Redis against the user's stated tolerance for **up to one hour of data staleness**, we pivoted away from a shared in-memory cache and toward an **hourly scheduler that refreshes the disk pickle cache for all 5 companies × 2 years between 7am and 9pm Lima time, every day including weekends**. User requests are then served exclusively from the warmed disk/in-memory caches; no user request ever triggers a DB fetch on the summary path. Full design in [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md).
+
+What this changes for the roadmap:
+
+| Phase | Previous status | New status |
+|-------|-----------------|------------|
+| Phase 0 — Safety nets                  | In flight | **Still required**, work continues unchanged. The cgroup ceiling, smaller LRU caps, `FETCH_MAX_WORKERS=2`, and `mem_monitor` are belt-and-suspenders for the scheduler's working memory. |
+| Phase 1 — Redis-backed cache           | Next      | **Deferred indefinitely.** The scheduler removes the multi-worker duplicate-fetch problem Phase 1 was designed to solve. Re-open only if hourly staleness proves insufficient. |
+| Phase 2 — Monthly fact table           | Queued    | **Still relevant.** Shrinks the DataFrames the scheduler has to hold, helping the 5.8 GB envelope. |
+| Phase 3 — gthread workers              | Queued    | **Deferred.** Concurrency contention on the summary path stops being a bottleneck once the cache is always warm. Revisit only if drill-down (which still hits row-level data) becomes a queue-depth problem. |
+| Phase 4 — DBA index work               | Parallel  | **Unchanged.** Helps both scheduler-driven fetches and detail drill-down. |
+
+Phase 0 work remaining on `dev` (not yet deployed): the `MemoryHigh=4G` / `MemoryMax=5G` systemd edit and the `FETCH_MAX_WORKERS=2` `.env` edit on staging+prod. Those ship as planned. The three Phase 0 commits already on `dev` (`c36d557`, `807d539`, `f17ea04`) stay; they are still useful safety nets even with the scheduler.
+
+The deferred phase sections below remain as the canonical specs for any future revival; they are no longer the active plan.
 
 ---
 
@@ -132,7 +152,7 @@ None. Phase 0 starts immediately.
 
 ---
 
-## Phase 1 — Move state out of workers (Redis-backed cache)
+## Phase 1 — Move state out of workers (Redis-backed cache) (DEFERRED 2026-05-12)
 
 > **Goal**: Take the DataFrames out of gunicorn process memory entirely, so worker RSS is dominated by code + per-request scratch, not by accumulated cache state.
 
@@ -251,7 +271,7 @@ This is the only phase that meaningfully reduces the *size* of cached data, as o
 
 ---
 
-## Phase 3 — Use the reclaimed headroom (threaded workers)
+## Phase 3 — Use the reclaimed headroom (threaded workers) (DEFERRED 2026-05-12)
 
 > **Goal**: Convert the memory savings from Phases 1 + 2 into concurrency. Move from 3 sync workers (3 concurrent requests) to 3 gthread workers × 4 threads (12 concurrent requests) without crossing the memory ceiling.
 
@@ -349,18 +369,20 @@ None — Phase 4 can run in parallel with any other phase. It's gated only on DB
 
 ## Sequencing summary
 
+Active path as of 2026-05-12:
+
 ```
-Phase 0  ──┐
-           ├──▶ Phase 1  ──┬──▶ Phase 3
-           │               │
-           └──▶ Phase 2  ──┘    (Phase 4 runs in parallel, gated only on DBA)
+Phase 0 (in flight) ──▶ Scheduled refresh ──▶ Phase 2 (queued)
+
+        Phase 1 (DEFERRED) ── Phase 3 (DEFERRED)
+        Phase 4 (DBA, parallel; gated only on DBA availability)
 ```
 
-- **Phase 0** is unblocking work — start now.
-- **Phase 1** is the architectural unlock; nothing past Phase 0 ships without it.
-- **Phase 2** can start in parallel with Phase 1 (DBA conversation kicks off immediately) but lands after Phase 1 because its rollout depends on shared cache.
-- **Phase 3** is gated on Phase 1 specifically.
-- **Phase 4** is gated on the DBA only.
+- **Phase 0** is partly shipped (3 commits on `dev`); operational steps (`.env`, systemd) still pending on staging + prod.
+- **Scheduled refresh** is the next major work — see [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md).
+- **Phase 2** stays queued; it shrinks the working set the scheduler has to handle.
+- **Phase 1 + Phase 3** are deferred. They are not part of the active plan.
+- **Phase 4** is gated on the DBA only and unrelated to the scope change.
 
 ## What this doc is not
 
