@@ -9,7 +9,9 @@
 
 The on-demand cache-fill model is the structural cause of the memory and latency pressure documented in [SCALING_ROADMAP.md](SCALING_ROADMAP.md): the first user to hit a cold `(company, year)` triggers a 30–60 s synchronous fetch in their request thread, and three workers can independently allocate the same ~600 MB DataFrame for the same company before the cross-process flock deduplicates them. Phase 1 of the roadmap was designed to fix this by moving the cache into Redis. Phase 1 is real engineering work — new dependency, new failure mode, new ops surface — and its win is mostly invisible to users who are already accustomed to "first click is slow."
 
-The user confirmed that **one hour of data staleness on the summary path is acceptable** for the finance team's workflow. Given that constraint, a far simpler design is sufficient: a background thread refreshes the cache on a schedule, and user requests are guaranteed to hit warm caches. No new dependency. No new failure mode visible to users (a cold cache becomes a deploy-window concern, not a per-request concern). The architectural cost of the pivot is "the dashboard shows data that is up to 60 minutes old." The finance team has accepted that cost.
+The user confirmed that **one hour of data staleness on the summary path is acceptable** for the finance team's workflow. Given that constraint, a far simpler design is sufficient: a background thread refreshes the cache on a schedule, and user requests are guaranteed to hit warm disk caches (no DB queries fired on the summary path). No new dependency. No new failure mode visible to users (cold-cache concerns become a deploy-window concern, not a per-request concern). The architectural cost of the pivot is "the dashboard shows data that is up to 60 minutes old." The finance team has accepted that cost.
+
+**What this design does NOT solve** (added 2026-05-14 after staging observation): the scheduler runs in one elected worker; the other 2 workers still pay a 5–15 second pickle-load cost the first time each `(company, year)` pair is requested on them. See "Known limitation" below. Phase 2 (fact table) shrinks pickles ~16× and effectively eliminates this remaining cost.
 
 ## Behavior
 
@@ -20,18 +22,46 @@ Concretely, during a normal day:
 | Time (Lima)  | What happens                                                                 |
 |--------------|------------------------------------------------------------------------------|
 | 07:00        | Scheduler fires. Walks 10 refresh units (5 companies × 2 years), serial, smallest first. Each unit: `invalidate_cache` → `load_pl_data` → `load_bs_data`. Cycle runs ~5–10 min (verify on staging). |
-| 07:30        | First user lands. Reads `FIBERLINE/2026` from the in-memory cache that the scheduler populated at 07:00. No DB hit. |
-| 07:30–08:00  | Users click around. Every read served from cache. Drill-down to detail journal entries hits row-level cache (already populated by the scheduler via `load_pl_data` → `_ensure_pl_stmt_cached`). |
+| 07:30        | First user lands. If they hit the elected worker, sub-second. If they hit one of the other 2 workers, they pay a pickle-load cost (5–15 s for the big companies — see "Known limitation" below). Either way, **no DB hit**. |
+| 07:30–08:00  | Users click around. Each `(company, year)` × worker combination pays the pickle cost once, then is instant from then on. After ~10 min of organic browsing all 3 workers are fully warm. Drill-down to detail journal entries hits row-level cache (already populated by the scheduler via `load_pl_data` → `_ensure_pl_stmt_cached`). |
 | 08:00        | Scheduler fires again. Re-invalidates and re-fetches. Active users transiently see a sub-second blip on their next click if they happen to land between `invalidate_cache` and the cache repopulation for the company they are viewing (see "Architecture" below for the ordering that minimizes this). |
 | 09:00, 10:00, … 21:00 | Refresh cycles continue. 15 cycles per day total. |
 | 21:00 – next 07:00 | Scheduler idle. Cache stays warm with the 21:00 snapshot for overnight viewing. After-hours users (rare) still hit fresh-enough data. |
 
-**Cold start (post-deploy or post-restart)**: the gunicorn workers restart, the in-memory `_caches` dicts are empty, but the disk pickle cache at `backend/services/.stmt_cache/` survives — `_try_pl_stmt_from_disk` at [data_service.py:766](../backend/services/data_service.py#L766) rehydrates from disk in seconds. Two scenarios:
+**Cold start (post-deploy or post-restart)**: the gunicorn workers restart, the in-memory `_caches` dicts are empty, but the disk pickle cache at `backend/services/.stmt_cache/` survives — `_try_pl_stmt_from_disk` at [data_service.py:766](../backend/services/data_service.py#L766) rehydrates from disk. Two scenarios:
 
-- **Restart during 07:00–21:00**: first user request after restart pays the pickle-load cost (~2–5 s for CONSOLIDADO_2025; verify on staging), then the next scheduled cycle refreshes from the DB. No user ever triggers a DB fetch on the summary path.
+- **Restart during 07:00–21:00**: first user request after restart pays the pickle-load cost (5–15 s for FIBERLINE/FIBERTECH, ~10 s for CONSOLIDADO_2025 — observed on staging 2026-05-14), then the next scheduled cycle refreshes from the DB. No user ever triggers a DB fetch on the summary path.
 - **Restart outside 07:00–21:00**: disk pickle is up to 10 hours old. First user gets the 21:00-previous-day snapshot until 07:00 fires. This is the same staleness window the user already accepted.
 
 **No manual refresh.** The Refresh button at [frontend/src/features/dashboard/TopBar.tsx:278-280](../frontend/src/features/dashboard/TopBar.tsx#L278) is removed. The `force_refresh` field in API request bodies is ignored (see Implementation). Internal `force_refresh=True` callers inside `get_detail_records` at [data_service.py:1220](../backend/services/data_service.py#L1220) and [data_service.py:1230](../backend/services/data_service.py#L1230) stay — those are the drill-down fallback for when a user clicks into a row that is not yet in the row-level cache; they are not user-facing refresh buttons.
+
+## Known limitation: per-worker pickle reload
+
+> **The scheduler eliminates DB queries on user requests, but does not eliminate the per-worker pickle-load cost.** Observed on staging 2026-05-14: 5–15 seconds of pandas deserialization per cold worker per `(company, year)` for the largest companies (FIBERLINE, FIBERTECH, CONSOLIDADO).
+
+We run 3 gunicorn workers (separate Python processes). Each worker has its own in-memory `_caches` dict. The scheduler runs in **one elected worker** and warms that worker's in-memory cache plus the shared on-disk pickles. The other 2 workers' in-memory caches remain empty until a user request lands on them.
+
+When a request lands on a "cold" worker:
+1. Worker checks `_caches["pl_stmt"][company, year]` → miss
+2. Worker calls `_try_pl_stmt_from_disk` → loads the pickle (5–15 s for big companies)
+3. Worker computes preaggs, populates its in-memory cache
+4. Future requests on that worker for the same `(company, year)` are instant (~ms)
+
+**User-visible impact:**
+- After scheduler cycle, the first 1–5 users browsing each `(company, year)` pair pay ~5–15 s on their first click on each cold worker
+- After ~10 minutes of organic browsing, all 3 workers have all 5 companies × 2 years warm in memory, and everything is sub-second for the rest of the day
+- On worker restart (deploy or systemd auto-restart), the warming-up window repeats
+- Worst case observed (cold worker, FIBERTECH trailing-12M, both years): ~30 s total wait spread across pickle loads for `df_stmt`, `preagg`, `preagg_ex_ic`, `preagg_only_ic`, then prev-year repeat
+
+**Why this remains after the scheduler:**
+The scheduler shares state **across cycles within one worker**, not across workers within one cycle. The cross-worker deduplication that Phase 1 (Redis) was designed to provide is what would eliminate this. We deferred Phase 1 in favor of the scheduler because the scheduler removes the *DB* cost (much bigger than the pickle-load cost), and the user accepted hourly staleness as a tradeoff against complexity. The pickle-load cost was understood at design time but its magnitude (15s for the big companies, not 2–5s) was confirmed only on the 2026-05-14 staging deploy.
+
+**Phase 2 (monthly fact table) makes this limitation disappear.** A 257 MB CONSOLIDADO_2025 pickle becomes ~10 MB after Phase 2. Pickle load time drops from ~10 s to <1 s, well below user-noticeable. Phase 2 is the natural next move; see [SCALING_ROADMAP.md](SCALING_ROADMAP.md) "Phase 2".
+
+**Mitigations available today without Phase 2:**
+- Encourage users to keep their dashboard tab open. The first click on each company warms that worker; subsequent clicks are instant on the same worker.
+- Reduce gunicorn worker count to 1 (would eliminate the duplication entirely, at the cost of concurrent-request capacity — not recommended without measuring).
+- Switch to `gthread` worker class (was deferred Phase 3; threads in the same process share the cache). Requires verifying thread safety end-to-end; held until Phase 1 or Phase 2 lands per the original roadmap.
 
 ## Architecture
 
