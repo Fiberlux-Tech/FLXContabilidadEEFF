@@ -1,6 +1,6 @@
 # Scaling Roadmap
 
-> **Status**: Phase 0 partially shipped 2026-05-12 (3 commits on `dev`); scheduled refresh shipped 2026-05-12. **Scope change 2026-05-22**: the active path is now the SQL views roadmap ([SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md)) — moving classification and aggregation into the database is structurally cheaper than every Python-side mitigation in this doc. Phase 1 (Redis) and Phase 3 (gthread) are deferred behind the SQL views work; the former Phase 2 (Python-side fact pickles) was deleted on 2026-05-22 because SQL views Phase C delivers the same artifact better. See "Scope change 2026-05-22" below.
+> **Status**: Phase 0 partially shipped 2026-05-12 (3 commits on `dev`). **Scope change 2026-05-22**: the active path is now the SQL views roadmap ([SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md)) — moving classification and aggregation into the database is structurally cheaper than every Python-side mitigation in this doc. Phase A (P&L classification) shipped; the scheduled refresh was deleted in Phase A.5; Phase 1 (Redis), Phase 2 (fact pickles), and Phase 3 (gthread) were either deleted or deferred because the SQL views path makes them unnecessary. See "Scope change 2026-05-22" below.
 > **Owner**: Backend team.
 > **Last updated**: 2026-05-22 (SQL views scope change).
 > **Supersedes**: Tier 2 and Tier 3 of [CONCURRENCY_SCALING.md](CONCURRENCY_SCALING.md). That doc's Tier 1 (timeout bump, single-flight, warmup post-mortem) remains the historical record for the 2026-05-05 incident and the 2026-05-12 warmup revert; do not re-litigate those sections here.
@@ -40,45 +40,26 @@ The 5.8 GB ceiling is non-negotiable. Reference baseline (post-Phase-0 steady st
 
 ---
 
-## Scope change 2026-05-12: scheduled refresh supersedes Phase 1
+## Scope change 2026-05-22: SQL views supersede every Python-side mitigation
 
-After weighing the architectural cost of introducing Redis against the user's stated tolerance for **up to one hour of data staleness**, we pivoted away from a shared in-memory cache and toward an **hourly scheduler that refreshes the disk pickle cache for all 4 companies × 2 years between 7am and 9pm Lima time, every day including weekends**. User requests are then served exclusively from the warmed disk/in-memory caches; no user request ever triggers a DB fetch on the summary path. Full design in [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md).
+On 2026-05-22 the team received permission to create views in the source SQL Server (`REPORTES` schema and the per-CIA schemas). This unlocks a fundamentally different lever: **push work out of Python and into the database**, where it can be shared across all workers without RAM duplication and where the engine is much faster at the GROUP BY than pandas is. Active plan lives in [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md).
 
-What this changes for the roadmap:
+What SQL views deliver:
 
-| Phase | Previous status | New status |
-|-------|-----------------|------------|
-| Phase 0 — Safety nets                  | In flight | **Still required**, work continues unchanged. The cgroup ceiling, smaller LRU caps, `FETCH_MAX_WORKERS=2`, and `mem_monitor` are belt-and-suspenders for the scheduler's working memory. |
-| Phase 1 — Redis-backed cache           | Next      | **De-phased.** The scheduler removes the duplicate-fetch problem Phase 1 was designed to solve. Phase 1 only buys *sub-hour freshness* over the current design, which finance has not requested. Spec retained as audit trail and contingency. |
-| Phase 3 — gthread workers              | Queued    | **Deferred.** Concurrency contention on the summary path stops being a bottleneck once the cache is always warm. Revisit only if drill-down (which still hits row-level data) becomes a queue-depth problem. |
-| Phase 4 — DBA index work               | Parallel  | **Unchanged.** Helps both scheduler-driven fetches and detail drill-down. |
-
-Phase 0 work remaining on `dev` (not yet deployed): the `MemoryHigh=4G` / `MemoryMax=5G` systemd edit and the `FETCH_MAX_WORKERS=2` `.env` edit on staging+prod. Those ship as planned. The three Phase 0 commits already on `dev` (`c36d557`, `807d539`, `f17ea04`) stay; they are still useful safety nets even with the scheduler.
-
-The deferred phase sections below remain as the canonical specs for any future revival; they are no longer the active plan.
-
----
-
-## Scope change 2026-05-22: SQL views supersede Phase 2
-
-On 2026-05-22 the team received permission to create views in the source SQL Server (`REPORTES` schema and the per-CIA schemas). This unlocks a fundamentally different lever: **push work out of Python and into the database**, where it can be shared across all workers without RAM duplication and where the engine is much faster at the GROUP BY than pandas is.
-
-Concretely, what SQL views deliver that the Python-side phases in this doc cannot:
-
-1. **Classification moves to SQL.** `prepare_pnl → filter_for_statements → assign_partida_pl` and the BS equivalents collapse into view definitions. The CASE expression that today runs in a Python `np.select` over 8.4M rows runs once in the engine's query plan instead. Benchmarked 3.4–7.9× speedup on aggregated fetches (Phase A evidence in [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md)).
+1. **Classification moves to SQL.** `prepare_pnl → filter_for_statements → assign_partida_pl` and the BS equivalents collapse into view definitions. The CASE expression that today runs in a Python `np.select` over 8.4M rows runs once in the engine's query plan instead. Benchmarked 3.4–7.9× speedup on aggregated fetches.
 2. **Aggregation moves to SQL (Phase C).** Instead of pulling 8.4M rows and grouping in pandas to produce ~100 summary rows, the dashboard fetches the ~100 rows directly. The DataFrame held per worker shrinks roughly two orders of magnitude. This is the move that makes concurrent load comfortable on the 5.8 GB box, because the per-request and per-worker memory cost both collapse at the source.
 3. **One source of truth.** Today the same classification rules exist in Python and as embedded knowledge in any SQL the finance team writes for Excel-via-ODBC. The view collapses both into one place.
 
-What this changes for the roadmap:
+What this changed for every prior phase in this doc:
 
-| Phase | Previous status | New status |
-|-------|-----------------|------------|
-| Phase 0 — Safety nets                  | Partially shipped | **Still in place.** The cgroup ceiling and LRU caps remain as belt-and-suspenders; nothing here is undone by the SQL views work. |
-| Scheduled refresh                      | Shipped 2026-05-12 | **Still in place.** The scheduler still fires hourly; what it fetches becomes smaller and cheaper after the SQL views land. |
-| Phase 1 — Redis                        | Deferred 2026-05-12 | **Still deferred.** Same reasoning — Phase C shrinks each worker's cached DataFrame two orders of magnitude, so cross-worker duplication stops being a memory problem. |
-| Phase 2 — Monthly fact pickles         | Queued | **Deleted 2026-05-22.** SQL views Phase C builds the same aggregated artifact in the database engine, shared across workers, with no per-worker pickle-load tax. The Python-side approach was strictly worse and has been removed (`docs/FACT_TABLE.md` deleted; no fact-pickle code shipped). |
-| Phase 3 — gthread workers              | Deferred | **Deferred indefinitely.** Once classification + aggregation move to SQL, per-request CPU drops far enough that 3 sync workers comfortably cover the user load. |
-| Phase 4 — DBA index work               | Parallel | **Folded into the SQL views workstream.** Indexes on `(CIA, FECHA, CUENTA_CONTABLE)` of the underlying tables remain valuable; the conversation moves into the SQL views deployment cycle. |
+| Prior phase                          | Disposition |
+|--------------------------------------|-------------|
+| Phase 0 — Safety nets                | **Still in place.** The cgroup ceiling and LRU caps remain as belt-and-suspenders; nothing here is undone by the SQL views work. |
+| Scheduled refresh (shipped 2026-05-12) | **Deleted 2026-05-22.** Misbehaving in prod (FIBERLINE never finished hourly window; cycles clobbered each other; only warmed 1 of 3 workers anyway). Phase A makes per-request fetches fast enough that no pre-warming is needed, and Phase C will make them sub-second. `refresh_scheduler.py` removed; see [SQL_VIEWS_ROADMAP.md Phase A.5](SQL_VIEWS_ROADMAP.md). |
+| Phase 1 — Redis-backed cache         | **Deferred indefinitely.** Buys only sub-hour freshness over the current design, which finance has not requested. Phase C also shrinks the cached payload two orders of magnitude, so the cross-worker duplication Redis was designed to fix stops mattering. Section retained as contingency spec only. |
+| Phase 2 — Monthly fact pickles       | **Deleted 2026-05-22.** SQL views Phase C builds the same aggregated artifact in the database engine, shared across workers, with no per-worker pickle-load tax. `docs/FACT_TABLE.md` deleted; no fact-pickle code shipped. |
+| Phase 3 — gthread workers            | **Deferred indefinitely.** Once classification + aggregation move to SQL, per-request CPU drops far enough that 3 sync workers comfortably cover the user load. |
+| Phase 4 — DBA index work             | **Folded into the SQL views workstream.** Indexes on `(CIA, FECHA, CUENTA_CONTABLE)` of the underlying tables remain valuable; the conversation moves into the SQL views deployment cycle. |
 
 **Why this is the right pivot.** Every Python-side phase in this document was a defense against the wrong constraint. The real constraint was that we were doing the engine's job (classification, aggregation) in pandas on a 5.8 GB box. SQL views remove the work from our box rather than make our box tolerate the work. That's a structural fix, not a mitigation.
 
@@ -163,11 +144,9 @@ None. Phase 0 starts immediately.
 
 > **Status**: De-phased. Not worth implementing under the current constraints. Kept in this document as an audit trail of the design decision and as a contingency spec if the constraints change.
 >
-> **Why this is no longer the right move**: Phase 1 was written to solve two problems at once — (a) cross-worker cache duplication and (b) slow cold cache reads. The scheduled-refresh design + SQL views Phase C together address the user-visible symptoms of both:
-> - The **scheduler** (shipped 2026-05-12) removes all DB queries from the user request path. The "duplicate fetch" problem Phase 1 was the canonical answer to no longer exists, because no user request fetches anything; the scheduler does, in a single elected worker.
-> - **SQL views Phase C** shrinks the cached summary payload to ~100 rows (~10 KB) per cell. Once cached entries are kilobytes, the fact that each worker keeps its own copy stops being economically interesting — cross-worker duplication becomes a footnote, not a bottleneck.
+> **Why this is no longer the right move**: Phase 1 was written to solve two problems at once — (a) cross-worker cache duplication and (b) slow cold cache reads. SQL views Phase A + C address both directly: classification + aggregation move into SQL, so per-request fetches become fast (Phase A: ~6 s for FIBERLINE; Phase C target: sub-second) and the cached payload shrinks from ~400 MB to ~10 KB per `(company, year)` (Phase C). Once cached entries are kilobytes, the fact that each worker keeps its own copy stops being economically interesting — cross-worker duplication becomes a footnote, not a bottleneck.
 >
-> **What Phase 1 would still uniquely solve**: real-time freshness. The scheduler caps freshness at one hour by design; the user accepted that on 2026-05-12. If finance ever needs sub-minute freshness — for example, if a workflow emerges where users post a journal entry and immediately refresh to confirm it appeared — Phase 1 is the way to deliver that. The scheduler can't, because it's structurally hourly. Redis-backed caching with on-request fills is the answer if and only if that requirement appears.
+> **What Phase 1 would still uniquely solve**: real-time freshness across workers. If finance ever needs sub-minute freshness — for example, if a workflow emerges where users post a journal entry and immediately refresh to confirm it appeared — Phase 1 is the way to deliver that. Redis-backed caching with on-request fills is the answer if and only if that requirement appears.
 >
 > **Do not implement Phase 1 unless** finance has explicitly asked for sub-hour data freshness. Without that requirement, Phase 1's complexity (new dependency, new failure mode, new ops surface) buys nothing the current design doesn't already deliver.
 >
@@ -293,7 +272,7 @@ None. Phase 0 starts immediately.
 >
 > **Goal**: Reduce DB-side query latency on the `VISTA_ANALISIS_CECOS` path. Out of our hands; included for completeness.
 
-**Why**: Even with the scheduler and SQL views, the first user after a deploy still triggers a row-level fetch for detail drill-down. If the underlying tables behind `VISTA_ANALISIS_CECOS` don't have a covering index on `(CIA, FECHA, CUENTA_CONTABLE)`, those cold fetches will always be slow. After SQL views Phase A/B land, the same index also accelerates the `VISTA_PNL_PREPARADO` / `VISTA_BS_PREPARADO` plans (they read from the same underlying tables via the per-CIA `VISTA_ANALISIS_CECOS` views).
+**Why**: Even with the SQL views in place, the first user after a deploy still triggers a row-level fetch for detail drill-down. If the underlying tables behind `VISTA_ANALISIS_CECOS` don't have a covering index on `(CIA, FECHA, CUENTA_CONTABLE)`, those cold fetches will always be slow. After SQL views Phase A/B land, the same index also accelerates the `VISTA_PNL_PREPARADO` / `VISTA_BS_PREPARADO` plans (they read from the same underlying tables via the per-CIA `VISTA_ANALISIS_CECOS` views).
 
 ### What changes
 
@@ -335,16 +314,16 @@ None — Phase 4 can run in parallel with any other phase. It's gated only on DB
 Active path as of 2026-05-22:
 
 ```
-Phase 0 (shipped) ──▶ SQL views Phase A ──▶ Phase A.5 (disable scheduler)
-                                              ──▶ Phase B ──▶ Phase C (deletes scheduler)
+Phase 0 (shipped) ──▶ SQL views Phase A (shipped) ──▶ A.5 scheduler deleted (shipped)
+                                                        ──▶ Phase B ──▶ Phase C
 
         Phase 1 (DEFERRED) ── Phase 3 (DEFERRED)
         Phase 4 (folded into SQL views deployment cycle)
 ```
 
 - **Phase 0** is shipped on `dev`; operational steps (`.env`, systemd) still pending on staging + prod and continue to ship independently of the SQL views work.
-- **Scheduled refresh** was shipped 2026-05-12 but is now disabled in prod (Phase A.5 of the SQL views roadmap, 2026-05-22). Evidence in [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md) header. Scheduler code + doc deleted as part of Phase C cleanup commit.
-- **SQL views Phase A → A.5 → B → C** is the active work — see [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md). Phase A migrates P&L classification, A.5 disables the misbehaving scheduler, Phase B migrates BS, Phase C pushes summary aggregation into SQL (the move that buys structural concurrency headroom) and deletes the scheduler.
+- **Scheduled refresh** was shipped 2026-05-12 and deleted 2026-05-22. Reasons recorded in [SQL_VIEWS_ROADMAP.md Phase A.5](SQL_VIEWS_ROADMAP.md). Phase A makes per-request fetches fast enough that pre-warming is unnecessary.
+- **SQL views Phase A → B → C** is the active work — see [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md). Phase A (P&L classification in SQL) shipped 2026-05-22. Phase B (BS classification) is next. Phase C pushes summary aggregation into SQL and is the move that buys structural concurrency headroom.
 - **Phase 1 and Phase 3** are deferred contingency specs, not part of the active plan. (Phase 2 was deleted on 2026-05-22 once SQL views Phase C made it obsolete.)
 - **Phase 4** (DBA index work) is folded into the SQL views deployment cycle; the index conversation moves into the same DBA channel that handles view DDL deploys.
 

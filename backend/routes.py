@@ -129,9 +129,9 @@ def _handle_data_errors(label: str):
 def _timed_load(service_fn, body, company, year):
     """Call a data-loading service function with timing.
 
-    Data freshness is governed by the hourly scheduler (see
-    docs/SCHEDULED_REFRESH.md). The legacy `force_refresh` request field
-    is silently ignored if any old client still sends it.
+    Data is loaded on demand and served from the in-memory + disk cache.
+    The legacy `force_refresh` request field is silently ignored if any
+    old client still sends it.
     """
     t0 = time.perf_counter()
     data = service_fn(company, year)

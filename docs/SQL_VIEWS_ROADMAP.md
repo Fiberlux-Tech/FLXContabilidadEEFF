@@ -4,7 +4,7 @@
 > **Owner**: Backend team. DDL deploys require DBA (current `STERNERO` login is SELECT-only on the new views).
 > **Last updated**: 2026-05-22.
 > **Supersedes**: The Python-side Phase 2 (monthly fact pickles) plan that previously lived in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) and `docs/FACT_TABLE.md` (deleted 2026-05-22). The SQL views path delivers the same aggregated artifact in the database engine, shared across all workers, with no per-worker pickle-load tax.
-> **Related**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) (memory budget — Phase C of this doc is where the budget gets structurally easier), [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md) (the hourly refresh path is what consumes these views).
+> **Related**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) (memory budget — Phase C of this doc is where the budget gets structurally easier).
 
 ## Why this document exists
 
@@ -16,7 +16,7 @@ Three wins:
 2. **Concurrent-load headroom on the 5.8 GB box.** Phase C is the move that fixes the scaling problem at its source. Today each worker pulls 8.4M rows and groups them in pandas to produce ~100 summary rows; under concurrent load that pandas state is what pushes the box toward OOM. After Phase C, the view returns the ~100 rows directly and the worker holds ~10 KB instead of ~400 MB per cached `(company, year)`. **This is what unblocks scaling without buying more RAM.**
 3. **One source of truth**: today the classification rules exist in Python and **also** as embedded knowledge in any SQL written by the finance team for Excel-via-ODBC. Pushing the rules into a view collapses those into one place — the view definition.
 
-The cache architecture (scheduled hourly refresh, disk pickles, in-memory LRU) stays the same; the *contents* of what's cached become smaller and cheaper to compute. The scheduler keeps firing hourly; what it fetches is just much smaller after the views land.
+The cache architecture is now back to on-demand fill plus the in-memory LRU + disk pickle layers that existed before the scheduler. The scheduler is gone (see Phase A.5 below); after Phase A the per-request fetch is fast enough that pre-warming is unnecessary, and after Phase C the cached payload is small enough that cross-worker duplication stops mattering.
 
 ## Constraints discovered during phase A
 
@@ -73,29 +73,26 @@ The aggregated row is the one the dashboard's `pl_summary` actually needs. The "
 - Excel export still includes the `by_cuenta` / `by_ceco` / `by_ceco_cuenta` raw sheets with the same row counts as today (inventory `60.x` accounts still present).
 - `git grep prepare_pnl filter_for_statements assign_partida_pl PROVISION_INCOBRABLE_CUENTAS` returns zero hits in `backend/`.
 
-### Phase A.5 — Disable the scheduler  (immediate, no wait for B/C)
+### Phase A.5 — Scheduler deleted  (shipped 2026-05-22)
 
-**Status (added 2026-05-22).** The hourly cache refresh ([SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md)) is misbehaving in prod and is **actively making the dashboard slower than it would be without it**. To be removed entirely once Phase C ships; disabled immediately as an interim mitigation.
+**Outcome.** The hourly cache refresh and its supporting CLI were deleted entirely: `backend/services/refresh_scheduler.py`, `backend/scripts/refresh_cache.py`, `docs/SCHEDULED_REFRESH.md`, and the `_start_refresh()` call in `backend/app.py`. We considered an env-gate intermediate step but chose outright deletion to avoid carrying dead code.
 
-**Evidence from prod logs on 2026-05-22.**
-- 14 hourly cycles started today; only 3 completed. FIBERLINE 2025 + 2026 takes ~5 min combined and the cycle straddles the next hourly fire, which calls `invalidate_cache` again before the previous refresh finishes.
-- Workers restarted 7 times in 2 hours (gunicorn `max_requests` recycle or cgroup pressure). Every restart kills the in-flight scheduler thread.
-- FIBERLINE's disk pickle is stale by ~5 hours despite the scheduler claiming to refresh it hourly. Users hitting FIBERLINE between failed cycles pay the **full cold-cache cost (30–60 s)** because the pickle was invalidated by a cycle that never repopulated.
-- "Known limitation" ([SCHEDULED_REFRESH.md:38-57](SCHEDULED_REFRESH.md#L38-L57)): scheduler only warms 1 of 3 workers anyway. Other workers always pay the 5–15 s pickle-load tax. The premise that the scheduler eliminated per-request DB queries was only ever half-true.
+**Why this was the wrong design.** The scheduler was a 350+ line Python-side workaround for an expensive SQL query. It pre-fetched 8.4M rows × 8 cells, pickled 700+ MB to disk, and hoped 3 separate worker processes would deserialize fast enough. In prod the evidence (2026-05-22 logs) showed it was *worse than nothing* for FIBERLINE:
 
-**Why the scheduler was the wrong solution.** It's a 350+ line Python-side workaround that pre-fetches 8.4M rows × 8 cells, pickles 700+ MB to disk, and hopes 3 separate worker processes deserialize fast enough — all to avoid one expensive SQL query. The query is expensive because Python is doing classification + aggregation that the SQL engine could do in <1s. The right answer is to make the query cheap, not to hide it behind a scheduler. Phases A + C do exactly that.
+- 14 hourly cycles started in one day; only 3 completed. FIBERLINE 2025 + 2026 takes ~5 min combined and the cycle straddled the next hourly fire, which called `invalidate_cache` again before the previous refresh finished.
+- Workers restarted 7 times in 2 hours (gunicorn `max_requests` recycle or cgroup pressure). Every restart killed the in-flight scheduler thread.
+- FIBERLINE's disk pickle was stale by ~5 hours despite the scheduler claiming to refresh it hourly. Users hitting FIBERLINE between failed cycles paid the **full cold-cache cost (30–60 s)** because the pickle was invalidated by a cycle that never repopulated.
+- Documented "known limitation": the scheduler only warmed 1 of 3 workers anyway; other workers always paid the 5–15 s pickle-load tax. The premise that the scheduler eliminated per-request DB queries was only ever half-true.
 
-**What ships in A.5.**
-- Comment out the `_start_refresh()` call in [backend/app.py](../backend/app.py) (~line 130).
-- Leave `refresh_scheduler.py` on disk; deletion happens in Phase C's cleanup step.
-- Update the deployment doc to note the scheduler is disabled.
+The expensive query was expensive because Python was doing classification + aggregation that the SQL engine could do in <1s. The right answer is to make the query cheap, not to hide it behind a scheduler. Phase A makes classification cheap (this is shipped); Phase C makes aggregation cheap. After both land, on-demand cache fill is sub-second per request — no pre-warming necessary.
 
-**User-visible effect after A.5.**
-- First click per `(company, year)` per worker: 30–60 s (was the same when the scheduler had failed; better than today's broken-FIBERLINE situation where the cache is invalidated then never repopulated).
+**User-visible effect.**
+- First click per `(company, year)` per worker: ~6 s (the new view-based fetch is much faster than the old ~30–60 s cold fetch — Phase A's win).
 - Subsequent clicks: sub-second from cache (unchanged).
-- Switching companies: still slow on cold workers (Phase A through C is what fixes this).
+- No more mid-day invalidate-then-fail clobbers.
+- Switching companies: still slow on cold workers until Phase C lands.
 
-**Why not wait for Phase C to remove it.** The scheduler is currently *worse than nothing* for FIBERLINE because it calls `invalidate_cache` and then fails to repopulate. Disabling it now restores predictable on-demand cache-fill behavior immediately.
+**What's left.** Phase C still references the pre-Phase-A.5 cleanup work — only the "Refresh button stays removed" and "force_refresh ignore plumbing" notes remain as cleanup items. Those are tiny; will fold into Phase B or C.
 
 ### Phase B — Balance Sheet migration
 
@@ -127,7 +124,7 @@ Each of these is order-sensitive against the cumsum and likely needs a stored fu
 **Why this is the move that makes concurrent load comfortable on the 5.8 GB box.** Phase A removes Python classification but Flask still pulls 8.4M rows per `(company, year)` and groups them in pandas. That ~400 MB of pandas state per worker per company is the structural reason concurrent users push the box toward OOM. Phase C collapses the payload to ~100 rows (~10 KB) — two orders of magnitude smaller. After C:
 
 - Each cached `(company, year)` summary is small enough that per-worker duplication stops mattering. Three workers holding the same FIBERLINE summary is ~30 KB total, not ~1.2 GB.
-- The disk pickle the scheduler writes is small enough that cold-worker pickle loads drop from 5–15 s to milliseconds, closing the "per-worker pickle reload" limitation called out in [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md).
+- The disk pickle layer (kept as a cold-start optimization) becomes ~10 KB per cell, so first-click pickle loads drop from 5–15 s to milliseconds.
 - Per-request CPU drops further; the `GROUP BY` runs in the SQL engine where it's both fast and outside our memory budget.
 
 This is the work that replaced the former Python-side fact-pickle plan (`docs/FACT_TABLE.md`, deleted 2026-05-22). Same end state (an aggregated payload), better mechanism (database engine instead of Python on our box).
@@ -140,16 +137,11 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net. The parity gate becomes load-bearing: `sql/parity_check.py` must be extended to assert at the `(CIA, MES, PARTIDA_PL)` summary grain (it already does) and run against the *summary view* output, not just the prepared view output. Until that gate is wired and green, do not delete the Python `pl_summary` path.
 
-**Scheduler deletion is part of Phase C.** Once the summary views are deployed and wired, the on-demand cache-fill path is sub-second per request — there is no remaining reason to pre-warm anything. Phase C ships with the following cleanup commit (separate from the main wire-up to keep rollback simple):
+**Cleanup that didn't fit in A.5.** The scheduler code was deleted in Phase A.5, but a few small follow-ups remain — fold into Phase B or C, whichever ships next:
 
-- Delete `backend/services/refresh_scheduler.py` (~350 lines).
-- Delete the import + `_start_refresh()` call from [backend/app.py](../backend/app.py).
-- Delete `docs/SCHEDULED_REFRESH.md`.
-- Remove `/tmp/flx_refresh.lock` on the host (cleanup script or one-off).
 - Delete the `force_refresh` ignore plumbing that the scheduler PR introduced (the Refresh button stays removed; that change was independently correct).
+- Remove any stale `/tmp/flx_refresh.lock` on the host (one-off cleanup).
 - Update [docs/ARCHITECTURE.md](ARCHITECTURE.md) caching-strategy section to reflect on-demand cache-fill as the single design.
-
-The scheduler was disabled in Phase A.5; this is the deletion.
 
 ### Phase D — detail-table push-downs  (probably not worth it)
 
@@ -184,7 +176,6 @@ Will ship as a separate PR after Phase A's deletion lands.
 ## What's NOT in this roadmap
 
 - Anything related to memory / cache sizing — see [SCALING_ROADMAP.md](SCALING_ROADMAP.md).
-- Anything related to refresh scheduling — see [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md).
 - Stored procedures (we deliberately stick to views; no procedural SQL).
 - Indexed / materialized views (would help cumsum-heavy Phase C; out of scope until then).
 - Source-view (`VISTA_ANALISIS_CECOS`) changes. Those would need ERP-team coordination and are out of scope for this team.

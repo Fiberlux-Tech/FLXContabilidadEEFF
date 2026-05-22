@@ -127,10 +127,6 @@ def create_app():
     from services.mem_monitor import start as _start_mem_monitor
     _start_mem_monitor()
 
-    # Scheduled refresh (see docs/SCHEDULED_REFRESH.md)
-    from services.refresh_scheduler import start as _start_refresh
-    _start_refresh()
-
     return app
 
 
