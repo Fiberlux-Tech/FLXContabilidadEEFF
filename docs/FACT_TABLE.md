@@ -8,9 +8,9 @@
 
 ## Why
 
-The scheduled refresh eliminated DB queries on user requests. What it did not eliminate, and could not by design, is the **per-worker pickle-load cost** that fires every time a user's HTTP request lands on a gunicorn worker that hasn't yet deserialized the requested `(company, year)` DataFrame. Observed on staging 2026-05-14: 5–15 seconds of pandas deserialization per cold worker for the largest companies (FIBERLINE, FIBERTECH, CONSOLIDADO). With 3 workers and no session stickiness, users hit cold workers often during the first ~10 minutes after a deploy or restart.
+The scheduled refresh eliminated DB queries on user requests. What it did not eliminate, and could not by design, is the **per-worker pickle-load cost** that fires every time a user's HTTP request lands on a gunicorn worker that hasn't yet deserialized the requested `(company, year)` DataFrame. Observed on staging 2026-05-14: 5–15 seconds of pandas deserialization per cold worker for the largest companies (FIBERLINE, FIBERTECH). With 3 workers and no session stickiness, users hit cold workers often during the first ~10 minutes after a deploy or restart.
 
-The pickles are big because `df_stmt` contains row-level journal entries: ~165 MB for FIBERLINE_2025, ~257 MB for CONSOLIDADO_2025 (verified via `ls -la backend/services/.stmt_cache/`). The summary endpoints that the dashboard hits on every page load do not need row-level data — they aggregate everything by `(CIA, ANIO, MES, CUENTA_CONTABLE, CENTRO_COSTO)`. A pre-aggregated fact table at that grain shrinks each pickle ~16× to roughly 10 MB. Pickle load drops from ~10 s to <1 s, well below user-noticeable.
+The pickles are big because `df_stmt` contains row-level journal entries: ~165 MB for FIBERLINE_2025 (verified via `ls -la backend/services/.stmt_cache/`). The summary endpoints that the dashboard hits on every page load do not need row-level data — they aggregate everything by `(CIA, ANIO, MES, CUENTA_CONTABLE, CENTRO_COSTO)`. A pre-aggregated fact table at that grain shrinks each pickle ~16× to roughly 10 MB. Pickle load drops from ~10 s to <1 s, well below user-noticeable.
 
 > **What Phase 2 does NOT touch**: detail drill-down (clicking into a number to see the underlying journal entries) still needs row-level data. That path keeps calling `fetch_pnl_data` and `fetch_pnl_only`. Only the *summary* path moves to the fact table. The BS path is also out of scope — Phase 2 ships a P&L fast path only.
 
@@ -36,7 +36,7 @@ We build the fact table **ourselves**, on **our** server, **hourly**. No DBA con
 
 ### What we add
 
-- A small **SQLite database** at `backend/data/fact_table.db` (or a directory of pickle files — see "Storage choice" below). Holds one row per `(CIA, ANIO, MES, CUENTA, CECO)` per company-year. Estimated size: ~10 MB total across all 5 companies × 2 years. Trivial.
+- A small **SQLite database** at `backend/data/fact_table.db` (or a directory of pickle files — see "Storage choice" below). Holds one row per `(CIA, ANIO, MES, CUENTA, CECO)` per company-year. Estimated size: ~10 MB total across all 4 companies × 2 years. Trivial.
 - An **hourly ETL** built into the existing scheduler. The current scheduler at [refresh_scheduler.py](../backend/services/refresh_scheduler.py) already runs each hour and for each company calls `invalidate_cache → load_pl_data → load_bs_data`. We modify it (or extend it) to also write the aggregated rows out to the fact table during each cycle. **No new daemon, no new schedule.**
 - A **fast-path read function** `fetch_pnl_summary_fast(company, year)` that reads from our SQLite/pickles instead of from the SQL Server view.
 - A **per-company feature flag** so we can flip companies one at a time during rollout, with rollback per company.
@@ -73,13 +73,13 @@ Path A might still be worth pursuing later if Phase 4 (DBA index work) reveals t
 
 ### Fact-table shape (on disk)
 
-Stored as pickle files in `backend/services/.stmt_cache/`, one per real company per year. CONSOLIDADO is **not** stored — it is built at fetch time by concatenating the 4 real-company fact files (see "CONSOLIDADO handling" below).
+Stored as pickle files in `backend/services/.stmt_cache/`, one per company per year.
 
 ```
 backend/services/.stmt_cache/fact_FIBERLUX_2025.pkl     ~2 MB
 backend/services/.stmt_cache/fact_FIBERLUX_2026.pkl     ~1 MB
 backend/services/.stmt_cache/fact_FIBERTECH_2025.pkl    ~5 MB
-... (one per company per year, 8 files total for real companies)
+... (one per company per year, 8 files total)
 ```
 
 Each pickle holds a pandas DataFrame at the grain `(CIA, ANIO, MES, CUENTA_CONTABLE, CENTRO_COSTO)` with columns matching the existing row-level fetch's column set so the downstream pipeline runs unchanged:
@@ -122,34 +122,24 @@ for each (company, year) in smallest-first order:
 
 **Window**: the existing scheduler runs 07:00–21:00. If you want 08:00–22:00, that's a one-line change at [refresh_scheduler.py](../backend/services/refresh_scheduler.py) (constant `_REFRESH_HOURS`). Independent of the fact-table decision.
 
-### CONSOLIDADO handling
-
-CONSOLIDADO's fact data is **not stored** as a separate pickle. At fact-read time, `fetch_pnl_summary_fast(CONSOLIDADO, year)` reads the 4 real-company fact pickles and `pd.concat`s them — bit-identical to today's behaviour where [_fetch_consolidated](../backend/data/fetcher.py#L191) fans out 4 single-company queries and concatenates (line 207). The empirical commutativity proof from 2026-05-14 confirms this is safe: `prepare_stmt(concat([fact_FIBERLINE, fact_FIBERLUX, ...]))` produces the same PARTIDA_PL totals as the existing row-level path.
-
-This saves one ETL cycle per hour (we skip the CONSOLIDADO query entirely).
-
-### New fast-path read functions
+### New fast-path read function
 
 | Function | Lives in | Replaces (when flag is on) | Returns |
 |----------|----------|---------------------------|---------|
-| `fetch_pnl_summary_fast(company, year)` | `backend/data/queries.py` (new, alongside `fetch_pnl_data`) | The per-company arm of [fetch_pnl_only](../backend/data/fetcher.py#L169) | Aggregated DataFrame from `fact_{company}_{year}.pkl` |
-| `fetch_pnl_consolidated_fast(year)` | `backend/data/fetcher.py` (new, alongside `fetch_pnl_consolidated`) | [fetch_pnl_consolidated](../backend/data/fetcher.py#L212) | `pd.concat` of the 4 real-company fact pickles |
+| `fetch_pnl_summary_fast(company, year)` | `backend/data/queries.py` (new, alongside `fetch_pnl_data`) | [fetch_pnl_only](../backend/data/fetcher.py#L169) | Aggregated DataFrame from `fact_{company}_{year}.pkl` |
 
-Both functions return a DataFrame with the column set listed in "Fact-table shape" above. The downstream pipeline (`_run_pl_summary_only` → `prepare_stmt` → `pl_summary`) sees the same shape it does today and runs unchanged.
+This function returns a DataFrame with the column set listed in "Fact-table shape" above. The downstream pipeline (`_run_pl_summary_only` → `prepare_stmt` → `pl_summary`) sees the same shape it does today and runs unchanged.
 
 ### Per-company feature flag
 
-Five environment variables, default false. Pattern mirrors `STRICT_BS_BALANCE` at [backend/config/settings.py:60](../backend/config/settings.py#L60):
+Four environment variables, default false. Pattern mirrors `STRICT_BS_BALANCE` at [backend/config/settings.py:60](../backend/config/settings.py#L60):
 
 ```
 USE_FACT_TABLE_FIBERLUX=true
 USE_FACT_TABLE_FIBERTECH=true
 USE_FACT_TABLE_FIBERLINE=true
 USE_FACT_TABLE_NEXTNET=true
-USE_FACT_TABLE_CONSOLIDADO=true
 ```
-
-CONSOLIDADO's flag is **logically gated** on all 4 real companies' flags being on too, since CONSOLIDADO is built from them. The dispatch helper enforces this; the diff harness verifies it.
 
 ## Implementation
 
@@ -177,19 +167,6 @@ def fetch_pnl_summary_fast(company: str, year: int) -> pd.DataFrame:
 
 No SQL connection needed — the pickle is local. The scheduler is responsible for keeping it fresh.
 
-### Edit: `backend/data/fetcher.py`
-
-Add `fetch_pnl_consolidated_fast(year)` alongside [fetch_pnl_consolidated](../backend/data/fetcher.py#L212). Reads the 4 real-company fact pickles and concatenates:
-
-```python
-def fetch_pnl_consolidated_fast(year: int) -> pd.DataFrame:
-    """Fast CONSOLIDADO fetch: concat of 4 real-company fact pickles."""
-    dfs = [fetch_pnl_summary_fast(c, year) for c in REAL_COMPANIES]
-    return pd.concat(dfs, ignore_index=True)
-```
-
-No ThreadPoolExecutor, no SQL — disk reads in serial are fast enough (~100 ms total).
-
 ### Edit: `backend/services/refresh_scheduler.py` — extend the cycle to write fact pickles
 
 The existing scheduler at [refresh_scheduler.py](../backend/services/refresh_scheduler.py) runs each hour and walks all `(company, year)` cells. Extend its per-cell body to write the fact pickle after the row-level data has been fetched:
@@ -207,11 +184,11 @@ if df_stmt is not None:
     _save_to_disk(company, year, fact, kind="fact")
 ```
 
-`_aggregate_to_fact` is a new helper (~15 lines) that groups by the grain keys and sums DEBITO_LOCAL / CREDITO_LOCAL. It lives in `data_service.py` next to `_save_to_disk`. The scheduler doesn't do any DB work for CONSOLIDADO — we still fetch CONSOLIDADO's row-level data via the existing path (for the drill-down cache), but we **don't** write a CONSOLIDADO fact pickle since `fetch_pnl_consolidated_fast` rebuilds it from the 4 real-company pickles at read time.
+`_aggregate_to_fact` is a new helper (~15 lines) that groups by the grain keys and sums DEBITO_LOCAL / CREDITO_LOCAL. It lives in `data_service.py` next to `_save_to_disk`.
 
 ### Edit: `backend/config/settings.py`
 
-Extend `Config` dataclass at [settings.py:38-43](../backend/config/settings.py#L38) with one boolean per company (5 fields), and parse them in `get_config()` at [settings.py:57](../backend/config/settings.py#L57). Pattern follows `strict_bs_balance` at line 60. Add a helper:
+Extend `Config` dataclass at [settings.py:38-43](../backend/config/settings.py#L38) with one boolean per company (4 fields), and parse them in `get_config()` at [settings.py:57](../backend/config/settings.py#L57). Pattern follows `strict_bs_balance` at line 60. Add a helper:
 
 ```python
 def use_fact_table_for(self, company: str) -> bool:
@@ -223,12 +200,10 @@ The helper lives on `Config` so `_ensure_pl_stmt_cached` reads it with one call.
 
 ### Edit: `backend/services/data_service.py`
 
-The intercept lives at lines 841-843 of [_ensure_pl_stmt_cached](../backend/services/data_service.py#L793). Today:
+The intercept lives in [_ensure_pl_stmt_cached](../backend/services/data_service.py#L793). Today:
 
 ```python
-raw = (fetch_pnl_consolidated(year)
-       if company == CONSOLIDADO
-       else fetch_pnl_only(company, year))
+raw = fetch_pnl_only(company, year)
 ```
 
 Becomes:
@@ -236,26 +211,20 @@ Becomes:
 ```python
 if get_config().use_fact_table_for(company):
     try:
-        raw = (fetch_pnl_consolidated_fast(year)
-               if company == CONSOLIDADO
-               else fetch_pnl_summary_fast(company, year))
+        raw = fetch_pnl_summary_fast(company, year)
         logger.info("P&L fetch (fast path): %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
     except FileNotFoundError:
         # Fact pickle not built yet (first boot before scheduler runs).
         # Fall through to the row-level path; the next scheduler cycle
         # will populate the pickle.
         logger.warning("fact pickle missing for %s/%d; falling back to row-level", company, year)
-        raw = (fetch_pnl_consolidated(year)
-               if company == CONSOLIDADO
-               else fetch_pnl_only(company, year))
+        raw = fetch_pnl_only(company, year)
 else:
-    raw = (fetch_pnl_consolidated(year)
-           if company == CONSOLIDADO
-           else fetch_pnl_only(company, year))
+    raw = fetch_pnl_only(company, year)
     logger.info("P&L fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
 ```
 
-Everything downstream of this — `_run_pl_summary_only(raw)` at line 846, the four `_caches[...].set(...)` calls at 850-855, and the four [_save_to_disk](../backend/services/data_service.py#L264) calls at 859-862 — runs unchanged. The `df_stmt` pickle that gets cached after `prepare_stmt` is now ~10 MB instead of ~250 MB for CONSOLIDADO, which is exactly the point: the cold-worker pickle-load drops from ~10 s to <1 s.
+Everything downstream of this — `_run_pl_summary_only(raw)` and the `_caches[...].set(...)` / [_save_to_disk](../backend/services/data_service.py#L264) calls — runs unchanged. The `df_stmt` pickle that gets cached after `prepare_stmt` is now ~10 MB instead of ~150 MB for FIBERLINE, which is exactly the point: the cold-worker pickle-load drops from ~10 s to <1 s.
 
 Intercepting in `_ensure_pl_stmt_cached` rather than separately in `load_pl_data` and `load_bs_data` (the handoff prompt's literal phrasing) is a deliberate simplification: `load_pl_data` at [data_service.py:888](../backend/services/data_service.py#L888) and `load_pl_section` at [data_service.py:947](../backend/services/data_service.py#L947) both go through this single helper. One intercept point, two consumers covered.
 
@@ -293,7 +262,7 @@ If a follow-up project later wants a freshness indicator, that can be its own wo
 
 ### Diff harness must show zero diffs
 
-For every `(company, year, month)` triple across `{FIBERLINE, FIBERLUX, FIBERTECH, NEXTNET, CONSOLIDADO} × {2025, 2026} × {1..12}`, the diff harness runs both code paths and compares output at the `(PARTIDA_PL, month)` grain for three pivots: `pl_summary`, `pl_summary_ex_ic`, `pl_summary_only_ic`.
+For every `(company, year, month)` triple across `{FIBERLINE, FIBERLUX, FIBERTECH, NEXTNET} × {2025, 2026} × {1..12}`, the diff harness runs both code paths and compares output at the `(PARTIDA_PL, month)` grain for three pivots: `pl_summary`, `pl_summary_ex_ic`, `pl_summary_only_ic`.
 
 > **What counts as "bit-identical"**: zero non-zero rows in the elementwise diff at the `(PARTIDA_PL, month)` grain for all three pivots. We compare *summed measures*, not raw row counts — row counts will not match because the fact table is aggregated. If a diff is non-zero, fix the fact table SQL (typically a missed `FUENTE NOT LIKE 'CIERRE%'` filter or a sign-convention drift on a specific account), not the harness threshold.
 
@@ -320,16 +289,13 @@ In order, with go/no-go gates between steps. **No DBA dependency** — every ste
 
 1. **Scheduler ETL extension + fast-path code + flag + diff harness on `dev`** (~2 days). Edits to `queries.py`, `fetcher.py`, `settings.py`, `data_service.py`, `refresh_scheduler.py`, plus new `backend/scripts/diff_fact_vs_view.py`. Commit message: `feat(fact-table): hourly P&L summary fact pickles behind per-company flags`.
 2. **Staging deploy + soak one scheduler cycle** (~1 day). Confirm fact pickles appear in `.stmt_cache/` after the next hourly cycle; spot-check file sizes (~10 MB or less).
-3. **Diff harness validates zero diffs across all triples** (~1 day). Run on staging with all 5 flags toggled on in-process. Zero diffs is the gate. If any diff is non-zero, return to step 1 — fix the aggregator.
+3. **Diff harness validates zero diffs across all triples** (~1 day). Run on staging with all 4 flags toggled on in-process. Zero diffs is the gate. If any diff is non-zero, return to step 1 — fix the aggregator.
 4. **Per-company flip + 48 h soak on staging**, in order:
    - FIBERLUX (smallest, lowest blast radius)
+   - NEXTNET
    - FIBERTECH
    - FIBERLINE
-   - NEXTNET
-   - CONSOLIDADO last (depends on the 4 real-company flags being stable, since it reads their pickles)
 5. **Promote to prod** via `./promote.sh` from the prod tree per [DEPLOYMENT.md](DEPLOYMENT.md). Same flag flips repeated on prod, 48 h soak per company. Promotion of each flag is a `.env` edit on prod plus `sudo systemctl restart flxcontabilidad`.
-
-> **Do not flip CONSOLIDADO first to "see the biggest win."** CONSOLIDADO reads 4 real-company fact pickles; if one company's aggregation has a bug, you'll spot it faster on a single-company rollout.
 
 ## Effort and timeline
 

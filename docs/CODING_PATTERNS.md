@@ -93,6 +93,7 @@ The accounting transformation pipeline is the core of this system. Its logic mus
 - `backend/services/accounting/statements.py` — P&L row structure (subtotal formulas: UTILIDAD BRUTA, OPERATIVA, NETA), BS row structure (CORRIENTE/NO CORRIENTE split, reclassification, Resultados del Ejercicio injection), balance validation (ACTIVO = PASIVO + PATRIMONIO)
 - `backend/services/accounting/aggregation.py` — Pivot logic (monthly sums, cumsum for BS), period aggregation, resultado financiero split (prefix "77" = ingresos)
 - `backend/data/queries.py` — SQL query construction, account prefix filtering, date range logic, closing entry exclusion
+- `sql/VISTA_PNL_PREPARADO.sql`, `sql/VISTA_BS_PREPARADO.sql` — SQL views in `[FIBERLINE|FIBERTECH|NEXTNET|FIBERLUX].VISTA_*_PREPARADO` that mirror `transforms.prepare_pnl/prepare_bs` + `filter_for_statements` + `assign_partida_pl/bs`. Editing the CASE blocks must be done in **all four per-CIA views** and validated by `sql/parity_check.py` returning `PARITY OK ✓` before the Python pipeline is repointed at the view. See [sql/README.md](../sql/README.md) for topology and parity workflow.
 
 **Sacred invariants** (must hold true at all times):
 1. P&L SALDO = CREDITO_LOCAL − DEBITO_LOCAL (never reversed)

@@ -21,10 +21,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from config.company import CONSOLIDADO
 from data.fetcher import (
     fetch_all_data, fetch_pnl_only, fetch_bs_only,
-    fetch_pnl_consolidated, fetch_bs_consolidated,
 )
 from accounting.transforms import prepare_stmt, prepare_bs_stmt
 from accounting.aggregation import (
@@ -838,9 +836,7 @@ def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = Fal
 
             # Elected fetcher — actually hit the DB.
             t0 = time.perf_counter()
-            raw = (fetch_pnl_consolidated(year)
-                   if company == CONSOLIDADO
-                   else fetch_pnl_only(company, year))
+            raw = fetch_pnl_only(company, year)
             logger.info("P&L fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
 
             df_stmt, preagg, pl, _ = _run_pl_summary_only(raw)
@@ -1028,9 +1024,7 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
                 load_pl_data(company, year)
                 pl_df = _caches["pl_df"].get(company, year)
 
-            raw_bs = (fetch_bs_consolidated(year)
-                      if company == CONSOLIDADO
-                      else fetch_bs_only(company, year))
+            raw_bs = fetch_bs_only(company, year)
             logger.info("BS fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw_bs))
 
             t1 = time.perf_counter()
