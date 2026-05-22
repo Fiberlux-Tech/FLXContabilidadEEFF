@@ -35,11 +35,14 @@ def python_pnl_totals(cia: str, year: int) -> pd.DataFrame:
 
 
 def view_pnl_totals(cia: str, year: int) -> pd.DataFrame:
+    # The view now enriches rather than filters. IS_STATEMENT_ELIGIBLE = 1
+    # reproduces the Python-side filter_for_statements rule.
     with connect() as conn:
         q = """
             SELECT CIA, MES, PARTIDA_PL, SUM(SALDO) AS view_total
             FROM REPORTES.VISTA_PNL_PREPARADO
             WHERE CIA = ? AND FECHA >= ? AND FECHA < ?
+              AND IS_STATEMENT_ELIGIBLE = 1
             GROUP BY CIA, MES, PARTIDA_PL
         """
         from datetime import date

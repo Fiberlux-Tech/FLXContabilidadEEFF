@@ -7,6 +7,11 @@
 --     [FIBERLINE].VISTA_PNL_PREPARADO   selects from [FIBERLINE].VISTA_ANALISIS_CECOS
 --     [FIBERTECH].VISTA_PNL_PREPARADO   ... etc.
 --
+-- Design intent: this view ENRICHES rows, it does not filter them.
+-- Callers (website, Excel, PDF, ad-hoc Excel-via-ODBC) decide what subset of
+-- the enriched data they want by filtering on IS_STATEMENT_ELIGIBLE,
+-- PARTIDA_PL, IS_INTERCOMPANY, etc.
+--
 -- Replaces in Python: prepare_pnl + filter_for_statements + assign_partida_pl
 --   (backend/services/accounting/transforms.py:78-166)
 --
@@ -14,26 +19,25 @@
 --   CIA, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL,
 --   CENTRO_COSTO, DESC_CECO, FECHA, ASIENTO,
 --   DEBITO_LOCAL, CREDITO_LOCAL, FUENTE, CONTABILIDAD,
---   SALDO            DECIMAL(28,8)   -- CREDITO_LOCAL - DEBITO_LOCAL
---   MES              INT             -- MONTH(FECHA)
---   PARTIDA_PL       VARCHAR(40)     -- 15-rule classification (np.select order)
---   IS_INTERCOMPANY  BIT
+--   SALDO                  DECIMAL(28,8)  -- CREDITO_LOCAL - DEBITO_LOCAL
+--   MES                    INT            -- MONTH(FECHA)
+--   PARTIDA_PL             VARCHAR(40)    -- 15-rule classification (np.select order)
+--   IS_INTERCOMPANY        BIT
+--   IS_STATEMENT_ELIGIBLE  BIT            -- 1 = belongs to the P&L statement
 --
--- Filters baked in:
---   * Class 6/7/8 accounts only      (PNL_ACCOUNT_PREFIXES)
---   * Prefix-3 >= 619                (filter_for_statements)
---   * Exclude 79.1.1.1.01            (EXCLUDED_CUENTA)
---   * Exclude FUENTE LIKE 'CIERRE%'  (year-end closing entries)
---   * CONTABILIDAD IN ('A','C')      -- already filtered upstream, kept for safety
+-- IS_STATEMENT_ELIGIBLE rule (mirrors transforms.filter_for_statements):
+--   1 when CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
+--      AND CUENTA_CONTABLE <> '79.1.1.1.01'
+--   0 otherwise (low-prefix inventory accounts like 60.x, 61.x, and the
+--   single excluded synthetic 79.1.1.1.01).
+--
+-- Row-level filters that DO stay in the view (these are correctness, not scope):
+--   * Class 6/7/8 accounts only        (PNL_ACCOUNT_PREFIXES)
+--   * FUENTE NOT LIKE 'CIERRE%'        (closing entries don't reflect activity)
 --
 -- Trailing-space safety:
 --   ~826k / 8.8M rows store CUENTA_CONTABLE and CENTRO_COSTO with trailing
---   spaces (varchar(25) padding). ANSI =/<> ignore them, but LEFT()/LIKE see
---   them. Text columns are RTRIM-ed once at the bottom of each per-CIA view.
---
--- Deployment order:
---   1) Run the four per-CIA blocks below.
---   2) Run the REPORTES umbrella at the bottom.
+--   spaces. RTRIM once at the bottom of each per-CIA view.
 -- =============================================================================
 
 
@@ -97,7 +101,17 @@ SELECT
                 THEN 1
             ELSE 0
         END
-    AS BIT) AS IS_INTERCOMPANY
+    AS BIT) AS IS_INTERCOMPANY,
+
+    -- IS_STATEMENT_ELIGIBLE  (transforms.filter_for_statements)
+    CAST(
+        CASE
+            WHEN TRY_CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
+             AND CUENTA_CONTABLE <> '79.1.1.1.01'
+                THEN 1
+            ELSE 0
+        END
+    AS BIT) AS IS_STATEMENT_ELIGIBLE
 
 FROM (
     SELECT
@@ -117,8 +131,6 @@ FROM (
     FROM [FIBERLINE].[VISTA_ANALISIS_CECOS]
     WHERE LEFT(CUENTA_CONTABLE, 1) IN ('6', '7', '8')
       AND FUENTE NOT LIKE 'CIERRE%'
-      AND TRY_CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
-      AND CUENTA_CONTABLE <> '79.1.1.1.01'
 ) src;
 GO
 
@@ -155,7 +167,14 @@ SELECT
             WHEN CENTRO_COSTO LIKE '%.121.%' THEN 1
             ELSE 0
         END
-    AS BIT) AS IS_INTERCOMPANY
+    AS BIT) AS IS_INTERCOMPANY,
+    CAST(
+        CASE
+            WHEN TRY_CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
+             AND CUENTA_CONTABLE <> '79.1.1.1.01' THEN 1
+            ELSE 0
+        END
+    AS BIT) AS IS_STATEMENT_ELIGIBLE
 FROM (
     SELECT
         CIA,
@@ -168,8 +187,6 @@ FROM (
     FROM [FIBERTECH].[VISTA_ANALISIS_CECOS]
     WHERE LEFT(CUENTA_CONTABLE, 1) IN ('6','7','8')
       AND FUENTE NOT LIKE 'CIERRE%'
-      AND TRY_CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
-      AND CUENTA_CONTABLE <> '79.1.1.1.01'
 ) src;
 GO
 
@@ -206,7 +223,14 @@ SELECT
             WHEN CENTRO_COSTO LIKE '%.121.%' THEN 1
             ELSE 0
         END
-    AS BIT) AS IS_INTERCOMPANY
+    AS BIT) AS IS_INTERCOMPANY,
+    CAST(
+        CASE
+            WHEN TRY_CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
+             AND CUENTA_CONTABLE <> '79.1.1.1.01' THEN 1
+            ELSE 0
+        END
+    AS BIT) AS IS_STATEMENT_ELIGIBLE
 FROM (
     SELECT
         CIA,
@@ -219,8 +243,6 @@ FROM (
     FROM [NEXTNET].[VISTA_ANALISIS_CECOS]
     WHERE LEFT(CUENTA_CONTABLE, 1) IN ('6','7','8')
       AND FUENTE NOT LIKE 'CIERRE%'
-      AND TRY_CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
-      AND CUENTA_CONTABLE <> '79.1.1.1.01'
 ) src;
 GO
 
@@ -257,7 +279,14 @@ SELECT
             WHEN CENTRO_COSTO LIKE '%.121.%' THEN 1
             ELSE 0
         END
-    AS BIT) AS IS_INTERCOMPANY
+    AS BIT) AS IS_INTERCOMPANY,
+    CAST(
+        CASE
+            WHEN TRY_CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
+             AND CUENTA_CONTABLE <> '79.1.1.1.01' THEN 1
+            ELSE 0
+        END
+    AS BIT) AS IS_STATEMENT_ELIGIBLE
 FROM (
     SELECT
         CIA,
@@ -270,8 +299,6 @@ FROM (
     FROM [FIBERLUX].[VISTA_ANALISIS_CECOS]
     WHERE LEFT(CUENTA_CONTABLE, 1) IN ('6','7','8')
       AND FUENTE NOT LIKE 'CIERRE%'
-      AND TRY_CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
-      AND CUENTA_CONTABLE <> '79.1.1.1.01'
 ) src;
 GO
 

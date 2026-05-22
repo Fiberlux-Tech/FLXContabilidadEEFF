@@ -32,7 +32,7 @@ CASE.
 
 | File | Purpose |
 |---|---|
-| `VISTA_PNL_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_pnl` + `filter_for_statements` + `assign_partida_pl`. Returns rows with `SALDO`, `MES`, `PARTIDA_PL`, `IS_INTERCOMPANY`. |
+| `VISTA_PNL_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_pnl` + `filter_for_statements` + `assign_partida_pl`. Returns rows with `SALDO`, `MES`, `PARTIDA_PL`, `IS_INTERCOMPANY`, `IS_STATEMENT_ELIGIBLE`. **The view enriches rows; it does not filter them** — callers pick the subset they want by filtering on `IS_STATEMENT_ELIGIBLE = 1` (statement view) or no filter (Excel's raw pivots that include inventory-side accounts like `60.x`). |
 | `VISTA_BS_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_bs` + `assign_partida_bs`. Returns rows with `SALDO`, `MES`, `PARTIDA_BS`, `SECCION_BS`. Does **not** do cumulative-sum or reclassification (Phase B). |
 | `PARITY_CHECKS.sql` | SQL-only sanity checks (coverage, section consistency, row counts). |
 | `parity_check.py` | Numeric regression: compares per-(CIA, MES, PARTIDA) `SUM(SALDO)` from the new view against the current Python pipeline. **Must return PARITY OK before we wire Python to the view.** |
@@ -41,7 +41,8 @@ CASE.
 
 1. In SSMS, run `VISTA_PNL_PREPARADO.sql` end-to-end. It deploys 4 per-CIA
    views (one per schema) and then the REPORTES umbrella. Each `CREATE OR
-   ALTER VIEW` is followed by `GO`.
+   ALTER VIEW` is followed by `GO`. **The DDL is idempotent** — re-running
+   replaces existing views without dropping permissions.
 2. Run `VISTA_BS_PREPARADO.sql` the same way.
 3. Eyeball `PARITY_CHECKS.sql`: expect zero rows from check #1, near-zero
    from #2, and zero from #3.
