@@ -1,9 +1,12 @@
 # Scheduled Refresh
 
-> **Status**: Design agreed 2026-05-12. Not yet implemented.
-> **Owner**: Backend team.
-> **Supersedes**: Phase 1 (Redis) and Phase 3 (gthread) in [SCALING_ROADMAP.md](SCALING_ROADMAP.md). See that doc's "Scope change 2026-05-12" section for the pivot rationale.
-> **Last updated**: 2026-05-12.
+> **Status (2026-05-22)**: **Disabled in prod and planned for removal.** Evidence from prod logs on 2026-05-22 shows the scheduler is misbehaving (FIBERLINE never finishes inside its hourly window; 14 cycles started, only 3 completed; workers restart 7× in 2 hours and clobber in-flight refreshes). It is *worse than no scheduler at all* for FIBERLINE because it calls `invalidate_cache` and then fails to repopulate, leaving users on the cold-cache path.
+>
+> The scheduler is disabled in Phase A.5 of [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md) and the code + this doc are scheduled for deletion as part of Phase C's cleanup commit. Phase C makes the scheduler unnecessary: with summary aggregation in SQL, the on-demand cache-fill path serves ~100 rows in <1 s, so there is no expensive query left to pre-warm.
+>
+> The rest of this document describes the design as it was originally agreed (2026-05-12); it is preserved for audit until Phase C ships.
+>
+> **Original metadata.** Design agreed 2026-05-12. Owner: Backend team. Last technical update: 2026-05-12. Disposition update: 2026-05-22.
 
 ## Why
 
@@ -11,7 +14,7 @@ The on-demand cache-fill model is the structural cause of the memory and latency
 
 The user confirmed that **one hour of data staleness on the summary path is acceptable** for the finance team's workflow. Given that constraint, a far simpler design is sufficient: a background thread refreshes the cache on a schedule, and user requests are guaranteed to hit warm disk caches (no DB queries fired on the summary path). No new dependency. No new failure mode visible to users (cold-cache concerns become a deploy-window concern, not a per-request concern). The architectural cost of the pivot is "the dashboard shows data that is up to 60 minutes old." The finance team has accepted that cost.
 
-**What this design does NOT solve** (added 2026-05-14 after staging observation): the scheduler runs in one elected worker; the other 2 workers still pay a 5–15 second pickle-load cost the first time each `(company, year)` pair is requested on them. See "Known limitation" below. Phase 2 (fact table) shrinks pickles ~16× and effectively eliminates this remaining cost.
+**What this design does NOT solve** (added 2026-05-14 after staging observation): the scheduler runs in one elected worker; the other 2 workers still pay a 5–15 second pickle-load cost the first time each `(company, year)` pair is requested on them. See "Known limitation" below. SQL views Phase C ([SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md)) collapses the cached payload from ~165 MB row-level pickles to ~100-row summary results and effectively eliminates this remaining cost.
 
 ## Behavior
 
@@ -56,12 +59,12 @@ When a request lands on a "cold" worker:
 **Why this remains after the scheduler:**
 The scheduler shares state **across cycles within one worker**, not across workers within one cycle. The cross-worker deduplication that Phase 1 (Redis) was designed to provide is what would eliminate this. We deferred Phase 1 in favor of the scheduler because the scheduler removes the *DB* cost (much bigger than the pickle-load cost), and the user accepted hourly staleness as a tradeoff against complexity. The pickle-load cost was understood at design time but its magnitude (15s for the big companies, not 2–5s) was confirmed only on the 2026-05-14 staging deploy.
 
-**Phase 2 (monthly fact table) makes this limitation disappear.** A 157 MB FIBERLINE_2025 pickle becomes ~10 MB after Phase 2. Pickle load time drops from ~10 s to <1 s, well below user-noticeable. Phase 2 is the natural next move; see [SCALING_ROADMAP.md](SCALING_ROADMAP.md) "Phase 2".
+**SQL views Phase C makes this limitation disappear** (active plan as of 2026-05-22). After Phase C, the cached summary payload is ~100 rows (~10 KB) instead of a 157 MB row-level pickle. Pickle load drops from ~10 s to milliseconds, well below user-noticeable. See [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md) Phase C.
 
-**Mitigations available today without Phase 2:**
+**Mitigations available today without Phase C:**
 - Encourage users to keep their dashboard tab open. The first click on each company warms that worker; subsequent clicks are instant on the same worker.
 - Reduce gunicorn worker count to 1 (would eliminate the duplication entirely, at the cost of concurrent-request capacity — not recommended without measuring).
-- Switch to `gthread` worker class (was deferred Phase 3; threads in the same process share the cache). Requires verifying thread safety end-to-end; held until Phase 1 or Phase 2 lands per the original roadmap.
+- Switch to `gthread` worker class (deferred Phase 3; threads in the same process share the cache). Requires verifying thread safety end-to-end; held until the SQL views path lands per the active roadmap.
 
 ## Architecture
 
@@ -281,14 +284,14 @@ Scriptable, in order of how soon they need to pass.
 
 | Item | Where it lives | Status |
 |------|----------------|--------|
-| Phase 0 commits (mem_monitor, cache caps, FETCH_MAX_WORKERS) | `dev` branch, commits `c36d557` `807d539` `f17ea04` | Ready to deploy. |
-| Phase 0 `.env` edit (`FETCH_MAX_WORKERS=2`) on staging + prod | Manual ops | Pending, do before scheduler ships. |
-| Phase 0 systemd edit (`MemoryHigh=4G` / `MemoryMax=5G`) on staging + prod | Manual ops | Pending, do before scheduler ships. |
-| **Scheduled refresh (this doc)** | New code on `dev` | **Next** after Phase 0 ops steps land. |
-| Phase 2 (monthly fact pickles) | New code on `dev` (extends this scheduler) | Queued. Shrinks the cached `df_stmt` ~16× and closes the per-worker pickle-load limitation. No DBA dependency; see [FACT_TABLE.md](FACT_TABLE.md). |
+| Phase 0 commits (mem_monitor, cache caps, FETCH_MAX_WORKERS) | `dev` branch, commits `c36d557` `807d539` `f17ea04` | Shipped. |
+| Phase 0 `.env` edit (`FETCH_MAX_WORKERS=2`) on staging + prod | Manual ops | Pending, ships independently. |
+| Phase 0 systemd edit (`MemoryHigh=4G` / `MemoryMax=5G`) on staging + prod | Manual ops | Pending, ships independently. |
+| **Scheduled refresh (this doc)** | Shipped 2026-05-12 | In production. |
+| **SQL views Phase A → B → C** | [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md) | **Active capacity work.** Phase C closes the per-worker pickle-load limitation called out above. |
 | Phase 1 (Redis) | [SCALING_ROADMAP.md](SCALING_ROADMAP.md) Phase 1 | Deferred indefinitely. |
 | Phase 3 (gthread workers) | [SCALING_ROADMAP.md](SCALING_ROADMAP.md) Phase 3 | Deferred. |
-| Phase 4 (DBA index) | [SQL_INDEX_RECOMMENDATIONS.md](SQL_INDEX_RECOMMENDATIONS.md) | Unblocked, gated on DBA only. |
+| Phase 4 (DBA index) | [SQL_INDEX_RECOMMENDATIONS.md](SQL_INDEX_RECOMMENDATIONS.md) | Folded into SQL views deployment cycle. |
 
 ## What this doc is not
 

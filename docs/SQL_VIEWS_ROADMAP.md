@@ -1,20 +1,22 @@
 # SQL Views Roadmap — push transforms into the database
 
-> **Status**: Phase A in progress. P&L parity proven on 2024–2026 against the original (filter-based) view; redesigned (enrichment) view DDL committed in [`02228d9`](https://github.com/Fiberlux-Tech/FLXContabilidadEEFF/commit/02228d9), awaiting DBA redeploy.
+> **Status**: This is the **active capacity plan** as of 2026-05-22. Phase A in progress. P&L parity proven on 2024–2026 against the original (filter-based) view; redesigned (enrichment) view DDL committed in [`02228d9`](https://github.com/Fiberlux-Tech/FLXContabilidadEEFF/commit/02228d9), awaiting DBA redeploy.
 > **Owner**: Backend team. DDL deploys require DBA (current `STERNERO` login is SELECT-only on the new views).
 > **Last updated**: 2026-05-22.
-> **Related**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) (memory budget — these views reduce per-request CPU but don't change the cache-warmth strategy), [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md) (the hourly refresh path is what consumes these views).
+> **Supersedes**: The Python-side Phase 2 (monthly fact pickles) plan that previously lived in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) and `docs/FACT_TABLE.md` (deleted 2026-05-22). The SQL views path delivers the same aggregated artifact in the database engine, shared across all workers, with no per-worker pickle-load tax.
+> **Related**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) (memory budget — Phase C of this doc is where the budget gets structurally easier), [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md) (the hourly refresh path is what consumes these views).
 
 ## Why this document exists
 
-The finance team gained the ability to add views to the `ROP` SQL Server (alongside `REPORTES.VISTA_ANALISIS_CECOS`) on 2026-05-22. That unlocks a structural change: **classification and shape transforms that today live in `backend/services/accounting/transforms.py` can move into the database**, so Flask receives data already enriched with `SALDO`, `PARTIDA_PL`, `IS_INTERCOMPANY`, etc.
+The finance team gained the ability to add views to the `ROP` SQL Server (alongside `REPORTES.VISTA_ANALISIS_CECOS`) on 2026-05-22. That unlocks a structural change: **classification and aggregation that today live in `backend/services/accounting/transforms.py` and `aggregation.py` can move into the database**, so Flask receives data already enriched (Phase A/B) or already aggregated (Phase C).
 
-Two wins:
+Three wins:
 
-1. **Latency**: aggregated dashboard queries become 3.4–7.9× faster (probe results below). Raw fetches 1.6–1.7× faster.
-2. **One source of truth**: today the classification rules exist in Python and **also** as embedded knowledge in any SQL written by the finance team for Excel-via-ODBC. Pushing the rules into a view collapses those into one place — the view definition.
+1. **Latency**: aggregated dashboard queries become 3.4–7.9× faster after Phase A (probe results below). Raw fetches 1.6–1.7× faster. Phase C compounds on top.
+2. **Concurrent-load headroom on the 5.8 GB box.** Phase C is the move that fixes the scaling problem at its source. Today each worker pulls 8.4M rows and groups them in pandas to produce ~100 summary rows; under concurrent load that pandas state is what pushes the box toward OOM. After Phase C, the view returns the ~100 rows directly and the worker holds ~10 KB instead of ~400 MB per cached `(company, year)`. **This is what unblocks scaling without buying more RAM.**
+3. **One source of truth**: today the classification rules exist in Python and **also** as embedded knowledge in any SQL written by the finance team for Excel-via-ODBC. Pushing the rules into a view collapses those into one place — the view definition.
 
-This is independent of the scaling/refresh work in the other docs. The cache architecture stays the same; the *contents* of what's cached become smaller and cheaper to compute.
+The cache architecture (scheduled hourly refresh, disk pickles, in-memory LRU) stays the same; the *contents* of what's cached become smaller and cheaper to compute. The scheduler keeps firing hourly; what it fetches is just much smaller after the views land.
 
 ## Constraints discovered during phase A
 
@@ -71,6 +73,30 @@ The aggregated row is the one the dashboard's `pl_summary` actually needs. The "
 - Excel export still includes the `by_cuenta` / `by_ceco` / `by_ceco_cuenta` raw sheets with the same row counts as today (inventory `60.x` accounts still present).
 - `git grep prepare_pnl filter_for_statements assign_partida_pl PROVISION_INCOBRABLE_CUENTAS` returns zero hits in `backend/`.
 
+### Phase A.5 — Disable the scheduler  (immediate, no wait for B/C)
+
+**Status (added 2026-05-22).** The hourly cache refresh ([SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md)) is misbehaving in prod and is **actively making the dashboard slower than it would be without it**. To be removed entirely once Phase C ships; disabled immediately as an interim mitigation.
+
+**Evidence from prod logs on 2026-05-22.**
+- 14 hourly cycles started today; only 3 completed. FIBERLINE 2025 + 2026 takes ~5 min combined and the cycle straddles the next hourly fire, which calls `invalidate_cache` again before the previous refresh finishes.
+- Workers restarted 7 times in 2 hours (gunicorn `max_requests` recycle or cgroup pressure). Every restart kills the in-flight scheduler thread.
+- FIBERLINE's disk pickle is stale by ~5 hours despite the scheduler claiming to refresh it hourly. Users hitting FIBERLINE between failed cycles pay the **full cold-cache cost (30–60 s)** because the pickle was invalidated by a cycle that never repopulated.
+- "Known limitation" ([SCHEDULED_REFRESH.md:38-57](SCHEDULED_REFRESH.md#L38-L57)): scheduler only warms 1 of 3 workers anyway. Other workers always pay the 5–15 s pickle-load tax. The premise that the scheduler eliminated per-request DB queries was only ever half-true.
+
+**Why the scheduler was the wrong solution.** It's a 350+ line Python-side workaround that pre-fetches 8.4M rows × 8 cells, pickles 700+ MB to disk, and hopes 3 separate worker processes deserialize fast enough — all to avoid one expensive SQL query. The query is expensive because Python is doing classification + aggregation that the SQL engine could do in <1s. The right answer is to make the query cheap, not to hide it behind a scheduler. Phases A + C do exactly that.
+
+**What ships in A.5.**
+- Comment out the `_start_refresh()` call in [backend/app.py](../backend/app.py) (~line 130).
+- Leave `refresh_scheduler.py` on disk; deletion happens in Phase C's cleanup step.
+- Update the deployment doc to note the scheduler is disabled.
+
+**User-visible effect after A.5.**
+- First click per `(company, year)` per worker: 30–60 s (was the same when the scheduler had failed; better than today's broken-FIBERLINE situation where the cache is invalidated then never repopulated).
+- Subsequent clicks: sub-second from cache (unchanged).
+- Switching companies: still slow on cold workers (Phase A through C is what fixes this).
+
+**Why not wait for Phase C to remove it.** The scheduler is currently *worse than nothing* for FIBERLINE because it calls `invalidate_cache` and then fails to repopulate. Disabling it now restores predictable on-demand cache-fill behavior immediately.
+
 ### Phase B — Balance Sheet migration
 
 **Goal.** Same shape as Phase A, applied to the BS pipeline: `prepare_bs` + `assign_partida_bs` move into `VISTA_BS_PREPARADO`. View returns `SALDO` (sign-aware per asset/liability), `MES`, `PARTIDA_BS`, `SECCION_BS`, and an eligibility flag if needed.
@@ -94,17 +120,36 @@ Each of these is order-sensitive against the cumsum and likely needs a stored fu
 3. Wire `fetch_bs_data` and `prepare_bs_stmt` callers to the view.
 4. Delete `prepare_bs`, `assign_partida_bs`, BS-related constants (`BS_CLASSIFICATION`, `BS_CLASSIFICATION_OVERRIDES`, `BS_NATIVE_SECTION_MAP`, etc. — but **keep** `BS_PARTIDA_ORDER`, `BS_GROUP_TABLES`, `BS_SECTION_ORDER`, `BS_PARTIDA_LABELS`, `BS_ACTIVO_NO_CORRIENTE`, `BS_PASIVO_NO_CORRIENTE`; those are display ordering not classification).
 
-### Phase C — pre-aggregated summary views  (only if profiling demands)
+### Phase C — pre-aggregated summary views  (load-bearing for concurrency)
 
 **Goal.** Push the `pl_summary` / `bs_summary` `GROUP BY` itself into SQL, so the dashboard fetches the summary table directly (~100 rows) instead of fetching row-level prepared data and grouping in pandas.
 
-**Why "only if needed".** Phase A already buys 3-8× on aggregated fetches (the SQL `GROUP BY ... SUM(SALDO)` form was benchmarked above). If post-A latency is comfortable, Phase C is busywork. If a percentile sticks above target after A, this is where to look.
+**Why this is the move that makes concurrent load comfortable on the 5.8 GB box.** Phase A removes Python classification but Flask still pulls 8.4M rows per `(company, year)` and groups them in pandas. That ~400 MB of pandas state per worker per company is the structural reason concurrent users push the box toward OOM. Phase C collapses the payload to ~100 rows (~10 KB) — two orders of magnitude smaller. After C:
+
+- Each cached `(company, year)` summary is small enough that per-worker duplication stops mattering. Three workers holding the same FIBERLINE summary is ~30 KB total, not ~1.2 GB.
+- The disk pickle the scheduler writes is small enough that cold-worker pickle loads drop from 5–15 s to milliseconds, closing the "per-worker pickle reload" limitation called out in [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md).
+- Per-request CPU drops further; the `GROUP BY` runs in the SQL engine where it's both fast and outside our memory budget.
+
+This is the work that replaced the former Python-side fact-pickle plan (`docs/FACT_TABLE.md`, deleted 2026-05-22). Same end state (an aggregated payload), better mechanism (database engine instead of Python on our box).
+
+**Sequencing note.** Phase A and B (classification) must land first because Phase C is `GROUP BY … PARTIDA_PL` / `PARTIDA_BS`, and PARTIDA is what A and B materialize. Don't start C until A/B are wired and parity is proven; otherwise drift in the classification rules between Python and SQL would surface as drift in the summary totals, which is much harder to debug.
 
 **Candidate views.**
 - `REPORTES.VISTA_PNL_SUMARIO` — `GROUP BY CIA, MES, PARTIDA_PL` with `IS_INTERCOMPANY` filter variants (or three columns: total, ex_ic, only_ic).
-- `REPORTES.VISTA_BS_SUMARIO_CUMSUM` — `GROUP BY CIA, PARTIDA_BS, SECCION_BS, MES` with `SUM(SUM(SALDO)) OVER (PARTITION BY … ORDER BY MES)` to do cumsum inside the view. Tricky because reclassification rules depend on the cumulative balance — see Phase B "out of scope" above.
+- `REPORTES.VISTA_BS_SUMARIO_CUMSUM` — `GROUP BY CIA, PARTIDA_BS, SECCION_BS, MES` with `SUM(SUM(SALDO)) OVER (PARTITION BY … ORDER BY MES)` to do cumsum inside the view. Tricky because reclassification rules depend on the cumulative balance — see Phase B "out of scope" above. If the cumsum-plus-reclassification combination doesn't cleanly factor into a view, fall back to a "cumsum view + Python reclassification" hybrid; the cumsum alone is the expensive part.
 
-**Decision point.** Don't start C until A has been in prod for at least 2 weeks and we have real p50/p95 numbers from `/api/cache-stats`.
+**Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net. The parity gate becomes load-bearing: `sql/parity_check.py` must be extended to assert at the `(CIA, MES, PARTIDA_PL)` summary grain (it already does) and run against the *summary view* output, not just the prepared view output. Until that gate is wired and green, do not delete the Python `pl_summary` path.
+
+**Scheduler deletion is part of Phase C.** Once the summary views are deployed and wired, the on-demand cache-fill path is sub-second per request — there is no remaining reason to pre-warm anything. Phase C ships with the following cleanup commit (separate from the main wire-up to keep rollback simple):
+
+- Delete `backend/services/refresh_scheduler.py` (~350 lines).
+- Delete the import + `_start_refresh()` call from [backend/app.py](../backend/app.py).
+- Delete `docs/SCHEDULED_REFRESH.md`.
+- Remove `/tmp/flx_refresh.lock` on the host (cleanup script or one-off).
+- Delete the `force_refresh` ignore plumbing that the scheduler PR introduced (the Refresh button stays removed; that change was independently correct).
+- Update [docs/ARCHITECTURE.md](ARCHITECTURE.md) caching-strategy section to reflect on-demand cache-fill as the single design.
+
+The scheduler was disabled in Phase A.5; this is the deletion.
 
 ### Phase D — detail-table push-downs  (probably not worth it)
 
