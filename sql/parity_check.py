@@ -20,13 +20,35 @@ load_env_config(_P)
 import pandas as pd  # noqa: E402
 
 from data.db import connect  # noqa: E402
-from data.queries import fetch_pnl_data, fetch_bs_data  # noqa: E402
+from data.queries import fetch_bs_data  # noqa: E402
 from accounting.transforms import prepare_stmt, prepare_bs_stmt  # noqa: E402
+
+
+def _fetch_pnl_legacy(conn, cia: str, year: int) -> pd.DataFrame:
+    """Direct query against VISTA_ANALISIS_CECOS using the old pre-view filters.
+
+    Kept inline (instead of importing fetch_pnl_data) because the production
+    fetch_pnl_data was repointed to VISTA_PNL_PREPARADO in Phase A. The parity
+    check needs to keep reading the *original* source view so the comparison
+    remains meaningful (Python pipeline against source rows vs SQL view's
+    classification).
+    """
+    from datetime import date
+    query = (
+        "SELECT CIA, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL, "
+        "CENTRO_COSTO, DESC_CECO, FECHA, DEBITO_LOCAL, CREDITO_LOCAL, ASIENTO "
+        "FROM REPORTES.VISTA_ANALISIS_CECOS "
+        "WHERE CIA = ? AND FECHA >= ? AND FECHA < ? "
+        "AND (CUENTA_CONTABLE LIKE '6%' OR CUENTA_CONTABLE LIKE '7%' "
+        "     OR CUENTA_CONTABLE LIKE '8%') "
+        "AND FUENTE NOT LIKE 'CIERRE%'"
+    )
+    return pd.read_sql(query, conn, params=[cia, date(year, 1, 1), date(year + 1, 1, 1)])
 
 
 def python_pnl_totals(cia: str, year: int) -> pd.DataFrame:
     with connect() as conn:
-        raw = fetch_pnl_data(conn, cia, year, month=None)
+        raw = _fetch_pnl_legacy(conn, cia, year)
     df = prepare_stmt(raw)
     g = (df.groupby(["MES", "PARTIDA_PL"], observed=True)["SALDO"]
            .sum().reset_index())

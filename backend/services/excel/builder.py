@@ -13,9 +13,9 @@ from config.fields import (
 )
 from config.period import derive_period_type, get_period_months
 from accounting.transforms import (
-    prepare_pnl, filter_for_statements, assign_partida_pl,
-    prepare_bs_stmt, get_excluded_cuentas,
+    prepare_pnl_from_view, prepare_bs_stmt, get_excluded_cuentas,
 )
+from config.fields import IS_STATEMENT_ELIGIBLE
 from accounting.aggregation import (
     preaggregate, pivot_by_month,
     detail_by_ceco, detail_ceco_by_cuenta,
@@ -99,17 +99,22 @@ def build_bs_data(raw_bs: pd.DataFrame, pl_summary_df: pd.DataFrame, report_data
 
 
 def build_excel_data(raw: pd.DataFrame) -> PnLReportData:
-    """Transform raw data into the PnLReportData for Excel export."""
+    """Transform raw data into the PnLReportData for Excel export.
+
+    *raw* must come from VISTA_PNL_PREPARADO fetched with eligible_only=False,
+    so it carries both the full class-6/7/8 rows (for raw pivots that need
+    inventory accounts like 60.x) and the IS_STATEMENT_ELIGIBLE flag used
+    here to derive the statement subset.
+    """
     logger.info("Preparing Excel data...")
-    df = prepare_pnl(raw)
+    df = prepare_pnl_from_view(raw)
 
     by_cuenta = pivot_by_month(df, [CUENTA_CONTABLE, DESCRIPCION], add_total=True)
     by_ceco = pivot_by_month(df, [CENTRO_COSTO, DESC_CECO], add_total=True)
     by_ceco_cuenta = pivot_by_month(df, [CENTRO_COSTO, DESC_CECO, CUENTA_CONTABLE, DESCRIPCION], add_total=True)
 
-    df_stmt = filter_for_statements(df)
+    df_stmt = df[df[IS_STATEMENT_ELIGIBLE].astype(bool)].copy()
     excluded = get_excluded_cuentas(df, df_stmt)
-    df_stmt = assign_partida_pl(df_stmt)
 
     pl = pl_summary(df_stmt)
 

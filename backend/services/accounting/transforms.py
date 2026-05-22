@@ -167,10 +167,41 @@ def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def prepare_stmt(raw_df: pd.DataFrame) -> pd.DataFrame:
-    """Full pipeline: prepare_pnl -> filter_for_statements -> assign_partida_pl."""
+    """Full pipeline: prepare_pnl -> filter_for_statements -> assign_partida_pl.
+
+    Retained for the Excel raw-pivot path which still calls prepare_pnl on
+    unfiltered data. The dashboard / PDF paths use prepare_pnl_from_view
+    instead, since classification is done by the SQL view.
+    """
     df = prepare_pnl(raw_df)
     df = filter_for_statements(df)
     return assign_partida_pl(df)
+
+
+def prepare_pnl_from_view(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """Lightweight shape adapter for rows coming from VISTA_PNL_PREPARADO.
+
+    The view already supplies SALDO, MES, PARTIDA_PL, and IS_INTERCOMPANY,
+    so this function only fixes dtypes and applies the category encoding
+    that downstream aggregation expects.
+
+    If the input carries an IS_STATEMENT_ELIGIBLE column (eligible_only=False
+    was passed to fetch_pnl_data, as Excel does), this function returns the
+    *full* set unchanged — Excel needs both the unfiltered and statement-
+    eligible subsets, and does the subset itself. Callers that only want
+    the statement subset should either fetch with eligible_only=True or
+    filter on IS_STATEMENT_ELIGIBLE before calling pl_summary.
+    """
+    if raw_df.empty:
+        return raw_df.copy()
+    _validate_columns(raw_df, _REQUIRED_COLUMNS | {SALDO, MES, PARTIDA_PL, IS_INTERCOMPANY},
+                      "prepare_pnl_from_view")
+    df = raw_df.copy()
+    df[FECHA] = pd.to_datetime(df[FECHA])
+    df[CENTRO_COSTO] = df[CENTRO_COSTO].astype("category")
+    df[PARTIDA_PL] = df[PARTIDA_PL].astype("category")
+    df[IS_INTERCOMPANY] = df[IS_INTERCOMPANY].astype(bool)
+    return df
 
 
 def get_excluded_cuentas(df: pd.DataFrame, df_stmt: pd.DataFrame) -> set[str]:

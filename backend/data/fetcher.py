@@ -92,12 +92,20 @@ def fetch_all_data(company: str, year: int, month: int | None, conn_factory=None
     futures = {}
     max_workers = get_config().db.fetch_max_workers
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        # 1) P&L full year (always fetch full year; filter in-memory for month)
-        futures["raw_full"] = pool.submit(_fetch_with_own_conn, fetch_pnl_data, conn_factory, company, year, None)
+        # 1) P&L full year — eligible_only=False because Excel raw pivots need
+        # the unfiltered set (inventory 60.x rows); PDF and dashboard subset
+        # in-memory on IS_STATEMENT_ELIGIBLE.
+        futures["raw_full"] = pool.submit(
+            _fetch_with_own_conn, fetch_pnl_data, conn_factory,
+            company, year, None, eligible_only=False,
+        )
 
         # 2) P&L previous year — only needed for PDF (skip if cached or not applicable)
         if need_pdf and prev_year >= MIN_YEAR and cached_prev_pnl is None:
-            futures["raw_prev"] = pool.submit(_fetch_with_own_conn, fetch_pnl_data, conn_factory, company, prev_year, None)
+            futures["raw_prev"] = pool.submit(
+                _fetch_with_own_conn, fetch_pnl_data, conn_factory,
+                company, prev_year, None, eligible_only=False,
+            )
 
         # 3) BS current (always needed for Excel BS sheets)
         futures["raw_bs"] = pool.submit(_fetch_with_own_conn, fetch_bs_data, conn_factory, company, year, month)

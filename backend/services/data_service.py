@@ -24,7 +24,7 @@ import pandas as pd
 from data.fetcher import (
     fetch_all_data, fetch_pnl_only, fetch_bs_only,
 )
-from accounting.transforms import prepare_stmt, prepare_bs_stmt
+from accounting.transforms import prepare_stmt, prepare_pnl_from_view, prepare_bs_stmt
 from accounting.aggregation import (
     ensure_month_columns, preaggregate, sales_details,
     proyectos_especiales,
@@ -703,8 +703,17 @@ def _run_pl_summary_only(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, 
     """Fast path: prepare data + compute only P&L summaries (no detail pivots).
 
     Returns (df_stmt, preagg, pl_df, summary_records_dict).
+
+    raw_current_full comes from VISTA_PNL_PREPARADO and already has SALDO,
+    MES, PARTIDA_PL, and IS_INTERCOMPANY computed in SQL. If it was fetched
+    with eligible_only=False (the shared fetch_all_data path used by exports),
+    we subset to IS_STATEMENT_ELIGIBLE = 1 here; the fast path
+    (fetch_pnl_only, eligible_only=True default) already returns only the
+    eligible subset.
     """
-    df_stmt = prepare_stmt(raw_current_full)
+    df_stmt = prepare_pnl_from_view(raw_current_full)
+    if "IS_STATEMENT_ELIGIBLE" in df_stmt.columns:
+        df_stmt = df_stmt[df_stmt["IS_STATEMENT_ELIGIBLE"].astype(bool)].copy()
     preagg = preaggregate(df_stmt)
 
     pl = pl_summary(df_stmt)

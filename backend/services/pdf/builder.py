@@ -4,8 +4,8 @@ import logging
 
 import pandas as pd
 
-from config.fields import PARTIDA_BS
-from accounting.transforms import prepare_stmt, prepare_bs_stmt
+from config.fields import PARTIDA_BS, IS_STATEMENT_ELIGIBLE
+from accounting.transforms import prepare_pnl_from_view, prepare_bs_stmt
 from accounting.aggregation import (
     bs_cxc_relacionadas_by_nit,
     bs_cxp_relacionadas_by_nit,
@@ -31,10 +31,17 @@ def build_pdf_data(raw_current_full: pd.DataFrame, raw_prev: pd.DataFrame,
                    *, df_bs_prepared: pd.DataFrame | None = None) -> PdfReportData:
     """Transform raw data into the PdfReportData for PDF export."""
     logger.info("Preparing PDF data...")
-    df_stmt_current_full = prepare_stmt(raw_current_full)
+    # raw_current_full / raw_prev come from fetch_all_data with eligible_only=False
+    # (Excel needs the unfiltered set). PDF only consumes the statement subset.
+    df_current_full = prepare_pnl_from_view(raw_current_full)
+    df_stmt_current_full = (
+        df_current_full[df_current_full[IS_STATEMENT_ELIGIBLE].astype(bool)].copy()
+        if not df_current_full.empty else df_current_full
+    )
 
     if not raw_prev.empty:
-        df_stmt_prev = prepare_stmt(raw_prev)
+        df_prev = prepare_pnl_from_view(raw_prev)
+        df_stmt_prev = df_prev[df_prev[IS_STATEMENT_ELIGIBLE].astype(bool)].copy()
     else:
         df_stmt_prev = pd.DataFrame(columns=df_stmt_current_full.columns)
 
