@@ -29,7 +29,7 @@ The 5.8 GB ceiling is non-negotiable. Every phase must justify itself against th
 
 Worker RSS figures are observed during the warmup OOM and the post-revert steady state; treat the post-phase numbers as targets, not measurements. Verify with the Phase 0 memory log before declaring a phase complete.
 
-> **The constraint that drives the whole plan**: today, each worker independently caches the same DataFrames. With 3 workers and CONSOLIDADO_2025's `df_stmt` at ~600 MB in memory, three users hitting three workers can pull the same 1.8 GB into RAM simultaneously. Phase 1 exists to break that multiplication.
+> **The constraint that drives the whole plan**: today, each worker independently caches the same DataFrames. With 3 workers and FIBERLINE_2025's `df_stmt` at ~400 MB in memory, three users hitting three workers can pull the same ~1.2 GB into RAM simultaneously. Phase 1 exists to break that multiplication.
 
 ---
 
@@ -60,7 +60,7 @@ Targets, not benchmarks. Each phase's validation section defines how to confirm 
 
 ## Scope change 2026-05-12: scheduled refresh supersedes Phase 1
 
-After weighing the architectural cost of introducing Redis against the user's stated tolerance for **up to one hour of data staleness**, we pivoted away from a shared in-memory cache and toward an **hourly scheduler that refreshes the disk pickle cache for all 5 companies × 2 years between 7am and 9pm Lima time, every day including weekends**. User requests are then served exclusively from the warmed disk/in-memory caches; no user request ever triggers a DB fetch on the summary path. Full design in [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md).
+After weighing the architectural cost of introducing Redis against the user's stated tolerance for **up to one hour of data staleness**, we pivoted away from a shared in-memory cache and toward an **hourly scheduler that refreshes the disk pickle cache for all 4 companies × 2 years between 7am and 9pm Lima time, every day including weekends**. User requests are then served exclusively from the warmed disk/in-memory caches; no user request ever triggers a DB fetch on the summary path. Full design in [SCHEDULED_REFRESH.md](SCHEDULED_REFRESH.md).
 
 What this changes for the roadmap:
 
@@ -110,7 +110,7 @@ The "never again" list from the 2026-05-12 post-mortem. These apply to every pha
    - `pl_stmt`, `df`, `bs`, `raw` → `max_entries=6` (these hold full DataFrames)
    - Leave `pl_preagg`, `pl_preagg_ex_ic`, `pl_preagg_only_ic`, `pl_sections`, `pl_df`, `pl_result`, `bs_result`, `result` at the default (these are small or already aggregated)
 
-   With 5 companies × 2 years = 10 cells, 6 entries per bucket means the LRU evicts companies a worker hasn't touched in 30 min. The pre-fetch chain (`_prefetch_bs_background`, `_prefetch_prev_year_background`, `_prefetch_pl_sections_background`) keeps the most-recently-used pair hot.
+   With 4 companies × 2 years = 8 cells, 6 entries per bucket means the LRU evicts companies a worker hasn't touched in 30 min. The pre-fetch chain (`_prefetch_bs_background`, `_prefetch_prev_year_background`, `_prefetch_pl_sections_background`) keeps the most-recently-used pair hot.
 
 3. **Drop `FETCH_MAX_WORKERS` from 5 to 2** in `.env` (default at [backend/config/settings.py:33](../backend/config/settings.py#L33), env override at [settings.py:70](../backend/config/settings.py#L70)). Original Tier 2.3 framed this as DB-contention; reframe: fewer concurrent fetches means less concurrent pandas allocation per request, which is what's actually pressuring memory under load. The DB-contention argument still holds but is secondary.
 
@@ -130,8 +130,7 @@ The "never again" list from the 2026-05-12 post-mortem. These apply to every pha
 ### Risks
 
 - **`MemoryMax=5G` could kill gunicorn under a legitimate spike before Phase 1 ships.** Mitigation: `MemoryHigh=4G` gives the cgroup a soft warning; if the access log shows OOM-from-cgroup events, raise `MemoryMax` to 5.4 GB temporarily.
-- **Smaller LRUs could increase cache-miss rate for users hopping companies.** Mitigation: the disk cache at `backend/services/.stmt_cache/` (verified 2026-05-12: 257 MB for CONSOLIDADO_2025 down to 2.1 MB for FIBERLUX_2026) absorbs evictions cheaply — `_try_pl_stmt_from_disk` re-hydrates a worker in seconds, not minutes.
-- **`FETCH_MAX_WORKERS=2` slows `fetch_pnl_consolidated`.** Consolidated fetches 4 companies in parallel ([backend/data/fetcher.py:191](../backend/data/fetcher.py#L191)); with 2 workers they serialize 2-by-2. Acceptable: CONSOLIDADO is the single biggest memory risk, slower-and-survives beats faster-and-OOMs.
+- **Smaller LRUs could increase cache-miss rate for users hopping companies.** Mitigation: the disk cache at `backend/services/.stmt_cache/` (verified 2026-05-12: 157 MB for FIBERLINE_2025 down to 2.1 MB for FIBERLUX_2026) absorbs evictions cheaply — `_try_pl_stmt_from_disk` re-hydrates a worker in seconds, not minutes.
 - **No interaction with SACRED rules.** This phase changes no SQL, no aggregation, no transform. Safe to ship without an accounting review.
 
 ### Validation criteria
@@ -170,7 +169,7 @@ None. Phase 0 starts immediately.
 
 ### What changes
 
-1. **New file `backend/services/cache_redis.py`** (~150 lines): a class `RedisLRUTTLCache` that exposes the same `get(company, year)`, `set(company, year, value)`, `pop(company, year)`, `clear()`, `stats()` surface as `LRUTTLCache` at [data_service.py:54](../backend/services/data_service.py#L54). Values are pickled (use `pickle.HIGHEST_PROTOCOL`; pandas pickles are already the disk format, so the cost is known: ~2–5 s round-trip for CONSOLIDADO_2025's 257 MB pickle — single-flight absorbs concurrent callers).
+1. **New file `backend/services/cache_redis.py`** (~150 lines): a class `RedisLRUTTLCache` that exposes the same `get(company, year)`, `set(company, year, value)`, `pop(company, year)`, `clear()`, `stats()` surface as `LRUTTLCache` at [data_service.py:54](../backend/services/data_service.py#L54). Values are pickled (use `pickle.HIGHEST_PROTOCOL`; pandas pickles are already the disk format, so the cost is known: ~1–3 s round-trip for FIBERLINE_2025's 157 MB pickle — single-flight absorbs concurrent callers).
 2. **Modify `backend/services/data_service.py:187`**: replace each `LRUTTLCache(...)` with `RedisLRUTTLCache(name=..., ttl=1800)`. Call sites do not change. Per-bucket size limits move from a Python `max_entries` into Redis-level `maxmemory` enforcement on the namespace.
 3. **Fallback path**: every Redis call inside `RedisLRUTTLCache` is wrapped in `try / except (redis.ConnectionError, redis.TimeoutError)`. On failure, `get` returns `None` (treat as miss) and `set` logs + no-ops. The disk cache at `backend/services/.stmt_cache/` remains and becomes the durable fallback — when Redis is down, the system degrades to "first user pays the fetch, subsequent users hit the disk cache, no shared in-memory layer." Not great, not broken.
 4. **Replace `_CrossProcLock`** with `_RedisSingleFlight`: `SET flx_inflight_<kind>_<company>_<year> <worker_id> NX EX 300`. The fcntl-based flock and the `/tmp/flx_inflight_*` lock files go away. Keep `_get_inflight_lock` (the in-process `threading.Lock` dict) — it's still needed once Phase 3 introduces threaded workers.
@@ -197,7 +196,7 @@ None. Phase 0 starts immediately.
 
 ### Risks
 
-- **Pickle serialization cost is now on every cache hit, not just disk miss.** For CONSOLIDADO_2025 at 257 MB, a Redis hit means ~2–5 s of pickle work per worker per fetch (verify on staging with `timeit`). Mitigation: the value goes into the in-process `pl_df` / `pl_preagg` caches on hit, so the same worker pays once per TTL window, not per request. Net effect on cache-hit p95 should still beat a cold DB fetch by an order of magnitude.
+- **Pickle serialization cost is now on every cache hit, not just disk miss.** For FIBERLINE_2025 at 157 MB, a Redis hit means ~1–3 s of pickle work per worker per fetch (verify on staging with `timeit`). Mitigation: the value goes into the in-process `pl_df` / `pl_preagg` caches on hit, so the same worker pays once per TTL window, not per request. Net effect on cache-hit p95 should still beat a cold DB fetch by an order of magnitude.
 - **Redis is now a single point of failure.** Mitigation: the fallback path above. Add a synthetic check ("can I `PING` Redis?") to the existing health endpoint so the load balancer / monitoring catches a dead Redis even if requests still succeed.
 - **`SET NX EX 300` could leak a lock if a worker dies mid-fetch.** Mitigation: 300 s TTL matches `DB_QUERY_TIMEOUT`, so worst case other workers wait 5 min then retry. Acceptable. Do **not** set a longer TTL just because pickle is slow.
 - **No SACRED interaction.** Phase 1 changes only the storage layer. No accounting code is touched. Still, run the staging diff (load FIBERLINE/2026, open every section, compare totals to prod) before promoting.
@@ -208,7 +207,7 @@ None. Phase 0 starts immediately.
 - Stop Redis (`sudo systemctl stop redis-server`). The app must still answer requests, with cache-miss log lines and degraded latency. No 500s.
 - Restart Redis. Cache hits resume within one TTL window.
 - With Redis up, restart gunicorn. The first request per `(company, year)` triggers a Redis cache fill from disk (since pre-Phase-1 disk caches still exist); the second request from a different worker is served from Redis with no DB hit. Verify via `redis-cli MONITOR` and `grep "P&L fetch" backend/logs/error.log` (should be silent on the second request).
-- Worker RSS during steady-state browsing of 5 companies drops from ~1.0–1.5 GB to ~300 MB (verify on staging).
+- Worker RSS during steady-state browsing of all 4 companies drops from ~1.0–1.5 GB to ~300 MB (verify on staging).
 - Memory budget table row "After Phase 1" holds: workers ≤ 1 GB total, Redis ≤ 2 GB, headroom > 1 GB.
 
 ### Hard prerequisites
@@ -231,13 +230,13 @@ None. Phase 0 starts immediately.
 >
 > **Status**: Implementation spec in [FACT_TABLE.md](FACT_TABLE.md). This section is the roadmap-level summary; do not duplicate detail here.
 
-**Why**: `df_stmt_CONSOLIDADO_2025.pkl` is 257 MB on disk and ~600 MB in memory. The summary endpoints — the ones the dashboard hits on every page load — only need `(CIA, year, month, cuenta_contable, centro_costo, debito, credito)` sums. A pre-aggregated DataFrame at that grain is ~10 MB. Detail drill-down (clicking into a single number to see the underlying journal entries) keeps the row-level path unchanged.
+**Why**: `df_stmt_FIBERLINE_2025.pkl` is 157 MB on disk and ~400 MB in memory. The summary endpoints — the ones the dashboard hits on every page load — only need `(CIA, year, month, cuenta_contable, centro_costo, debito, credito)` sums. A pre-aggregated DataFrame at that grain is ~10 MB. Detail drill-down (clicking into a single number to see the underlying journal entries) keeps the row-level path unchanged.
 
 **Design summary** (full spec in [FACT_TABLE.md](FACT_TABLE.md)):
 
 1. **No DBA dependency.** The fact pickles are built on our box by extending the existing [refresh_scheduler.py](../backend/services/refresh_scheduler.py) cycle — after each `load_pl_data`, we `groupby + sum` the cached `df_stmt` and write `fact_{company}_{year}.pkl` to `backend/services/.stmt_cache/`.
 2. **Same freshness as today.** Because the ETL piggybacks on the existing hourly scheduler, fact pickles refresh every hour during 7am–9pm Lima. Summary and drill-down share the same ~1 hour staleness window the system already has. **No "data as of yesterday" regression.**
-3. **Per-company feature flag.** `USE_FACT_TABLE_<COMPANY>` env vars; flip one company at a time. Order: FIBERLUX → FIBERTECH → FIBERLINE → NEXTNET → CONSOLIDADO. CONSOLIDADO reads the 4 real-company pickles and concats — no separate ETL.
+3. **Per-company feature flag.** `USE_FACT_TABLE_<COMPANY>` env vars; flip one company at a time. Order: FIBERLUX → NEXTNET → FIBERTECH → FIBERLINE.
 4. **Diff harness gate.** [backend/scripts/diff_fact_vs_view.py](../backend/scripts/diff_fact_vs_view.py) (new) must return zero diffs at the `(PARTIDA_PL, month)` grain for all triples before any flag flips.
 
 > **Earlier revisions of this section proposed a DBA-owned nightly fact table on SQL Server.** That design was abandoned on 2026-05-14 once we confirmed `VISTA_ANALISIS_CECOS` is live (changes appear immediately). Nightly would have made P&L summary lag drill-down by up to a day — a user-visible regression worse than the cold-pickle tax. The current self-built hourly design preserves today's freshness contract. See [FACT_TABLE.md](FACT_TABLE.md) "What about the original Path A?" for the audit trail.
@@ -258,7 +257,7 @@ See [FACT_TABLE.md](FACT_TABLE.md) "Risks". Headline items: SACRED drift via the
 ### Validation criteria
 
 - Diff harness returns zero diffs across all `(company, year, month)` triples.
-- Cold-worker first-click latency on FIBERLINE/FIBERTECH/CONSOLIDADO drops from ~10 s to <1 s.
+- Cold-worker first-click latency on FIBERLINE/FIBERTECH drops from ~10 s to <1 s.
 - Worker peak RSS under steady-state browsing drops by ~150–250 MB (the `df_stmt` cache is now ~10 MB per cell instead of ~150–250 MB).
 - Memory budget "After Phase 2" row holds.
 
@@ -270,7 +269,6 @@ See [FACT_TABLE.md](FACT_TABLE.md) "Risks". Headline items: SACRED drift via the
 ### What NOT to do
 
 - Do **not** modify `prepare_stmt`, `pl_summary`, `bs_summary`, the `np.select` rules in `transforms.py`, or any file under `backend/services/accounting/`. The fact pickle replaces the *fetch* step, not the *transform* step. The aggregation runs *after* `prepare_stmt`, on the SACRED-transformed DataFrame.
-- Do **not** flip the flag for CONSOLIDADO first to "see the biggest win." CONSOLIDADO reads the 4 real-company pickles; if one company's aggregation has a bug, you'll spot it faster on a single-company rollout.
 - Do **not** delete the row-level path. Detail drill-down depends on it, and so does the diff harness's reference side.
 - Do **not** revive the nightly DBA-owned design without first re-evaluating the freshness contract. The current design exists because `VISTA_ANALISIS_CECOS` is live; if that changes, revisit.
 
@@ -306,7 +304,7 @@ See [FACT_TABLE.md](FACT_TABLE.md) "Risks". Headline items: SACRED drift via the
 
 ### Risks
 
-- **Without Phase 1, this phase causes OOM.** Three workers × four threads × one CONSOLIDADO load each = ~7.2 GB of pandas state, well past the 5 GB MemoryMax. This is the hardest prerequisite in the plan.
+- **Without Phase 1, this phase causes OOM.** Three workers × four threads × one FIBERLINE load each = ~4.8 GB of pandas state, perilously close to the 5 GB MemoryMax. This is the hardest prerequisite in the plan.
 - **Threading bugs are subtle.** The single-flight locks are the most exposed surface. Mitigation: a parallel-curl test from staging — `for i in $(seq 1 12); do curl ... & done; wait` — must show exactly one DB fetch in the logs for the same `(company, year)`.
 - **pyodbc pool exhaustion** under unexpected query patterns. Mitigation: log pool-wait time; alert if it crosses 1 s.
 - **No SACRED interaction.** Threading the worker doesn't change data semantics. But pandas DataFrames are *not* safe to mutate from multiple threads — verify all mutation in `accounting/transforms.py` and `accounting/aggregation.py` happens on locally-created DataFrames, not on objects passed in from cache. Spot-check: `prepare_stmt` returns a new DataFrame via `.copy()`; confirm before promoting.
@@ -335,7 +333,7 @@ See [FACT_TABLE.md](FACT_TABLE.md) "Risks". Headline items: SACRED drift via the
 
 > **Goal**: Reduce DB-side query latency on the `VISTA_ANALISIS_CECOS` path. Out of our hands; included for completeness.
 
-**Why**: Even with Redis caching and the fact table, the first user after a deploy still triggers a row-level fetch for detail drill-down, and CONSOLIDADO's full-year scan (`_fetch_consolidated` in [backend/data/fetcher.py](../backend/data/fetcher.py)) still hits the view. If the underlying tables behind the view don't have a covering index on `(CIA, FECHA, CUENTA_CONTABLE)`, those cold fetches will always be slow.
+**Why**: Even with Redis caching and the fact table, the first user after a deploy still triggers a row-level fetch for detail drill-down. If the underlying tables behind `VISTA_ANALISIS_CECOS` don't have a covering index on `(CIA, FECHA, CUENTA_CONTABLE)`, those cold fetches will always be slow.
 
 ### What changes
 

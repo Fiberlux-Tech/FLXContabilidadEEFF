@@ -34,6 +34,9 @@ FLXContabilidad/
 │   │       └── dashboard/  # DashboardShell, TopBar, Sidebar, MainContent,
 │   │                       # FinancialTable, DetailTable, PLNoteView
 │   └── dist/             # Production build (served by nginx)
+├── sql/                  # DDL for views that push transforms into SQL Server
+│                         # (VISTA_PNL_PREPARADO, VISTA_BS_PREPARADO, parity checks)
+│                         # See sql/README.md for topology + deployment order
 ├── .env                  # Shared defaults
 ├── .env.development      # Dev-specific overrides
 ├── .env.production       # Production overrides

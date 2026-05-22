@@ -5,8 +5,6 @@
 ### What Is This?
 A web-based dashboard that allows non-technical users to view and analyze financial reports (P&L and Balance Sheet) for the Fiberlux group of companies. Users see everything in the browser — monthly breakdowns, revenue details, drill-down into journal entries — and can export to Excel and/or PDF when needed.
 
-This replaces a CLI-only Python tool (`python main.py --company FIBERLUX --year 2026 --month 1`) that required terminal access and generated files locally.
-
 ### Companies Served
 - FIBERLINE PERU S.A.C. (RUC: 20601594791)
 - FIBERLUX S.A.C. (RUC: 20557425889)

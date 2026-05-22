@@ -27,9 +27,8 @@ _LOCK_PATH = Path("/tmp/flx_refresh.lock")
 # Cycles fire at 07:00, 08:00, ..., 21:00 inclusive. 15 cycles per day.
 _REFRESH_HOURS = range(7, 22)
 
-# Smallest-first; CONSOLIDADO last. See "Company order" in the doc.
-# If CONSOLIDADO refresh fails, the 4 real companies are already fresh.
-_COMPANIES = ("FIBERLUX", "NEXTNET", "FIBERTECH", "FIBERLINE", "CONSOLIDADO")
+# Smallest-first to minimise peak memory during the refresh cycle.
+_COMPANIES = ("FIBERLUX", "NEXTNET", "FIBERTECH", "FIBERLINE")
 
 # Module-level state for visibility (read by admin endpoint if added later).
 _last_cycle_complete_at: datetime | None = None

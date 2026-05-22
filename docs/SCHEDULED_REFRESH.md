@@ -21,7 +21,7 @@ Concretely, during a normal day:
 
 | Time (Lima)  | What happens                                                                 |
 |--------------|------------------------------------------------------------------------------|
-| 07:00        | Scheduler fires. Walks 10 refresh units (5 companies × 2 years), serial, smallest first. Each unit: `invalidate_cache` → `load_pl_data` → `load_bs_data`. Cycle runs ~5–10 min (verify on staging). |
+| 07:00        | Scheduler fires. Walks 8 refresh units (4 companies × 2 years), serial, smallest first. Each unit: `invalidate_cache` → `load_pl_data` → `load_bs_data`. Cycle runs ~5–10 min (verify on staging). |
 | 07:30        | First user lands. If they hit the elected worker, sub-second. If they hit one of the other 2 workers, they pay a pickle-load cost (5–15 s for the big companies — see "Known limitation" below). Either way, **no DB hit**. |
 | 07:30–08:00  | Users click around. Each `(company, year)` × worker combination pays the pickle cost once, then is instant from then on. After ~10 min of organic browsing all 3 workers are fully warm. Drill-down to detail journal entries hits row-level cache (already populated by the scheduler via `load_pl_data` → `_ensure_pl_stmt_cached`). |
 | 08:00        | Scheduler fires again. Re-invalidates and re-fetches. Active users transiently see a sub-second blip on their next click if they happen to land between `invalidate_cache` and the cache repopulation for the company they are viewing (see "Architecture" below for the ordering that minimizes this). |
@@ -30,14 +30,14 @@ Concretely, during a normal day:
 
 **Cold start (post-deploy or post-restart)**: the gunicorn workers restart, the in-memory `_caches` dicts are empty, but the disk pickle cache at `backend/services/.stmt_cache/` survives — `_try_pl_stmt_from_disk` at [data_service.py:766](../backend/services/data_service.py#L766) rehydrates from disk. Two scenarios:
 
-- **Restart during 07:00–21:00**: first user request after restart pays the pickle-load cost (5–15 s for FIBERLINE/FIBERTECH, ~10 s for CONSOLIDADO_2025 — observed on staging 2026-05-14), then the next scheduled cycle refreshes from the DB. No user ever triggers a DB fetch on the summary path.
+- **Restart during 07:00–21:00**: first user request after restart pays the pickle-load cost (5–15 s for FIBERLINE/FIBERTECH — observed on staging 2026-05-14), then the next scheduled cycle refreshes from the DB. No user ever triggers a DB fetch on the summary path.
 - **Restart outside 07:00–21:00**: disk pickle is up to 10 hours old. First user gets the 21:00-previous-day snapshot until 07:00 fires. This is the same staleness window the user already accepted.
 
 **No manual refresh.** The Refresh button at [frontend/src/features/dashboard/TopBar.tsx:278-280](../frontend/src/features/dashboard/TopBar.tsx#L278) is removed. The `force_refresh` field in API request bodies is ignored (see Implementation). Internal `force_refresh=True` callers inside `get_detail_records` at [data_service.py:1220](../backend/services/data_service.py#L1220) and [data_service.py:1230](../backend/services/data_service.py#L1230) stay — those are the drill-down fallback for when a user clicks into a row that is not yet in the row-level cache; they are not user-facing refresh buttons.
 
 ## Known limitation: per-worker pickle reload
 
-> **The scheduler eliminates DB queries on user requests, but does not eliminate the per-worker pickle-load cost.** Observed on staging 2026-05-14: 5–15 seconds of pandas deserialization per cold worker per `(company, year)` for the largest companies (FIBERLINE, FIBERTECH, CONSOLIDADO).
+> **The scheduler eliminates DB queries on user requests, but does not eliminate the per-worker pickle-load cost.** Observed on staging 2026-05-14: 5–15 seconds of pandas deserialization per cold worker per `(company, year)` for the largest companies (FIBERLINE, FIBERTECH).
 
 We run 3 gunicorn workers (separate Python processes). Each worker has its own in-memory `_caches` dict. The scheduler runs in **one elected worker** and warms that worker's in-memory cache plus the shared on-disk pickles. The other 2 workers' in-memory caches remain empty until a user request lands on them.
 
@@ -49,14 +49,14 @@ When a request lands on a "cold" worker:
 
 **User-visible impact:**
 - After scheduler cycle, the first 1–5 users browsing each `(company, year)` pair pay ~5–15 s on their first click on each cold worker
-- After ~10 minutes of organic browsing, all 3 workers have all 5 companies × 2 years warm in memory, and everything is sub-second for the rest of the day
+- After ~10 minutes of organic browsing, all 3 workers have all 4 companies × 2 years warm in memory, and everything is sub-second for the rest of the day
 - On worker restart (deploy or systemd auto-restart), the warming-up window repeats
 - Worst case observed (cold worker, FIBERTECH trailing-12M, both years): ~30 s total wait spread across pickle loads for `df_stmt`, `preagg`, `preagg_ex_ic`, `preagg_only_ic`, then prev-year repeat
 
 **Why this remains after the scheduler:**
 The scheduler shares state **across cycles within one worker**, not across workers within one cycle. The cross-worker deduplication that Phase 1 (Redis) was designed to provide is what would eliminate this. We deferred Phase 1 in favor of the scheduler because the scheduler removes the *DB* cost (much bigger than the pickle-load cost), and the user accepted hourly staleness as a tradeoff against complexity. The pickle-load cost was understood at design time but its magnitude (15s for the big companies, not 2–5s) was confirmed only on the 2026-05-14 staging deploy.
 
-**Phase 2 (monthly fact table) makes this limitation disappear.** A 257 MB CONSOLIDADO_2025 pickle becomes ~10 MB after Phase 2. Pickle load time drops from ~10 s to <1 s, well below user-noticeable. Phase 2 is the natural next move; see [SCALING_ROADMAP.md](SCALING_ROADMAP.md) "Phase 2".
+**Phase 2 (monthly fact table) makes this limitation disappear.** A 157 MB FIBERLINE_2025 pickle becomes ~10 MB after Phase 2. Pickle load time drops from ~10 s to <1 s, well below user-noticeable. Phase 2 is the natural next move; see [SCALING_ROADMAP.md](SCALING_ROADMAP.md) "Phase 2".
 
 **Mitigations available today without Phase 2:**
 - Encourage users to keep their dashboard tab open. The first click on each company warms that worker; subsequent clicks are instant on the same worker.
@@ -73,13 +73,13 @@ Three pieces:
 
 > **Why elect at the worker level and not from gunicorn's `post_worker_init`?** The reverted warmup elected from `post_worker_init` and ran once at boot. The scheduler runs continuously and re-elects on every worker restart; doing it from `create_app()` keeps the lifecycle tied to the Flask app instance, which is the same lifecycle the `mem_monitor` daemon already uses (see [mem_monitor.py](../backend/services/mem_monitor.py)). One consistent pattern, not two.
 
-> **Why serial, not parallel?** The 2026-05-12 warmup OOM. Parallel refresh of all 5 companies holds ~1.5–2 GB of pandas state simultaneously, which exceeds the 5.8 GB box's safe working set once OS + workers are accounted for. Serial refresh keeps the transient memory at one company × two years ≈ 500–800 MB (verify on staging). Even with the Phase 0 cgroup ceiling, "slow and survives" beats "fast and OOMs."
+> **Why serial, not parallel?** The 2026-05-12 warmup OOM. Parallel refresh of all companies holds ~1.5–2 GB of pandas state simultaneously, which exceeds the 5.8 GB box's safe working set once OS + workers are accounted for. Serial refresh keeps the transient memory at one company × two years ≈ 500–800 MB (verify on staging). Even with the Phase 0 cgroup ceiling, "slow and survives" beats "fast and OOMs."
 
 > **Why invalidate-then-fetch, not fetch-then-swap?** Invalidating first frees the old DataFrame's memory before the new fetch allocates. Doing it in the opposite order would briefly hold *both* versions, doubling peak memory. The cost of the chosen ordering is a brief cache-miss window if a user request lands between the invalidate and the repopulation for that company — those users see a one-off ~2–5 s latency for the disk reload (the disk pickle is invalidated too, so they wait for the DB fetch the scheduler is mid-flight on). This is rare and acceptable.
 
 ### Company order
 
-Smallest first, CONSOLIDADO last. From the verified pickle sizes:
+Smallest first to minimise the cumulative in-memory peak during the refresh cycle. From the verified pickle sizes:
 
 | Order | Company    | df_stmt 2025 | df_stmt 2026 | Cumulative transient peak |
 |-------|------------|--------------|--------------|---------------------------|
@@ -87,9 +87,8 @@ Smallest first, CONSOLIDADO last. From the verified pickle sizes:
 | 2     | NEXTNET    | 9.1 MB       | 2.7 MB       | tiny                      |
 | 3     | FIBERTECH  | 80 MB        | 29 MB        | ~250 MB in-memory         |
 | 4     | FIBERLINE  | 157 MB       | 50 MB        | ~500 MB in-memory         |
-| 5     | CONSOLIDADO| 257 MB       | 94 MB        | ~700 MB in-memory peak    |
 
-Rationale: if CONSOLIDADO refresh fails (the largest by 3×, the most likely to trip a memory ceiling), the four real companies are already fresh. Users of the consolidated view see the hour-old data; users of any individual company see fresh data.
+Rationale: if the cycle fails partway, the smaller companies have already been refreshed; users of any individual company still see fresh data, with worst-case staleness on the largest company.
 
 ## Implementation
 
@@ -124,8 +123,8 @@ _TZ = ZoneInfo("America/Lima")
 _LOCK_PATH = Path("/tmp/flx_refresh.lock")
 _REFRESH_HOURS = range(7, 22)   # 7,8,...,21 → cycles fire at 07:00..21:00
 
-# Smallest-first; CONSOLIDADO last. See "Company order" in the doc.
-_COMPANIES = ("FIBERLUX", "NEXTNET", "FIBERTECH", "FIBERLINE", "CONSOLIDADO")
+# Smallest-first. See "Company order" in the doc.
+_COMPANIES = ("FIBERLUX", "NEXTNET", "FIBERTECH", "FIBERLINE")
 
 _started = False
 _start_lock = threading.Lock()
@@ -239,20 +238,20 @@ Lessons from the 2026-05-12 warmup OOM, restated for the scheduler:
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
 | **Scheduler thread dies silently**; cache goes stale for hours/days, finance team eventually notices the dashboard date is yesterday's. | Low to medium | High | (a) `_run` wraps the loop in `try/except` and logs `exception` on crash. (b) `mem_monitor` log lines continue regardless and act as a heartbeat — if the worker is alive, it logs every 300 s. (c) Surface a `last_refresh_at` timestamp via an admin endpoint and in the dashboard footer (see "Validation criteria" below); a missing/stale timestamp is the user-visible signal. |
-| **Refresh cycle OOMs on CONSOLIDADO** (the same scenario that killed warmup). | Low (with smallest-first ordering and Phase 0 cgroup ceiling) | Medium | Smallest-first order ensures the four real companies are already fresh when CONSOLIDADO is attempted. `MemoryHigh=4G` triggers cgroup reclaim before the kernel OOM-killer. `FETCH_MAX_WORKERS=2` keeps `fetch_pnl_consolidated`'s parallel fan-out from doubling memory inside one fetch. |
+| **Refresh cycle OOMs on the largest company** (the same scenario that killed warmup). | Low (with smallest-first ordering and Phase 0 cgroup ceiling) | Medium | Smallest-first order ensures the smaller companies are already fresh when the largest is attempted. `MemoryHigh=4G` triggers cgroup reclaim before the kernel OOM-killer. `FETCH_MAX_WORKERS=2` keeps the per-fetch parallel fan-out from doubling memory inside one fetch. |
 | **Elector flock leaks** if the elected worker is killed -9. | Low | Low | `fcntl.flock` is held by the file descriptor; when the process dies, the kernel releases the lock. The next worker's `start()` call (after restart) re-elects. No manual cleanup needed. |
 | **Time-of-day gate math wrong** (off-by-one on the 21:00 boundary, wrong year-rollover). | Medium pre-shipping, low after one cycle of soak | Medium | Unit-test `_seconds_until_next_cycle` with the boundary cases listed in the skeleton above before shipping. Lima does **not** observe DST. |
 | **Disk pickles grow during the year and exceed the disk cache budget.** | Low | Low | Current total ~700 MB across 10 pickles; even tripling that is well under the host's free disk. `mem_monitor` doesn't measure disk; spot-check `du -sh backend/services/.stmt_cache/` after the first week. |
 | **Refresh fires while a user is mid-drill-down** and clobbers their row-level cache. | Low | Low | `invalidate_cache` clears the per-`(company, year)` entry; the user's next click rehydrates from the just-written disk pickle. Sub-second blip, not a failure. |
-| **Logging volume grows** (15 cycles × 5 companies × 2 years × 2 statements × multiple log lines per fetch). | Medium | Low | Existing log rotation at `backend/logs/error.log` should absorb it; verify rotation policy before shipping. If too noisy, tune the `_refresh_cycle` log to a single line per company-year pair. |
+| **Logging volume grows** (15 cycles × 4 companies × 2 years × 2 statements × multiple log lines per fetch). | Medium | Low | Existing log rotation at `backend/logs/error.log` should absorb it; verify rotation policy before shipping. If too noisy, tune the `_refresh_cycle` log to a single line per company-year pair. |
 
 ## Phase 0 interaction
 
 All Phase 0 work stays. Specifically:
 
 - The three commits already on `dev` (`c36d557` `mem_monitor`, `807d539` LRU caps to 6, `f17ea04` `FETCH_MAX_WORKERS` template default 5 → 2) ship as planned.
-- The pending `.env` edit (`FETCH_MAX_WORKERS=2`) and the systemd edit (`MemoryHigh=4G` / `MemoryMax=5G`) still need to happen on staging. Sequence: do those *before* deploying the scheduler so the cgroup ceiling is in place the first time the scheduler holds a CONSOLIDADO DataFrame.
-- The cache size caps (`max_entries=6` on heavy buckets) interact cleanly with the scheduler: 10 cells × 6-entry cap = the LRU never evicts the live set, but a runaway scheduler that somehow tried to hold all 5 companies × 2 years simultaneously in `pl_stmt` would still be bounded.
+- The pending `.env` edit (`FETCH_MAX_WORKERS=2`) and the systemd edit (`MemoryHigh=4G` / `MemoryMax=5G`) still need to happen on staging. Sequence: do those *before* deploying the scheduler so the cgroup ceiling is in place the first time the scheduler holds a large company's DataFrame.
+- The cache size caps (`max_entries=6` on heavy buckets) interact cleanly with the scheduler: 8 cells × 6-entry cap = the LRU never evicts the live set, but a runaway scheduler that somehow tried to hold all 4 companies × 2 years simultaneously in `pl_stmt` would still be bounded.
 - The `mem_monitor` log is the only visibility into whether the scheduler is misbehaving. Do not skip it.
 
 ## Validation criteria
@@ -261,8 +260,8 @@ Scriptable, in order of how soon they need to pass.
 
 1. **Scheduler is elected exactly once.** After service restart on staging, `grep "refresh_scheduler: elected" backend/logs/error.log` returns exactly one line; `grep "refresh_scheduler: another worker"` returns exactly two (the non-elected workers).
 2. **First cycle fires at the next 7am–9pm top-of-the-hour.** After restart, no DB fetch logs (`grep "P&L fetch"`) appear until the next on-the-hour timestamp; then a burst of fetches over ~5–10 min, then silence until the next hour.
-3. **All 10 units complete in one cycle.** Per cycle, the log shows exactly 10 `refresh: <COMPANY>/<YEAR> done` lines (or a mix of `done` and `FAILED` with the failure logged via `exception`). Cycle ends with `refresh: cycle complete`.
-4. **User requests fire no DB queries during 7am–9pm steady state.** After one full cycle, exercise the dashboard for 10 min (5 companies, both years, drill into a few details). `grep -c "P&L fetch" backend/logs/error.log` should not increment during that window (drill-down may increment it if the user lands on an uncached partida — expected, covered by the kept internal `force_refresh=True` callers).
+3. **All 8 units complete in one cycle.** Per cycle, the log shows exactly 8 `refresh: <COMPANY>/<YEAR> done` lines (or a mix of `done` and `FAILED` with the failure logged via `exception`). Cycle ends with `refresh: cycle complete`.
+4. **User requests fire no DB queries during 7am–9pm steady state.** After one full cycle, exercise the dashboard for 10 min (4 companies, both years, drill into a few details). `grep -c "P&L fetch" backend/logs/error.log` should not increment during that window (drill-down may increment it if the user lands on an uncached partida — expected, covered by the kept internal `force_refresh=True` callers).
 5. **No OOM during refresh.** After 24 h of soak, `journalctl -u flxcontabilidad-staging | grep -i "killed\|oom"` returns nothing. `mem_monitor` log shows `sys_available` never below 800 MB.
 6. **Last-refresh visibility.** (Recommended additional work, not blocking.) Add an admin endpoint `/api/admin/refresh-status` returning `{ "last_cycle_complete": "2026-05-13T15:00:42-05:00", "elected_pid": 12345, "next_cycle_at": "2026-05-13T16:00:00-05:00" }`. The scheduler writes its own state into a module-level dict; the endpoint reads it. Track this as a follow-up commit if not in the initial PR.
 
@@ -271,7 +270,7 @@ Scriptable, in order of how soon they need to pass.
 1. **Land the remaining Phase 0 ops steps on staging** (`.env` edit, systemd edit, `daemon-reload`, restart). Confirm `mem_monitor` is logging. **Do not skip this** — the cgroup ceiling is the safety net for step 4 below.
 2. **Commit the scheduler + `app.py` + `routes.py` + frontend changes on `dev`.** Suggested commit message subject: `feat(refresh): hourly scheduled cache refresh (supersedes Phase 1)`. Two commits is fine: backend, then frontend Refresh-button removal.
 3. **Push and `./deploy.sh` from the staging tree.**
-4. **Watch for at least one full cycle inside the 7am–9pm window.** `tail -f backend/logs/error.log | grep refresh` should show `refresh: cycle starting`, ten `refresh: <COMPANY>/<YEAR> done` lines over ~5–10 min, and `refresh: cycle complete`.
+4. **Watch for at least one full cycle inside the 7am–9pm window.** `tail -f backend/logs/error.log | grep refresh` should show `refresh: cycle starting`, eight `refresh: <COMPANY>/<YEAR> done` lines over ~5–10 min, and `refresh: cycle complete`.
 5. **Run the dashboard manually for ~10 min after the cycle completes.** Verify no `P&L fetch` log lines appear from user requests.
 6. **Soak for 24 h.** Tail `error.log` once per hour to confirm each cycle runs cleanly. Spot-check `mem_monitor` lines for memory regressions.
 7. **Promote to prod** via `./promote.sh` from the prod tree, then apply the same `.env` + systemd edits on prod manually.
