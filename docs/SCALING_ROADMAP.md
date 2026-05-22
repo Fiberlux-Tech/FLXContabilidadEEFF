@@ -315,7 +315,7 @@ Active path as of 2026-05-22:
 
 ```
 Phase 0 (shipped) ──▶ SQL views Phase A (shipped) ──▶ A.5 scheduler deleted (shipped)
-                                                        ──▶ Phase B ──▶ Phase C
+                                                        ──▶ Phase B ──▶ Phase C ──▶ C+1 simplification
 
         Phase 1 (DEFERRED) ── Phase 3 (DEFERRED)
         Phase 4 (folded into SQL views deployment cycle)
@@ -324,6 +324,7 @@ Phase 0 (shipped) ──▶ SQL views Phase A (shipped) ──▶ A.5 scheduler 
 - **Phase 0** is shipped on `dev`; operational steps (`.env`, systemd) still pending on staging + prod and continue to ship independently of the SQL views work.
 - **Scheduled refresh** was shipped 2026-05-12 and deleted 2026-05-22. Reasons recorded in [SQL_VIEWS_ROADMAP.md Phase A.5](SQL_VIEWS_ROADMAP.md). Phase A makes per-request fetches fast enough that pre-warming is unnecessary.
 - **SQL views Phase A → B → C** is the active work — see [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md). Phase A (P&L classification in SQL) shipped 2026-05-22. Phase B (BS classification) is next. Phase C pushes summary aggregation into SQL and is the move that buys structural concurrency headroom.
+- **Phase C+1** is a queued simplification pass that becomes possible once Phase C is in prod: drop worker count, remove disk pickle layer, remove single-flight flock, possibly preload-at-startup. Most of the current cache complexity exists to compensate for problems Phase C deletes; C+1 sheds those layers. See [SQL_VIEWS_ROADMAP.md Phase C+1](SQL_VIEWS_ROADMAP.md). Also records the decision *not* to pursue task-typed workers — operational complexity doesn't justify it for the internal-tool traffic profile.
 - **Phase 1 and Phase 3** are deferred contingency specs, not part of the active plan. (Phase 2 was deleted on 2026-05-22 once SQL views Phase C made it obsolete.)
 - **Phase 4** (DBA index work) is folded into the SQL views deployment cycle; the index conversation moves into the same DBA channel that handles view DDL deploys.
 

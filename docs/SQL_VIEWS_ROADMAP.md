@@ -149,6 +149,56 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **Why probably not.** These run on already-cached `df_stmt` in memory; pandas grouping on prepared data is fast (sub-100 ms). The benefit would be removing the in-memory pivot cache (`preagg`) — small RAM win, not a latency win. Revisit only if the SCALING_ROADMAP memory budget gets tighter.
 
+### Phase C+1 — Simplification pass  (queued, depends on Phase C in prod)
+
+**Why this section exists.** The current architecture — 3 sync gunicorn workers, in-memory + disk pickle + single-flight flock, scheduled-refresh-then-on-demand-fill — is a multi-layer compromise built around row-level DataFrames being too big to handle naively. Phase C removes the size problem at its source: the cached payload becomes ~10 KB per `(company, year)` instead of ~400 MB. **Most of the surrounding complexity exists to compensate for a problem Phase C deletes.** Once Phase C is in prod and stable, the system can shed several layers without losing anything.
+
+**Conversation trigger (2026-05-22).** While reviewing the post–Phase-A.5 architecture, two architectural questions surfaced that change the picture:
+
+1. *"Why do we have multiple workers if we're going to cache everything?"* — The 3-worker design exists primarily because of memory pressure under the current Python pipeline (each worker independently caches ~400 MB DataFrames). The "smooth out concurrent slow requests" justification is real but quantitatively small for ~10–25 internal finance users. Phase C eliminates the memory pressure, which removes the dominant reason for 3 workers.
+
+2. *"Can we have task-typed workers — one for browsing, one for Excel, one for PDF?"* — Yes, the pattern exists (nginx split-routing or Celery), but the traffic profile here doesn't justify the operational complexity (two systemd units or a new Redis/RabbitMQ dependency, frontend polling changes, ~400 MB extra Python memory floor). Internal tool, sparse traffic, occasional exports — generic workers are the right call. **Decision: do not pursue task-typed workers.** Revisit only if export volume grows significantly or a new heavy endpoint appears.
+
+**What ships in Phase C+1.** Each item is independent; ship in order of confidence:
+
+1. **Add a request-timeout middleware** that logs (and optionally pages) when any request exceeds ~15 s. Cheap, surfaces problems early, useful regardless of other changes.
+
+2. **Drop `workers = 3` to `workers = 2`** in `backend/gunicorn.conf.py`. Validate the smaller worker count under realistic load (or just in prod with the timeout middleware as the safety net). Memory floor drops by ~400 MB; one worker is still free during any slow request (exports, drill-down). Easy to roll back.
+
+3. **Optional: preload at startup.** Add a small loop at `create_app()` that walks 4 companies × 2 years and calls `load_pl_data` + `load_bs_data` to fill the in-memory cache. Total cached payload post-Phase-C is ~80 KB across all cells, so it can't OOM (unlike `warmup.py` in May which OOMed because the data was 3+ GB). Eliminates the "first user pays" moment entirely. Add only if the natural lazy-fill leaves a real-user-visible cold-cache window.
+
+4. **Remove the disk pickle layer.** Post-Phase-C, summary rows from SQL take <1 s; loading a 10 KB pickle from disk takes microseconds. The disk layer was there as a cold-start optimization for 157 MB pickles — at 10 KB it's pointless. Delete `_save_to_disk`, `_try_pl_stmt_from_disk`, the `.stmt_cache/` directory wiring. Reduces code surface and ops worries (disk-fill, stale pickles).
+
+5. **Remove the single-flight flock.** `_CrossProcLock` was load-bearing when concurrent cold-cache fetches could pull 1.2 GB of duplicate pandas into RAM. Post-Phase-C, concurrent cold-cache fetches each pull ~10 KB; deduplicating sub-second SQL queries isn't worth the fcntl machinery. Keep the in-process `threading.Lock` for the drill-down path. (`_CrossProcLock` and `/tmp/flx_inflight_*.lock` files go away.)
+
+**What stays.**
+- **In-memory LRU+TTL cache** in `data_service.py`. Still useful — avoids re-querying SQL for every dashboard click within the 30-min TTL.
+- **At least 2 workers.** Excel and PDF exports are still ~5–10 s of CPU-bound rendering work (in `openpyxl` / `fpdf2`, not in data fetch). Dropping to 1 worker would mean every export freezes every other user. 2 workers is the safety floor.
+- **Drill-down's row-level path.** Phase C only collapses the summary; drill-down into journal entries still needs row-level rows.
+
+**Architectural posture this leaves us with.**
+
+```
+Browser ──▶ Nginx ──▶ Gunicorn (2 sync workers)
+                       │
+                       ▼
+                  in-memory LRU+TTL cache (30-min)
+                       │ miss
+                       ▼
+                  SQL Server (REPORTES.VISTA_PNL_SUMARIO etc.)
+                       │
+                       ▼  ~100 rows, <1 s
+                  back to Flask, build JSON, return
+```
+
+Compare to today's stack (3 workers × disk pickle × in-memory × single-flight × scheduler). Phase C+1 removes 3 of those 5 layers.
+
+**Gates.**
+- Phase C must be deployed in prod and stable for at least 2 weeks before starting C+1. The current complexity is paying for a real problem that Phase C *should* solve; we want to confirm it actually does under real load before tearing out the safety nets.
+- Each C+1 item ships as its own commit so any can be rolled back independently. Order in the list above is suggested order of safety.
+
+**Why not do this now.** Phase C isn't shipped yet. Tearing out the cache layers before the summary views are in production would leave the system in a worse state than today. C+1 is the cleanup that becomes possible *after* the structural fix lands.
+
 ## Drift mitigation
 
 Once Phase A's deletion commit lands, there is no Python fallback. If `VISTA_PNL_PREPARADO` drifts from the rules the team intended, the website silently shows wrong numbers.
