@@ -34,7 +34,6 @@ CASE.
 |---|---|
 | `VISTA_PNL_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_pnl` + `filter_for_statements` + `assign_partida_pl`. Returns rows with `SALDO`, `MES`, `PARTIDA_PL`, `IS_INTERCOMPANY`. |
 | `VISTA_BS_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_bs` + `assign_partida_bs`. Returns rows with `SALDO`, `MES`, `PARTIDA_BS`, `SECCION_BS`. Does **not** do cumulative-sum or reclassification (Phase B). |
-| `VISTA_CLASIFICACION_GAPS.sql` | Diagnostic view: every row that the prep views couldn't classify. Surfaces `PARTIDA_PL = 'POR CLASIFICAR'` (P&L) and `PARTIDA_BS LIKE 'POR DEFINIR%'` (BS) in one place so accounting can see which accounts need rules. Three blocks: P&L-only (deployable now), BS-only (needs `VISTA_BS_PREPARADO`), umbrella (needs both). |
 | `PARITY_CHECKS.sql` | SQL-only sanity checks (coverage, section consistency, row counts). |
 | `parity_check.py` | Numeric regression: compares per-(CIA, MES, PARTIDA) `SUM(SALDO)` from the new view against the current Python pipeline. **Must return PARITY OK before we wire Python to the view.** |
 
