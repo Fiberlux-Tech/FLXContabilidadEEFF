@@ -8,29 +8,13 @@
 
 ## Why
 
-The scheduled refresh eliminated DB queries on user requests. What it did not eliminate, and could not by design, is the **per-worker pickle-load cost** that fires every time a user's HTTP request lands on a gunicorn worker that hasn't yet deserialized the requested `(company, year)` DataFrame. With 3 workers and no session stickiness, users hit cold workers often during the first ~10 minutes after a deploy or restart.
+The scheduled refresh eliminated DB queries on user requests. What it did not eliminate, and could not by design, is the **per-worker pickle-load cost** that fires every time a user's HTTP request lands on a gunicorn worker that hasn't yet deserialized the requested `(company, year)` DataFrame. Observed on staging 2026-05-14: 5–15 seconds of pandas deserialization per cold worker for the largest companies (FIBERLINE, FIBERTECH, CONSOLIDADO). With 3 workers and no session stickiness, users hit cold workers often during the first ~10 minutes after a deploy or restart.
 
-Measured cold-load times on prod 2026-05-14, via [backend/scripts/phase2_cold_load_timing.py](../backend/scripts/phase2_cold_load_timing.py) with page cache dropped per file:
-
-| Company       | df_stmt size | read_pickle | recompute preaggs | **Total cold-load** | Phase 2 fact rows |
-|---------------|-------------:|------------:|------------------:|--------------------:|------------------:|
-| FIBERLUX 2025 |        12 MB |       0.5 s |             0.2 s |               0.7 s |               407 |
-| NEXTNET 2025  |         9 MB |       0.2 s |             0.0 s |               0.3 s |             1 858 |
-| FIBERTECH 2025|        79 MB |       8.3 s |             3.5 s |              11.9 s |             6 503 |
-| FIBERLINE 2025|       156 MB |      14.3 s |             4.3 s |              18.5 s |             2 691 |
-| CONSOLIDADO 25|       257 MB |      51.6 s |            27.4 s |          **79.0 s** |            11 459 |
-
-The numbers in the doc's earlier "5–15 s" framing were the pickle-read alone, missing the preagg-recompute path. **The real worst-case cold load — CONSOLIDADO 2025 on a worker with no in-memory cache and no preagg pickles on disk — is ~80 s.** A user landing on such a worker today waits a minute and a half for what looks like a broken dashboard.
-
-The pickles are big because `df_stmt` contains row-level journal entries (1.5 M rows for CONSOLIDADO 2025). The summary endpoints aggregate by `(CIA, ANIO, MES, CUENTA_CONTABLE, CENTRO_COSTO)`. The same measurement shows the **proposed Phase 2 fact aggregate** is **75–337× smaller** than `df_stmt` (1.5 M rows → 11 459 rows for CONSOLIDADO 2025). The fact pickle will be a few MB at most, and the cold read drops to well under 1 s.
-
-Phase 2 collapses both costs at once. On the summary path, `df_stmt` is no longer read — the fact pickle replaces it. The preagg-recompute step is also gone, because the small fact DataFrame is already at the aggregation grain. CONSOLIDADO's ~80 s cold-load is expected to drop to ~0.5 s.
+The pickles are big because `df_stmt` contains row-level journal entries: ~165 MB for FIBERLINE_2025, ~257 MB for CONSOLIDADO_2025 (verified via `ls -la backend/services/.stmt_cache/`). The summary endpoints that the dashboard hits on every page load do not need row-level data — they aggregate everything by `(CIA, ANIO, MES, CUENTA_CONTABLE, CENTRO_COSTO)`. A pre-aggregated fact table at that grain shrinks each pickle ~16× to roughly 10 MB. Pickle load drops from ~10 s to <1 s, well below user-noticeable.
 
 > **What Phase 2 does NOT touch**: detail drill-down (clicking into a number to see the underlying journal entries) still needs row-level data. That path keeps calling `fetch_pnl_data` and `fetch_pnl_only`. Only the *summary* path moves to the fact table. The BS path is also out of scope — Phase 2 ships a P&L fast path only.
 
-**User experience after Phase 2**: a cold-worker first click on FIBERLINE/FIBERTECH/CONSOLIDADO drops from 10–80 s to under 1 s. Subsequent clicks on the same worker stay sub-second as today. Freshness contract is preserved — summary, BS, and drill-down all reflect data at most one hour old, same as today's scheduler. No "data as of yesterday" footer; nothing changes from the user's perspective except speed.
-
-> **Re-run the measurement script after Phase 2 ships** to confirm the predicted win. The script is read-only and can run in either staging or prod; see its docstring for invocation.
+**User experience after Phase 2**: a cold-worker first click on any company drops from ~10 s to <1 s. Subsequent clicks on the same worker stay sub-second as today. Freshness contract is preserved — summary, BS, and drill-down all reflect data at most one hour old, same as today's scheduler. No "data as of yesterday" footer; nothing changes from the user's perspective except speed.
 
 ## Freshness contract (the constraint that drives this design)
 
