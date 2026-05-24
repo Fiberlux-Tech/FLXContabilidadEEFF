@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Deploy the working tree this script lives in.
-# Usage: run from the root of the working tree (./deploy.sh).
-# Target branch + systemd service are inferred from the directory name.
+# Deploy the working tree this script lives in. Both prod and staging trees
+# track main; the only difference is which systemd service gets restarted.
+# Usage: ./deploy.sh
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -10,12 +10,10 @@ DIR="$(basename "$PWD")"
 case "$DIR" in
   FLXContabilidad)
     SERVICE="flxcontabilidad"
-    BRANCH="main"
     URL="http://10.100.50.4"
     ;;
   FLXContabilidad-staging)
     SERVICE="flxcontabilidad-staging"
-    BRANCH="dev"
     URL="http://10.100.50.4:8081"
     ;;
   *)
@@ -24,17 +22,11 @@ case "$DIR" in
     ;;
 esac
 
-echo "==> Deploying $SERVICE from branch $BRANCH"
-
-CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
-  echo "error: expected branch $BRANCH in $DIR, found $CURRENT_BRANCH" >&2
-  echo "fix with: git checkout $BRANCH" >&2
-  exit 1
-fi
+echo "==> Deploying $SERVICE from main"
 
 git fetch origin
-git pull --ff-only origin "$BRANCH"
+git checkout main
+git pull --ff-only origin main
 
 echo "==> Building frontend"
 cd frontend
@@ -58,4 +50,4 @@ if ! systemctl is-active --quiet "$SERVICE"; then
   exit 1
 fi
 
-echo "==> Done. $URL should be serving HEAD of $BRANCH."
+echo "==> Done. $URL should be serving HEAD of main."
