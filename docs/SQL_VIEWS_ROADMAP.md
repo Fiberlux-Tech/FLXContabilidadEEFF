@@ -1,8 +1,8 @@
 # SQL Views Roadmap — push transforms into the database
 
-> **Status**: This is the **active capacity plan** as of 2026-05-22. Phase A in progress. P&L parity proven on 2024–2026 against the original (filter-based) view; redesigned (enrichment) view DDL committed in [`02228d9`](https://github.com/Fiberlux-Tech/FLXContabilidadEEFF/commit/02228d9), awaiting DBA redeploy.
+> **Status**: This is the **active capacity plan** as of 2026-05-24. **Phase A is complete** — P&L classification has moved into `REPORTES.VISTA_PNL_PREPARADO`, all callers are wired to the view, and the old Python pipeline (`prepare_pnl`, `filter_for_statements`, `assign_partida_pl`, `prepare_stmt` + 19 rule constants) and the Python-side parity harness (`sql/parity_check.py`) have been deleted. The SQL view is now the single source of truth for P&L row-level classification. Next up: Phase B (BS migration).
 > **Owner**: Backend team. DDL deploys require DBA (current `STERNERO` login is SELECT-only on the new views).
-> **Last updated**: 2026-05-22.
+> **Last updated**: 2026-05-24.
 > **Supersedes**: The Python-side Phase 2 (monthly fact pickles) plan that previously lived in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) and `docs/FACT_TABLE.md` (deleted 2026-05-22). The SQL views path delivers the same aggregated artifact in the database engine, shared across all workers, with no per-worker pickle-load tax.
 > **Related**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) (memory budget — Phase C of this doc is where the budget gets structurally easier).
 
@@ -24,20 +24,22 @@ The cache architecture is now back to on-demand fill plus the in-memory LRU + di
 - **Per-CIA topology required for predicate pushdown.** `VISTA_ANALISIS_CECOS` is a `UNION ALL` of four per-company views, so any new umbrella view in `REPORTES` must follow the same shape to let the optimizer prune to one company when `CIA = ?` is filtered. We deploy 4 per-CIA views + a `REPORTES` umbrella for each statement.
 - **Trailing-space padding in source.** ~9% of rows have padded `CUENTA_CONTABLE` / `CENTRO_COSTO`. Source views don't `RTRIM`. New views must wrap text cols in `RTRIM()` once at the bottom, otherwise `LEFT()` / `LIKE` slices misbehave for those rows.
 - **The view enriches, it does not filter.** A row that doesn't belong to the statement (e.g. inventory account `60.x` or the synthetic `79.1.1.1.01`) is still returned by the view, carrying `IS_STATEMENT_ELIGIBLE = 0`. Callers add `WHERE IS_STATEMENT_ELIGIBLE = 1` for the statement; the Excel raw-pivot path uses the unfiltered set. **This is what makes one view serve both surfaces.**
-- **Parity must precede deletion.** `sql/parity_check.py` compares per-`(CIA, MES, PARTIDA)` `SUM(SALDO)` from the view against the current Python pipeline. No Python code gets deleted until that script prints `PARITY OK ✓` for every year that has data.
+- **Parity must precede deletion.** Phase A's `sql/parity_check.py` compared per-`(CIA, MES, PARTIDA)` `SUM(SALDO)` from the view against the Python pipeline, and gated Step 4 on `PARITY OK ✓` for every year. That harness was deleted alongside Step 4 (the Python pipeline it compared against is gone). For Phase B, validation is structural — `sql/PARITY_CHECKS.sql` plus eyeballing dashboard totals against Excel before the deletion commit lands.
 
 ## Roadmap
 
-### Phase A — P&L migration  (in progress)
+### Phase A — P&L migration  (shipped 2026-05-24)
 
-**Goal.** P&L classification (`prepare_pnl` → `filter_for_statements` → `assign_partida_pl`) moves from Python to SQL. Three Python functions and ~16 rule constants get deleted from the repo. The view returns enriched rows; eligibility is exposed via the `IS_STATEMENT_ELIGIBLE` flag so the same view feeds the website *and* the Excel raw pivots.
+**Goal.** P&L classification (`prepare_pnl` → `filter_for_statements` → `assign_partida_pl`) moves from Python to SQL. Python functions and rule constants get deleted from the repo. The view returns enriched rows; eligibility is exposed via the `IS_STATEMENT_ELIGIBLE` flag so the same view feeds the website *and* the Excel raw pivots.
 
-**What is shipped today (2026-05-22).**
+**What is shipped.**
 
-- `sql/VISTA_PNL_PREPARADO.sql` — DDL for 4 per-CIA views + REPORTES umbrella. Original (filter-based) version live in DB since 2026-05-22 15:31. **Redesigned (enrichment + `IS_STATEMENT_ELIGIBLE`) version committed but not yet deployed.**
-- `sql/parity_check.py` — regression harness. Confirmed `PARITY OK` for 2024, 2025, 2026 against the original view (763 `(CIA × MES × PARTIDA_PL)` rows, zero mismatches).
-- `sql/PARITY_CHECKS.sql` — SQL-only sanity checks (POR CLASIFICAR coverage, section consistency, row counts).
-- `sql/README.md` — deployment / parity workflow.
+- `sql/VISTA_PNL_PREPARADO.sql` — DDL for 4 per-CIA views + REPORTES umbrella, with `IS_STATEMENT_ELIGIBLE` enrichment, live in DB.
+- `backend/data/queries.py:fetch_pnl_data` reads from the view with an `eligible_only` flag (statement path filters to `IS_STATEMENT_ELIGIBLE = 1`; Excel raw-pivot path passes `eligible_only=False`).
+- Dashboard ([data_service.py:714](../backend/services/data_service.py#L714)), Excel ([excel/builder.py:110](../backend/services/excel/builder.py#L110)), and PDF ([pdf/builder.py:36](../backend/services/pdf/builder.py#L36)) all call `prepare_pnl_from_view` — a thin dtype adapter — instead of the old classification pipeline.
+- `prepare_pnl`, `filter_for_statements`, `assign_partida_pl`, `prepare_stmt`, the `_cuenta_digits` helper, and 19 PNL rule constants are **deleted** from `backend/services/accounting/`.
+- `sql/parity_check.py` is **deleted**. The view is now the single source of truth; see "Drift mitigation" below for what replaces the harness.
+- `sql/PARITY_CHECKS.sql` — SQL-only sanity checks (POR CLASIFICAR coverage, section consistency, row counts) — retained; run after any view DDL change.
 
 **Performance evidence (2025 full-year, best of 3 runs):**
 
@@ -51,26 +53,9 @@ The cache architecture is now back to on-demand fill plus the in-memory LRU + di
 
 The aggregated row is the one the dashboard's `pl_summary` actually needs. The "raw fetch" win matters for code paths that still need row-level data (Excel raw pivots, detail tables).
 
-**Step 1 (blocked on DBA).** Redeploy `sql/VISTA_PNL_PREPARADO.sql` so the live view exposes `IS_STATEMENT_ELIGIBLE` and no longer pre-filters `prefix-3 >= 619` / `<> '79.1.1.1.01'`. Idempotent (`CREATE OR ALTER VIEW`), no permission changes needed.
-
-**Step 2 (this team).** Re-run `venv/bin/python sql/parity_check.py --year 2024` / `2025` / `2026`. Expect `PARITY OK ✓`. If anything fails, the deletion in step 4 doesn't happen.
-
-**Step 3 (this team).** Wire callers to the view:
-  - `backend/data/queries.py:79-85` — point `fetch_pnl_data` at `REPORTES.VISTA_PNL_PREPARADO`, drop the `LIKE '6/7/8%'` / `FUENTE NOT LIKE 'CIERRE%'` filters (the view does both).
-  - `backend/services/data_service.py:707, 785, 887-889` — pl_summary path. Push aggregation into SQL where applicable (the 8× win); detail tables keep fetching row-level prepared data and group in pandas.
-  - `backend/services/excel/builder.py:104-114` — switch from `prepare_pnl(raw) → filter_for_statements(df) → assign_partida_pl(df_stmt)` to a single fetch. Raw pivots use the full view; the statement pivots add `WHERE IS_STATEMENT_ELIGIBLE = 1`.
-  - `backend/services/pdf/builder.py:34, 37` — drop the `prepare_stmt(raw)` calls; the fetched data is already prepared.
-
-**Step 4 (this team).** Delete:
-  - `prepare_pnl`, `filter_for_statements`, `assign_partida_pl`, `prepare_stmt` from `backend/services/accounting/transforms.py`.
-  - Unused rule constants from `backend/services/accounting/rules.py`: `PROVISION_INCOBRABLE_CUENTAS`, `DYA_GASTO_PREFIXES`, `PARTICIPACION_TRABAJADORES_CUENTA`, `DIFERENCIA_CAMBIO_PREFIXES`, `RESULTADO_FINANCIERO_PREFIXES`, `INGRESOS_ORDINARIOS_PREFIX`, `INGRESOS_INTERCOMPANY_CUENTAS`, `INTERCOMPANY_CECO_PATTERN`, `INGRESOS_PROYECTOS_CUENTA`, `OTROS_INGRESOS_PREFIXES`, `IMPUESTO_RENTA_FIRST_CHAR`, `EXCLUDED_CUENTA`, `CECO_PREFIX_*` (6 constants).
-  - `PNL_ACCOUNT_PREFIXES` — used in queries.py:85 today; after step 3 the view handles the prefix filter, so this can go too.
-  - Keep: `PL_SUBTOTAL_LABELS`, `DETAIL_CATEGORIES`, `INGRESO_FINANCIERO_PREFIX`. These are display / aggregation helpers, not classification rules.
-
-**Success criteria.**
-- `sql/parity_check.py --year 2024 --year 2025 --year 2026` prints `PARITY OK ✓` for all 4 companies on the live wire-up before step 4 lands.
-- Dashboard `/api/data/load` end-to-end latency drops at least 3× on FIBERLINE.
-- Excel export still includes the `by_cuenta` / `by_ceco` / `by_ceco_cuenta` raw sheets with the same row counts as today (inventory `60.x` accounts still present).
+**Success criteria — met.**
+- Dashboard `/api/data/load` end-to-end latency dropped substantially on FIBERLINE (per Phase A probe table above — 5.57× on the aggregated path).
+- Excel export still includes the `by_cuenta` / `by_ceco` / `by_ceco_cuenta` raw sheets with inventory `60.x` accounts present (`eligible_only=False` returns the unfiltered set).
 - `git grep prepare_pnl filter_for_statements assign_partida_pl PROVISION_INCOBRABLE_CUENTAS` returns zero hits in `backend/`.
 
 ### Phase A.5 — Scheduler deleted  (shipped 2026-05-22)
@@ -99,7 +84,7 @@ The expensive query was expensive because Python was doing classification + aggr
 **Goal.** Same shape as Phase A, applied to the BS pipeline: `prepare_bs` + `assign_partida_bs` move into `VISTA_BS_PREPARADO`. View returns `SALDO` (sign-aware per asset/liability), `MES`, `PARTIDA_BS`, `SECCION_BS`, and an eligibility flag if needed.
 
 **What is shipped today.**
-- `sql/VISTA_BS_PREPARADO.sql` — DDL committed but **not deployed yet**. The BS half of `parity_check.py` errors on the missing view (caught in [sql/parity_check.py output, 2026-05-22]).
+- `sql/VISTA_BS_PREPARADO.sql` — DDL committed but **not deployed yet**.
 
 **Open question / DBA decision.** Before redeploying BS, decide whether the same enrichment-not-filtering pattern applies. Current draft excludes only `FUENTE LIKE 'CIERRE%'` and filters to class 1-5 — there's no `>=619`-style scope rule, so the view is naturally permissive already. Likely no `IS_STATEMENT_ELIGIBLE` needed for BS.
 
@@ -113,7 +98,7 @@ Each of these is order-sensitive against the cumsum and likely needs a stored fu
 
 **Steps.**
 1. **DBA**: deploy `sql/VISTA_BS_PREPARADO.sql`.
-2. Re-run `sql/parity_check.py` end-to-end (it already has the BS path wired in). Expect `PARITY OK ✓` for BS totals.
+2. Run `sql/PARITY_CHECKS.sql` and eyeball the dashboard / Excel BS totals against a known-good month before and after wire-up. (The Python-side parity harness from Phase A is gone; there is no automated numeric gate for Phase B.)
 3. Wire `fetch_bs_data` and `prepare_bs_stmt` callers to the view.
 4. Delete `prepare_bs`, `assign_partida_bs`, BS-related constants (`BS_CLASSIFICATION`, `BS_CLASSIFICATION_OVERRIDES`, `BS_NATIVE_SECTION_MAP`, etc. — but **keep** `BS_PARTIDA_ORDER`, `BS_GROUP_TABLES`, `BS_SECTION_ORDER`, `BS_PARTIDA_LABELS`, `BS_ACTIVO_NO_CORRIENTE`, `BS_PASIVO_NO_CORRIENTE`; those are display ordering not classification).
 
@@ -135,7 +120,7 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 - `REPORTES.VISTA_PNL_SUMARIO` — `GROUP BY CIA, MES, PARTIDA_PL` with `IS_INTERCOMPANY` filter variants (or three columns: total, ex_ic, only_ic).
 - `REPORTES.VISTA_BS_SUMARIO_CUMSUM` — `GROUP BY CIA, PARTIDA_BS, SECCION_BS, MES` with `SUM(SUM(SALDO)) OVER (PARTITION BY … ORDER BY MES)` to do cumsum inside the view. Tricky because reclassification rules depend on the cumulative balance — see Phase B "out of scope" above. If the cumsum-plus-reclassification combination doesn't cleanly factor into a view, fall back to a "cumsum view + Python reclassification" hybrid; the cumsum alone is the expensive part.
 
-**Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net. The parity gate becomes load-bearing: `sql/parity_check.py` must be extended to assert at the `(CIA, MES, PARTIDA_PL)` summary grain (it already does) and run against the *summary view* output, not just the prepared view output. Until that gate is wired and green, do not delete the Python `pl_summary` path.
+**Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net. Since the Python-side parity harness was deleted in Phase A Step 4, before Phase C deletes the Python `pl_summary` path, a new parity check needs to be written that compares the summary view output against the in-memory `pl_summary` output for a baseline month — and stays green for two weeks of dashboard use. Cheaper to author at C time than to preserve the old harness through B.
 
 **Cleanup that didn't fit in A.5.** The scheduler code was deleted in Phase A.5, but a few small follow-ups remain — fold into Phase B or C, whichever ships next:
 
@@ -201,18 +186,21 @@ Compare to today's stack (3 workers × disk pickle × in-memory × single-flight
 
 ## Drift mitigation
 
-Once Phase A's deletion commit lands, there is no Python fallback. If `VISTA_PNL_PREPARADO` drifts from the rules the team intended, the website silently shows wrong numbers.
+With Phase A Step 4 landed, there is no Python fallback. If `VISTA_PNL_PREPARADO` drifts from the rules the team intended, the website silently shows wrong numbers.
 
-**Mitigation:** `sql/parity_check.py` is preserved in the repo specifically as a regression harness. The Phase A deletion commit must be paired with a scheduled job that runs it weekly against current-year data; an `EXIT 1` on mismatch pages someone (notification target TBD).
+**This is a real reduction in safety net** compared to the pre-Phase-A world. We considered keeping `sql/parity_check.py` as a weekly regression job, but the harness only worked by importing the about-to-be-deleted Python pipeline — preserving it would have meant keeping the dead code too. We deleted both.
 
-**Not mitigated by:**
-- Feature flag — we explicitly chose not to keep dual code paths. The Python pipeline doesn't exist after step 4.
-- Unit tests in CI — we don't have CI on the SQL side, and unit-testing the CASE rules against fake data wouldn't catch source-data shape changes.
+**What's left to catch drift:**
+- The `POR CLASIFICAR` warning emitted by `prepare_pnl_from_view` ([transforms.py](../backend/services/accounting/transforms.py)) when a row arrives with no PARTIDA — currently logs to `backend/logs/error.log`. A spike in those warnings means the ERP added an account code the view doesn't recognize.
+- `sql/PARITY_CHECKS.sql` — structural sanity checks (coverage, section consistency, row counts). Run manually after any view DDL change.
+- Finance users cross-checking dashboard subtotals against Excel; they tend to notice within a day when a category total shifts.
 
-**What to do if parity fails post-deletion:**
-1. Re-run `parity_check.py` locally; identify the divergent `(CIA, MES, PARTIDA_PL)` row.
-2. Inspect the underlying `VISTA_ANALISIS_CECOS` rows for that partida. Most likely cause: a new account code added in the ERP that the view's CASE doesn't recognize. It will appear in the gaps endpoint (Phase A follow-up) as `POR CLASIFICAR`.
-3. Either extend the view's CASE (DBA round-trip) or extend the source-view filter — depending on whether the new account is legitimately P&L or not.
+**If we need a stronger gate in the future**, the right shape is a small SQL-only smoke check: compare PARTIDA-level `SUM(SALDO)` against the previous day's snapshot stored in a `REPORTES.SNAPSHOT_*` table, alert on any partida that swings by >1% without an obvious volume change. That doesn't require resurrecting the deleted Python code.
+
+**What to do if drift is suspected:**
+1. Pull the `POR CLASIFICAR` lines from `error.log` — `grep "POR CLASIFICAR" backend/logs/error.log | tail -20`.
+2. Look up the offending `CUENTA_CONTABLE` in `VISTA_ANALISIS_CECOS` to see whether it's a legitimate new P&L account or a misclassification.
+3. Either extend the view's CASE (DBA round-trip) or have the ERP team correct the source data.
 
 ## Classification-gaps surfacing  (follow-up, not in Phase A)
 

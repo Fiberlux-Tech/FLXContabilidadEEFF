@@ -3,18 +3,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from accounting.rules import (
-    PROVISION_INCOBRABLE_CUENTAS, DYA_GASTO_PREFIXES,
-    PARTICIPACION_TRABAJADORES_CUENTA, DIFERENCIA_CAMBIO_PREFIXES,
-    RESULTADO_FINANCIERO_PREFIXES, INGRESOS_ORDINARIOS_PREFIX,
-    INGRESOS_INTERCOMPANY_CUENTAS, INTERCOMPANY_CECO_PATTERN,
-    INGRESOS_PROYECTOS_CUENTA, OTROS_INGRESOS_PREFIXES,
-    IMPUESTO_RENTA_FIRST_CHAR, EXCLUDED_CUENTA,
-    CECO_PREFIX_DYA_COSTO, CECO_PREFIX_RESULTADO_FINANCIERO,
-    CECO_PREFIX_COSTO, CECO_PREFIX_GASTO_VENTA, CECO_PREFIX_GASTO_ADMIN,
-    CECO_PREFIX_OTROS_EGRESOS,
-    BS_CLASSIFICATION, BS_CLASSIFICATION_OVERRIDES,
-)
+from accounting.rules import BS_CLASSIFICATION, BS_CLASSIFICATION_OVERRIDES
 from config.exceptions import DataValidationError
 from config.fields import (
     CUENTA_CONTABLE, CENTRO_COSTO, FECHA, DESCRIPCION,
@@ -32,25 +21,8 @@ _REQUIRED_COLUMNS = {
 }
 
 
-def _cuenta_digits(s: pd.Series) -> pd.Series:
-    """Remove dots from CUENTA_CONTABLE, returning pure digit strings.
-
-    Example: "68.0.1.01.001" → "680101001"
-    Used for numeric prefix comparisons where dot positions vary.
-    """
-    return s.str.replace(".", "", regex=False)
-
-
 def _cuenta_prefix(s: pd.Series, n: int) -> pd.Series:
-    """First *n* characters of dotted CUENTA_CONTABLE codes.
-
-    n=2: "68.0.1.01.001" → "68"  (pure digits — dot is at position 2+)
-    n=4: "68.0.1.01.001" → "68.0" (dot included at position 2)
-
-    The constants in rules.py are defined to match these exact slices:
-    - 2-char constants: ("67", "77", "70", "73", "75") — always pure digits
-    - 4-char constants: ("68.0", "68.1", "67.6", "77.6") — dot at position 2
-    """
+    """First *n* characters of dotted CUENTA_CONTABLE codes (e.g. n=2 → "10")."""
     return s.str[:n]
 
 
@@ -73,109 +45,6 @@ def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     df[MES] = df[FECHA].dt.month
     df[CENTRO_COSTO] = df[CENTRO_COSTO].astype("category")
     return df
-
-
-def prepare_pnl(df: pd.DataFrame) -> pd.DataFrame:
-    """Clean raw P&L data and compute SALDO as CREDITO minus DEBITO."""
-    _validate_columns(df, _REQUIRED_COLUMNS, "prepare_pnl")
-    df = _clean_columns(df)
-    df[SALDO] = df["CREDITO_LOCAL"] - df["DEBITO_LOCAL"]
-    return df
-
-
-def filter_for_statements(df: pd.DataFrame) -> pd.DataFrame:
-    """Filter to statement-relevant accounts (prefix >= 619, excluding 79.1.1.1.01).
-
-    Uses first 3 digits as integer to avoid floating-point ambiguity.
-    """
-    prefix_3 = pd.to_numeric(_cuenta_digits(df[CUENTA_CONTABLE]).str[:3], errors="coerce")
-    df = df[prefix_3 >= 619].copy()
-    df = df[df[CUENTA_CONTABLE] != EXCLUDED_CUENTA]
-    return df
-
-
-def assign_partida_pl(df: pd.DataFrame) -> pd.DataFrame:
-    """Assign PARTIDA_PL label to each row based on account and cost-center rules.
-
-    Uses np.select for a single vectorized pass; first matching condition wins.
-    """
-    df = df.copy()
-    cuenta = df[CUENTA_CONTABLE]
-    cuenta4 = _cuenta_prefix(cuenta, 4)   # e.g. "68.0" — matches DYA_GASTO_PREFIXES
-    cuenta2 = _cuenta_prefix(cuenta, 2)   # e.g. "68"  — matches RESULTADO_FINANCIERO_PREFIXES
-    ceco1 = df[CENTRO_COSTO].str[0]
-
-    # Rules in priority order — np.select picks the first match
-    # Note: INGRESOS_INTERCOMPANY_CUENTAS are 70.x accounts — they now fall
-    # through to the INGRESOS_ORDINARIOS_PREFIX rule (cuenta2 == "70").
-    # Intercompany is tracked via the IS_INTERCOMPANY flag instead.
-    conditions = [
-        cuenta.isin(PROVISION_INCOBRABLE_CUENTAS),
-        cuenta4.isin(DYA_GASTO_PREFIXES) & ceco1.isin(CECO_PREFIX_DYA_COSTO),
-        cuenta4.isin(DYA_GASTO_PREFIXES),
-        cuenta == PARTICIPACION_TRABAJADORES_CUENTA,
-        cuenta4.isin(DIFERENCIA_CAMBIO_PREFIXES),
-        cuenta2.isin(RESULTADO_FINANCIERO_PREFIXES),
-        cuenta2 == INGRESOS_ORDINARIOS_PREFIX,
-        cuenta == INGRESOS_PROYECTOS_CUENTA,
-        cuenta2.isin(OTROS_INGRESOS_PREFIXES),
-        df["FIRST_CHAR"] == IMPUESTO_RENTA_FIRST_CHAR,
-        ceco1 == CECO_PREFIX_RESULTADO_FINANCIERO,
-        ceco1.isin(CECO_PREFIX_COSTO),
-        ceco1 == CECO_PREFIX_GASTO_VENTA,
-        ceco1 == CECO_PREFIX_GASTO_ADMIN,
-        ceco1 == CECO_PREFIX_OTROS_EGRESOS,
-    ]
-    choices = [
-        "PROVISION INCOBRABLE",
-        "D&A - COSTO",
-        "D&A - GASTO",
-        "PARTICIPACION DE TRABAJADORES",
-        "DIFERENCIA DE CAMBIO",
-        "RESULTADO FINANCIERO",
-        "INGRESOS ORDINARIOS",
-        "INGRESOS PROYECTOS",
-        "OTROS INGRESOS",
-        "IMPUESTO A LA RENTA",
-        "RESULTADO FINANCIERO",
-        "COSTO",
-        "GASTO VENTA",
-        "GASTO ADMIN",
-        "OTROS EGRESOS",
-    ]
-
-    df[PARTIDA_PL] = pd.Categorical(np.select(conditions, choices, default="POR CLASIFICAR"))
-
-    # IS_INTERCOMPANY flag: True for intercompany income accounts OR
-    # any row whose CENTRO_COSTO has "121" as the middle segment (xxx.121.xx).
-    ceco = df[CENTRO_COSTO].astype(str)
-    df[IS_INTERCOMPANY] = (
-        cuenta.isin(INGRESOS_INTERCOMPANY_CUENTAS)
-        | ceco.str.contains(INTERCOMPANY_CECO_PATTERN, regex=True)
-    )
-
-    n_unclassified = (df[PARTIDA_PL] == "POR CLASIFICAR").sum()
-    if n_unclassified > 0:
-        sample = df.loc[df[PARTIDA_PL] == "POR CLASIFICAR", CUENTA_CONTABLE].unique()[:10]
-        logger.warning(
-            "%d rows could not be classified (PARTIDA_PL = 'POR CLASIFICAR'). "
-            "Unrecognised CUENTA_CONTABLE values: %s.",
-            n_unclassified, list(sample),
-        )
-    df = df.drop(columns=[FIRST_CHAR])
-    return df
-
-
-def prepare_stmt(raw_df: pd.DataFrame) -> pd.DataFrame:
-    """Full pipeline: prepare_pnl -> filter_for_statements -> assign_partida_pl.
-
-    Retained for the Excel raw-pivot path which still calls prepare_pnl on
-    unfiltered data. The dashboard / PDF paths use prepare_pnl_from_view
-    instead, since classification is done by the SQL view.
-    """
-    df = prepare_pnl(raw_df)
-    df = filter_for_statements(df)
-    return assign_partida_pl(df)
 
 
 def prepare_pnl_from_view(raw_df: pd.DataFrame) -> pd.DataFrame:

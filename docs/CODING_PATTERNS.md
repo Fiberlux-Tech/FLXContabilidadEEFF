@@ -77,30 +77,31 @@ Three cache layers, each with a specific role:
 - Never reconstruct via `list(MONTH_NAMES.values())` — import `MONTH_NAMES_LIST` instead
 
 ### Account Classification Rules
-- `backend/services/accounting/rules.py` defines constants for account prefix matching
-- `assign_partida_pl()` uses `np.select()` for vectorized classification (priority-ordered conditions)
-- Cost-center first character determines cost vs. sales expense vs. admin expense
-- BS classification maps account prefixes → statement line items, with per-account overrides
-- Account prefix parsing uses `_cuenta_digits()` (dot-removal for numeric comparison) and `_cuenta_prefix(s, n)` (first n chars of dotted code) in `transforms.py`
+- **P&L classification lives in SQL** (`REPORTES.VISTA_PNL_PREPARADO`) as of Phase A — priority-ordered `CASE WHEN` in the view supplies `PARTIDA_PL` and `IS_INTERCOMPANY` directly. Edit the view's CASE blocks (all four per-CIA views) to change rules.
+- **BS classification still lives in Python** (`backend/services/accounting/rules.py` + `assign_partida_bs()` in `transforms.py`) — np.select with priority-ordered conditions, BS_CLASSIFICATION + BS_CLASSIFICATION_OVERRIDES. Will move to `VISTA_BS_PREPARADO` in Phase B.
+- Cost-center first character determines cost vs. sales expense vs. admin expense (encoded in the view's CASE for P&L; in rules.py for BS).
+- BS classification maps account prefixes → statement line items, with per-account overrides.
+- Account prefix parsing in Python uses `_cuenta_prefix(s, n)` (first n chars of dotted code) in `transforms.py`.
 
 ### Accounting Logic — SACRED, DO NOT MODIFY
 
 The accounting transformation pipeline is the core of this system. Its logic must NEVER be altered by UI changes, refactoring, or "improvements" unless explicitly requested for accounting correctness reasons.
 
 **Protected modules** (changes require explicit accounting justification):
-- `backend/services/accounting/rules.py` — Account classification constants, BS mappings, display order, reclassification rules
-- `backend/services/accounting/transforms.py` — SALDO computation (P&L: CREDITO−DEBITO; BS: sign by account class), account filtering (prefix ≥ 619), partida assignment (np.select priority order)
+- `backend/services/accounting/rules.py` — BS classification constants, BS reclassification rules, display order, P&L display helpers (subtotal labels, detail categories). P&L row-level classification lives in the SQL view; this module no longer holds those constants.
+- `backend/services/accounting/transforms.py` — SALDO computation for BS (sign by account class), BS partida assignment (np.select priority order), and the dtype adapter `prepare_pnl_from_view` that shapes view rows for downstream aggregation. P&L SALDO / filtering / partida assignment all moved to the SQL view in Phase A.
 - `backend/services/accounting/statements.py` — P&L row structure (subtotal formulas: UTILIDAD BRUTA, OPERATIVA, NETA), BS row structure (CORRIENTE/NO CORRIENTE split, reclassification, Resultados del Ejercicio injection), balance validation (ACTIVO = PASIVO + PATRIMONIO)
 - `backend/services/accounting/aggregation.py` — Pivot logic (monthly sums, cumsum for BS), period aggregation, resultado financiero split (prefix "77" = ingresos)
-- `backend/data/queries.py` — SQL query construction, account prefix filtering, date range logic, closing entry exclusion
-- `sql/VISTA_PNL_PREPARADO.sql`, `sql/VISTA_BS_PREPARADO.sql` — SQL views in `[FIBERLINE|FIBERTECH|NEXTNET|FIBERLUX].VISTA_*_PREPARADO` that mirror `transforms.prepare_pnl/prepare_bs` + `filter_for_statements` + `assign_partida_pl/bs`. Editing the CASE blocks must be done in **all four per-CIA views** and validated by `sql/parity_check.py` returning `PARITY OK ✓` before the Python pipeline is repointed at the view. See [sql/README.md](../sql/README.md) for topology and parity workflow.
+- `backend/data/queries.py` — SQL query construction (reads `VISTA_PNL_PREPARADO` for P&L; raw `VISTA_ANALISIS_CECOS` for BS), date range logic, closing entry exclusion
+- `sql/VISTA_PNL_PREPARADO.sql` — SQL view in `[FIBERLINE|FIBERTECH|NEXTNET|FIBERLUX].VISTA_PNL_PREPARADO` that owns P&L row-level classification (SALDO, MES, PARTIDA_PL, IS_INTERCOMPANY, IS_STATEMENT_ELIGIBLE). **Single source of truth** for P&L classification rules since Phase A Step 4. Editing the CASE blocks must be done in **all four per-CIA views**; validate by running `sql/PARITY_CHECKS.sql` and eyeballing dashboard totals against Excel for a known-good month. The Python-side parity harness was deleted in Phase A Step 4 — see [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md) "Drift mitigation" for the current posture.
+- `sql/VISTA_BS_PREPARADO.sql` — DDL committed, not yet deployed; will own BS classification once Phase B ships. See [sql/README.md](../sql/README.md) for topology.
 
 **Sacred invariants** (must hold true at all times):
 1. P&L SALDO = CREDITO_LOCAL − DEBITO_LOCAL (never reversed)
 2. BS SALDO: Assets (1,2,3) = DEBITO − CREDITO; Liabilities/Equity (4,5) = CREDITO − DEBITO
 3. BS accounts with negative cumulative balance are reclassified per BS_RECLASSIFICATION_RULES (sign flipped on section change)
 4. Cross-section overrides (native section ≠ assigned section) flip sign automatically
-5. `assign_partida_pl()` uses np.select — first matching condition wins; rule order is intentional
+5. P&L PARTIDA assignment in `VISTA_PNL_PREPARADO` is priority-ordered (CASE WHEN); first matching condition wins, just like the np.select it replaced. Rule order is intentional — edits must preserve priority semantics. BS PARTIDA assignment in `assign_partida_bs()` uses np.select with the same priority discipline.
 6. Year-end closing entries (FUENTE LIKE 'CIERRE%') are always excluded from both P&L and BS
 7. P&L shows monthly flows; BS shows cumulative balances (cumsum applied)
 8. "Resultados del Ejercicio" in PATRIMONIO = cumulative UTILIDAD NETA from P&L

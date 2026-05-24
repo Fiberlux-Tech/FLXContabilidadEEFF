@@ -1,12 +1,11 @@
 -- =============================================================================
 -- Parity checks for VISTA_PNL_PREPARADO / VISTA_BS_PREPARADO
 -- =============================================================================
--- Run these AFTER deploying the views and BEFORE wiring up Python.
--- Each query returns rows ONLY when there is a discrepancy worth investigating.
---
--- The companion Python script (sql/parity_check.py) compares per-(CIA, MES,
--- PARTIDA_*) SUM(SALDO) against what the current transforms.py pipeline
--- produces. The SQL below is the structural sanity layer that runs first.
+-- Run these after redeploying the views (DDL changes in VISTA_PNL_PREPARADO.sql
+-- or VISTA_BS_PREPARADO.sql). Each query returns rows ONLY when there is a
+-- discrepancy worth investigating. These are now the only post-deploy gate:
+-- the Python-side parity harness (sql/parity_check.py) was deleted in Phase A
+-- Step 4 once the SQL view became the single source of truth.
 -- =============================================================================
 
 

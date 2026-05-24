@@ -98,7 +98,7 @@ data_service.load_report_data()
     ├── fetch_all_data() → concurrent SQL Server queries (ThreadPoolExecutor)
     │   └── Returns: raw, raw_current_full, raw_prev, raw_bs, raw_bs_prev
     │
-    ├── Transforms: prepare_pnl → filter_for_statements → assign_partida_pl → pl_summary
+    ├── Transforms: prepare_pnl_from_view (dtype adapter; classification already done by SQL view) → pl_summary
     ├── BS: prepare_bs_stmt → bs_summary
     ├── Detail pivots: preaggregate → sales_details, proyectos_especiales,
     │   detail_by_ceco (costo, gasto_venta, gasto_admin, dya_costo, dya_gasto),

@@ -36,7 +36,7 @@ The 5.8 GB ceiling is non-negotiable. Reference baseline (post-Phase-0 steady st
 - Swap is effectively useless under interactive load — observed exhaustion during the warmup OOM. Treat the working set as if swap doesn't exist.
 - The realistic post-SQL-views ceiling on this hardware is roughly **25–30 concurrent active users** (verify by load test before promising more). Beyond that, only more RAM helps; no software change in this plan removes that wall.
 - The SQL Server view `REPORTES.VISTA_ANALISIS_CECOS` (~8.4 M rows) is owned by the DBA team and is **live** (changes posted by finance appear immediately). DBA cooperation is required for the SQL views path (DDL deploys) and for index work — both flow through the same channel.
-- The accounting transformation pipeline ([CODING_PATTERNS.md](CODING_PATTERNS.md) "Accounting Logic — SACRED, DO NOT MODIFY") is fixed. Any phase that touches data flowing into it must produce bit-identical numbers — enforced for SQL views by `sql/parity_check.py`.
+- The accounting transformation pipeline ([CODING_PATTERNS.md](CODING_PATTERNS.md) "Accounting Logic — SACRED, DO NOT MODIFY") is fixed. Any phase that touches data flowing into it must produce bit-identical numbers. For Phase A the SQL view's parity against Python was enforced by `sql/parity_check.py`, which was deleted alongside the Python pipeline once Step 4 landed; the SQL view is now the source of truth (see [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md) "Drift mitigation").
 
 ---
 
@@ -244,7 +244,7 @@ None. Phase 0 starts immediately.
 - **Without Phase 1, this phase causes OOM.** Three workers × four threads × one FIBERLINE load each = ~4.8 GB of pandas state, perilously close to the 5 GB MemoryMax. This is the hardest prerequisite in the plan.
 - **Threading bugs are subtle.** The single-flight locks are the most exposed surface. Mitigation: a parallel-curl test from staging — `for i in $(seq 1 12); do curl ... & done; wait` — must show exactly one DB fetch in the logs for the same `(company, year)`.
 - **pyodbc pool exhaustion** under unexpected query patterns. Mitigation: log pool-wait time; alert if it crosses 1 s.
-- **No SACRED interaction.** Threading the worker doesn't change data semantics. But pandas DataFrames are *not* safe to mutate from multiple threads — verify all mutation in `accounting/transforms.py` and `accounting/aggregation.py` happens on locally-created DataFrames, not on objects passed in from cache. Spot-check: `prepare_stmt` returns a new DataFrame via `.copy()`; confirm before promoting.
+- **No SACRED interaction.** Threading the worker doesn't change data semantics. But pandas DataFrames are *not* safe to mutate from multiple threads — verify all mutation in `accounting/transforms.py` and `accounting/aggregation.py` happens on locally-created DataFrames, not on objects passed in from cache. Spot-check: `prepare_pnl_from_view` and `prepare_bs_stmt` start with `.copy()` of their input; confirm before promoting.
 
 ### Validation criteria
 

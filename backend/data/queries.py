@@ -91,11 +91,11 @@ def fetch_pnl_data(conn: pyodbc.Connection, company: str, year: int, month: int 
     ----------
     eligible_only : bool, default True
         When True (the statement path used by the dashboard and PDF), the
-        query filters to rows where IS_STATEMENT_ELIGIBLE = 1 — equivalent
-        to the old Python filter_for_statements (prefix >= 619 and
-        CUENTA <> '79.1.1.1.01'). When False (the Excel raw-pivot path),
-        all P&L rows are returned, including inventory-side accounts like
-        60.x that feed the raw by_cuenta / by_ceco / by_ceco_cuenta sheets.
+        query filters to rows where IS_STATEMENT_ELIGIBLE = 1 (the view's
+        encoding of "first-3-digits >= 619 and CUENTA <> '79.1.1.1.01'").
+        When False (the Excel raw-pivot path), all P&L rows are returned,
+        including inventory-side accounts like 60.x that feed the raw
+        by_cuenta / by_ceco / by_ceco_cuenta sheets.
     """
     if month is None:
         start = date(year, 1, 1)

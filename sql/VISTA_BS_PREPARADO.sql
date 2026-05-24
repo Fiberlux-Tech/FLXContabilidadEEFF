@@ -36,8 +36,9 @@
 
 -- The PARTIDA_BS / SECCION_BS CASE blocks are identical across companies, so
 -- the only thing that changes per-CIA is the schema reference.  If you want
--- to edit the classification rules later, do it in all five places — the
--- parity_check.py script will catch drift between any two views.
+-- to edit the classification rules later, do it in all five places — and run
+-- sql/PARITY_CHECKS.sql plus eyeball dashboard / Excel totals for a known
+-- month.  The Python-side parity harness was removed in Phase A Step 4.
 
 
 CREATE OR ALTER VIEW [FIBERLINE].[VISTA_BS_PREPARADO] AS

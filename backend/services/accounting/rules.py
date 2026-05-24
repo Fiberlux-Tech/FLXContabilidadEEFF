@@ -1,13 +1,15 @@
-"""Account classification rules — P&L categories, BS mappings, display order."""
+"""Account classification rules — P&L display helpers, BS mappings, display order.
+
+P&L row-level classification was moved to REPORTES.VISTA_PNL_PREPARADO in
+Phase A of SQL_VIEWS_ROADMAP.md; this file no longer owns those rules. What
+remains under P&L is display-only (category lists, subtotal labels, the
+INGRESO_FINANCIERO prefix used by aggregation).
+"""
 
 
-# ── P&L category lists ──────────────────────────────────────────────────────
-
-PNL_ACCOUNT_PREFIXES = ("6", "7", "8")
+# ── P&L display helpers ──────────────────────────────────────────────────────
 
 DETAIL_CATEGORIES = ["COSTO", "GASTO VENTA", "GASTO ADMIN", "OTROS EGRESOS"]
-
-# ── P&L subtotal row labels (used in both Excel and PDF styling) ─────────────
 
 PL_SUBTOTAL_LABELS = {
     "INGRESOS TOTALES",
@@ -16,28 +18,6 @@ PL_SUBTOTAL_LABELS = {
     "UTILIDAD ANTES DE IMPUESTO A LA RENTA",
     "UTILIDAD NETA",
 }
-
-# ── Account codes & CECO prefixes (transforms.py classification rules) ───────
-
-PROVISION_INCOBRABLE_CUENTAS = ("68.9.9.1.01", "68.7.1.1.01")
-DYA_GASTO_PREFIXES = ("68.0", "68.1", "68.2", "68.3", "68.4", "68.5", "68.6")
-PARTICIPACION_TRABAJADORES_CUENTA = "62.2.1.1.04"
-DIFERENCIA_CAMBIO_PREFIXES = ("67.6", "77.6")
-RESULTADO_FINANCIERO_PREFIXES = ("67", "77")
-INGRESOS_ORDINARIOS_PREFIX = "70"
-INGRESOS_INTERCOMPANY_CUENTAS = ("70.1.2.2.01", "70.3.3.1.02", "70.3.3.1.03", "70.3.3.1.04")
-INTERCOMPANY_CECO_PATTERN = r"\.\b121\b\."
-INGRESOS_PROYECTOS_CUENTA = "75.9.9.1.01"
-OTROS_INGRESOS_PREFIXES = ("73", "75")
-IMPUESTO_RENTA_FIRST_CHAR = "8"
-EXCLUDED_CUENTA = "79.1.1.1.01"
-
-CECO_PREFIX_DYA_COSTO = ("1", "4", "6")
-CECO_PREFIX_RESULTADO_FINANCIERO = "7"
-CECO_PREFIX_COSTO = ("1", "4")
-CECO_PREFIX_GASTO_VENTA = "2"
-CECO_PREFIX_GASTO_ADMIN = "3"
-CECO_PREFIX_OTROS_EGRESOS = "5"
 
 INGRESO_FINANCIERO_PREFIX = "77"
 

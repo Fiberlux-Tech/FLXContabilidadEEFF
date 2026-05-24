@@ -24,7 +24,7 @@ import pandas as pd
 from data.fetcher import (
     fetch_all_data, fetch_pnl_only, fetch_bs_only,
 )
-from accounting.transforms import prepare_stmt, prepare_pnl_from_view, prepare_bs_stmt
+from accounting.transforms import prepare_pnl_from_view, prepare_bs_stmt
 from accounting.aggregation import (
     ensure_month_columns, preaggregate, sales_details,
     proyectos_especiales,
