@@ -4,7 +4,6 @@ from datetime import date
 import pandas as pd
 import pyodbc
 
-from accounting.rules import BS_ACCOUNT_PREFIXES
 from config.period import month_end_boundary
 from config.exceptions import QueryError
 
@@ -14,68 +13,14 @@ logger = logging.getLogger("plantillas.queries")
 SQL_SCHEMA = "REPORTES"
 SQL_VIEW = "VISTA_ANALISIS_CECOS"
 SQL_VIEW_PNL_PREPARADO = "VISTA_PNL_PREPARADO"
+SQL_VIEW_BS_PREPARADO = "VISTA_BS_PREPARADO"
 
 # Validate identifiers at import time to prevent any injection via constants.
 import re as _re
 _IDENT_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-for _ident in (SQL_SCHEMA, SQL_VIEW, SQL_VIEW_PNL_PREPARADO):
+for _ident in (SQL_SCHEMA, SQL_VIEW, SQL_VIEW_PNL_PREPARADO, SQL_VIEW_BS_PREPARADO):
     if not _IDENT_RE.match(_ident):
         raise ValueError(f"Invalid SQL identifier: {_ident!r}")
-
-
-def _fetch_data(conn: pyodbc.Connection, company: str, year: int, month: int | None, account_prefixes: tuple[str, ...], *, cumulative: bool = False, exclude_closing: bool = False) -> pd.DataFrame:
-    """Shared helper for fetching accounting data from the SQL view.
-
-    Parameters
-    ----------
-    conn : database connection
-    company : str
-    year : int
-    month : int or None
-    account_prefixes : tuple[str, ...]
-        Leading characters to filter CUENTA_CONTABLE (e.g. ("6","7","8")).
-    cumulative : bool
-        If True the start date is always Jan 1 (Balance Sheet behaviour).
-        If False the start date matches the requested month (P&L behaviour).
-    exclude_closing : bool
-        If True, exclude year-end closing entries (FUENTE LIKE 'CIERRE%').
-    """
-    # --- date range ---
-    if cumulative:
-        start = date(year, 1, 1)
-    else:
-        start = date(year, month, 1) if month is not None else date(year, 1, 1)
-
-    end_y, end_m = month_end_boundary(year, month)
-    end = date(end_y, end_m, 1)
-
-    # Build account-prefix filter using LIKE for index seekability (SARGable)
-    if account_prefixes:
-        like_clauses = " OR ".join("CUENTA_CONTABLE LIKE ?" for _ in account_prefixes)
-        acct_clause = f" AND ({like_clauses})"
-    else:
-        acct_clause = ""
-
-    closing_clause = " AND FUENTE NOT LIKE 'CIERRE%'" if exclude_closing else ""
-
-    # LTRIM/RTRIM removed — whitespace trimming should be handled in the ETL
-    # or directly in the SQL view (VISTA_ANALISIS_CECOS) to avoid per-query overhead.
-    query = (
-        "SELECT CIA, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL, "
-        "CENTRO_COSTO, DESC_CECO, FECHA, DEBITO_LOCAL, CREDITO_LOCAL, ASIENTO "
-        f"FROM {SQL_SCHEMA}.{SQL_VIEW} "
-        f"WHERE CIA = ? AND FECHA >= ? AND FECHA < ?{acct_clause}{closing_clause}"
-    )
-
-    params = ([company, start, end] + [f"{p}%" for p in account_prefixes]) if account_prefixes else [company, start, end]
-    logger.debug("SQL query: %s | params: %s", query, params)
-    try:
-        result = pd.read_sql(query, conn, params=params)
-    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
-        raise QueryError(f"Failed to fetch data for {company}/{year}: {exc}") from exc
-
-    logger.info("Fetched %d rows for %s/%s", len(result), company, year)
-    return result
 
 
 def fetch_pnl_data(conn: pyodbc.Connection, company: str, year: int, month: int | None = None,
@@ -131,10 +76,34 @@ def fetch_pnl_data(conn: pyodbc.Connection, company: str, year: int, month: int 
 
 
 def fetch_bs_data(conn: pyodbc.Connection, company: str, year: int, month: int | None = None) -> pd.DataFrame:
-    """Fetch BS accounts (classes 1-5) cumulatively from Jan 1 through period end.
+    """Fetch BS data from REPORTES.VISTA_BS_PREPARADO.
 
-    Year-end closing entries (FUENTE LIKE 'CIERRE%') are excluded so that
-    cumulative balances reflect actual account balances rather than being
-    zeroed out by the closing journal entry.
+    The view enriches each row with SALDO, MES, PARTIDA_BS, SECCION_BS. It
+    already restricts to classes 1-5 and excludes FUENTE LIKE 'CIERRE%', so
+    callers no longer need to repeat those filters. Always cumulative from
+    Jan 1 — BS reports balances as of period end.
+
+    Unlike fetch_pnl_data, there is no eligible_only flag — BS has no
+    statement-eligibility distinction; every class 1-5 row feeds both the
+    statement and the raw pivot tables.
     """
-    return _fetch_data(conn, company, year, month, BS_ACCOUNT_PREFIXES, cumulative=True, exclude_closing=True)
+    start = date(year, 1, 1)
+    end_y, end_m = month_end_boundary(year, month)
+    end = date(end_y, end_m, 1)
+
+    query = (
+        "SELECT CIA, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL, "
+        "CENTRO_COSTO, DESC_CECO, FECHA, DEBITO_LOCAL, CREDITO_LOCAL, ASIENTO, "
+        "SALDO, MES, PARTIDA_BS, SECCION_BS "
+        f"FROM {SQL_SCHEMA}.{SQL_VIEW_BS_PREPARADO} "
+        "WHERE CIA = ? AND FECHA >= ? AND FECHA < ?"
+    )
+    params = [company, start, end]
+    logger.debug("BS view query: %s | params: %s", query, params)
+    try:
+        result = pd.read_sql(query, conn, params=params)
+    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
+        raise QueryError(f"Failed to fetch BS for {company}/{year}: {exc}") from exc
+
+    logger.info("Fetched %d BS rows for %s/%s", len(result), company, year)
+    return result

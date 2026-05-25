@@ -73,6 +73,26 @@ def prepare_pnl_from_view(raw_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def prepare_bs_from_view(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """Lightweight shape adapter for rows coming from VISTA_BS_PREPARADO.
+
+    The view already supplies SALDO, MES, PARTIDA_BS, and SECCION_BS, so this
+    function only fixes dtypes and applies the category encoding that
+    downstream aggregation (statements.bs_summary cumsum + reclassification)
+    expects.
+    """
+    if raw_df.empty:
+        return raw_df.copy()
+    _validate_columns(raw_df, _REQUIRED_COLUMNS | {SALDO, MES, PARTIDA_BS, SECCION_BS},
+                      "prepare_bs_from_view")
+    df = raw_df.copy()
+    df[FECHA] = pd.to_datetime(df[FECHA])
+    df[CENTRO_COSTO] = df[CENTRO_COSTO].astype("category")
+    df[PARTIDA_BS] = df[PARTIDA_BS].astype("category")
+    df[SECCION_BS] = df[SECCION_BS].astype("category")
+    return df
+
+
 def get_excluded_cuentas(df: pd.DataFrame, df_stmt: pd.DataFrame) -> set[str]:
     """Return the set of CUENTA_CONTABLE values present in *df* but not in *df_stmt*."""
     all_cuentas = set(df[CUENTA_CONTABLE].unique())

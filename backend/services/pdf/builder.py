@@ -5,7 +5,7 @@ import logging
 import pandas as pd
 
 from config.fields import PARTIDA_BS, IS_STATEMENT_ELIGIBLE
-from accounting.transforms import prepare_pnl_from_view, prepare_bs_stmt
+from accounting.transforms import prepare_pnl_from_view, prepare_bs_from_view
 from accounting.aggregation import (
     bs_cxc_relacionadas_by_nit,
     bs_cxp_relacionadas_by_nit,
@@ -64,9 +64,9 @@ def build_pdf_data(raw_current_full: pd.DataFrame, raw_prev: pd.DataFrame,
 
     # --- Balance Sheet ---
     df_bs_current = df_bs_prepared if df_bs_prepared is not None else (
-        prepare_bs_stmt(raw_bs) if not raw_bs.empty else pd.DataFrame()
+        prepare_bs_from_view(raw_bs) if not raw_bs.empty else pd.DataFrame()
     )
-    df_bs_prev = prepare_bs_stmt(raw_bs_prev) if not raw_bs_prev.empty else pd.DataFrame()
+    df_bs_prev = prepare_bs_from_view(raw_bs_prev) if not raw_bs_prev.empty else pd.DataFrame()
 
     # Build P&L summary for current year (Excel-style, monthly) to extract UTILIDAD NETA
     pl_for_bs = None

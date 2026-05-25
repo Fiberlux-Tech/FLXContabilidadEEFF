@@ -13,7 +13,7 @@ from config.fields import (
 )
 from config.period import derive_period_type, get_period_months
 from accounting.transforms import (
-    prepare_pnl_from_view, prepare_bs_stmt, get_excluded_cuentas,
+    prepare_pnl_from_view, prepare_bs_from_view, get_excluded_cuentas,
 )
 from config.fields import IS_STATEMENT_ELIGIBLE
 from accounting.aggregation import (
@@ -50,7 +50,7 @@ def build_bs_data(raw_bs: pd.DataFrame, pl_summary_df: pd.DataFrame, report_data
     report_data : PnLReportData
         The report data object whose BS fields will be populated in-place.
     df_bs : pd.DataFrame or None
-        Pre-prepared BS DataFrame (output of ``prepare_bs_stmt()``).  When
+        Pre-prepared BS DataFrame (output of ``prepare_bs_from_view()``).  When
         provided the raw_bs preparation step is skipped.
     strict_balance : bool
         If True, raise on BS imbalance instead of warning.
@@ -63,7 +63,7 @@ def build_bs_data(raw_bs: pd.DataFrame, pl_summary_df: pd.DataFrame, report_data
         logger.warning("No BS data returned — BS sheets will be skipped.")
         return
     logger.info("Preparing BS data...")
-    df = df_bs if df_bs is not None else prepare_bs_stmt(raw_bs)
+    df = df_bs if df_bs is not None else prepare_bs_from_view(raw_bs)
 
     # Determine which month columns to display (matches P&L period filtering)
     period_type, period_num = derive_period_type(month, quarter)

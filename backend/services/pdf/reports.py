@@ -93,9 +93,9 @@ def bs_summary_pdf(df_bs_current, df_bs_prev, year, period_type, period_num,
     Parameters
     ----------
     df_bs_current : pd.DataFrame
-        Prepared BS data for the current year (output of ``prepare_bs_stmt()``).
+        Prepared BS data for the current year (output of ``prepare_bs_from_view()``).
     df_bs_prev : pd.DataFrame
-        Prepared BS data for the previous year (output of ``prepare_bs_stmt()``).
+        Prepared BS data for the previous year (output of ``prepare_bs_from_view()``).
     year : int
     period_type : str
     period_num : int or None

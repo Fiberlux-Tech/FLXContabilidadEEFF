@@ -11,7 +11,7 @@ pd.set_option("mode.copy_on_write", True)
 
 from config.calendar import MONTH_NAMES
 from config.exceptions import ExportError
-from accounting.transforms import prepare_bs_stmt
+from accounting.transforms import prepare_bs_from_view
 from data.fetcher import fetch_all_data
 from excel.builder import build_excel_data, build_bs_data
 from pdf.builder import build_pdf_data
@@ -105,7 +105,7 @@ def run_report(
         df_bs_prepared = cached_bs_prepared
         logger.info("Using cached prepared BS DataFrame")
     else:
-        df_bs_prepared = prepare_bs_stmt(raw_bs) if not raw_bs.empty else None
+        df_bs_prepared = prepare_bs_from_view(raw_bs) if not raw_bs.empty else None
 
     # --- Build and export Excel first, then release its data ---
     t0 = time.perf_counter()

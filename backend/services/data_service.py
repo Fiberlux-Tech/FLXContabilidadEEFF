@@ -24,7 +24,7 @@ import pandas as pd
 from data.fetcher import (
     fetch_all_data, fetch_pnl_only, fetch_bs_only,
 )
-from accounting.transforms import prepare_pnl_from_view, prepare_bs_stmt
+from accounting.transforms import prepare_pnl_from_view, prepare_bs_from_view
 from accounting.aggregation import (
     ensure_month_columns, preaggregate, sales_details,
     proyectos_especiales,
@@ -655,7 +655,7 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
     df_stmt, pl, pl_records = _run_pl_transforms(raw_current_full)
 
     # BS transforms — no month filtering; cumsum carries balances forward naturally
-    df_bs = prepare_bs_stmt(raw_bs) if not raw_bs.empty else None
+    df_bs = prepare_bs_from_view(raw_bs) if not raw_bs.empty else None
     if df_bs is not None:
         bs = bs_summary(df_bs, include_detail=False, pl_summary_df=pl)
     else:
@@ -1038,7 +1038,7 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
 
             t1 = time.perf_counter()
             if not raw_bs.empty:
-                df_bs = prepare_bs_stmt(raw_bs)
+                df_bs = prepare_bs_from_view(raw_bs)
                 bs = bs_summary(df_bs, include_detail=False, pl_summary_df=pl_df)
             else:
                 df_bs = None
