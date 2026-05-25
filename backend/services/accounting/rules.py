@@ -1,9 +1,11 @@
 """Account classification rules — P&L display helpers, BS mappings, display order.
 
 P&L row-level classification was moved to REPORTES.VISTA_PNL_PREPARADO in
-Phase A of SQL_VIEWS_ROADMAP.md; this file no longer owns those rules. What
-remains under P&L is display-only (category lists, subtotal labels, the
-INGRESO_FINANCIERO prefix used by aggregation).
+Phase A of SQL_VIEWS_ROADMAP.md; BS row-level classification was moved to
+REPORTES.VISTA_BS_PREPARADO in Phase B. What remains here is display-only:
+partida ordering, subtotal labels, CORRIENTE/NO CORRIENTE membership, and
+the cumsum-time reclassification rules that statements.bs_summary still
+applies in Python.
 """
 
 
@@ -21,57 +23,7 @@ PL_SUBTOTAL_LABELS = {
 
 INGRESO_FINANCIERO_PREFIX = "77"
 
-# ── Balance Sheet constants ──────────────────────────────────────────────────
-
-BS_ACCOUNT_PREFIXES = ("1", "2", "3", "4", "5")
-
-BS_CLASSIFICATION = {
-    # Activo
-    "10": "Efectivo y equivalentes de efectivo",
-    "12": "Cuentas por cobrar comerciales (neto)",
-    "13": "Otras cuentas por cobrar relacionadas",
-    "14": "Otras cuentas por cobrar (neto)",
-    "16": "Otras cuentas por cobrar (neto)",
-    "17": "Otras cuentas por cobrar relacionadas",
-    "18": "Anticipos Otorgados",
-    "19": "Cuentas por cobrar comerciales (neto)",
-    "25": "Existencias",
-    "28": "Existencias",
-    "30": "Inversiones Mobiliarias",
-    "32": "Propiedades, planta y equipo (neto)",
-    "33": "Propiedades, planta y equipo (neto)",
-    "34": "Intangible",
-    "37": "Activo Diferido",
-    "39": "Propiedades, planta y equipo (neto)",
-    # Pasivo
-    "40": "Tributos por Pagar",
-    "41": "Provisiones por beneficios a empleados",
-    "42": "Cuentas por pagar comerciales",
-    "43": "Otras cuentas por Pagar Relacionadas",
-    "45": "Obligaciones Financieras",
-    "46": "Otras cuentas por pagar",
-    "47": "Otras cuentas por Pagar Relacionadas",
-    # Patrimonio
-    "50": "Capital Emitido",
-    "52": "Aportes",
-    "57": "Excedente de revaluación",
-    "58": "Reservas",
-    "59": "Resultados Acumulados",
-}
-
-# Longer-prefix overrides (checked before the 2-digit BS_CLASSIFICATION lookup)
-# Format: prefix -> (partida, section_override or None)
-# section_override is needed when the account's first char doesn't match the target section
-BS_CLASSIFICATION_OVERRIDES = {
-    "16.7.1.1.01": ("Tributos por Pagar", "PASIVO"),
-    "16.7.2.1.01": ("Tributos por Pagar", "PASIVO"),
-    "16.7": ("Tributos por acreditar", None),
-    "37.3": ("Otros Activos", None),
-    "39.6": ("Intangible", None),
-    "49.1": ("Impuesto a la renta diferido", None),
-    "49.2": ("Participaciones de los trabajadores diferidas", None),
-    "49.3": ("Intereses diferidos", None),
-}
+# ── Balance Sheet display helpers ────────────────────────────────────────────
 
 # Display order for BS partidas within each section
 BS_PARTIDA_ORDER = [
@@ -151,14 +103,43 @@ BS_SUBTOTAL_LABELS = {
     "TOTAL PATRIMONIO", "TOTAL PASIVO Y PATRIMONIO",
 }
 
-BS_PARTIDA_LABELS = frozenset(BS_CLASSIFICATION.values()) | frozenset(p for p, _ in BS_CLASSIFICATION_OVERRIDES.values()) | {
-    "POR DEFINIR ACTIVO", "POR DEFINIR PASIVO", "POR DEFINIR PATRIMONIO",
+BS_PARTIDA_LABELS = frozenset({
+    "ACTIVO CORRIENTE",
+    "ACTIVO NO CORRIENTE",
+    "Activo Diferido",
+    "Anticipos Otorgados",
     "Anticipos Recibidos",
+    "Aportes",
+    "Capital Emitido",
+    "Cuentas por cobrar comerciales (neto)",
+    "Cuentas por pagar comerciales",
+    "Efectivo y equivalentes de efectivo",
+    "Excedente de revaluación",
+    "Existencias",
+    "Impuesto a la renta diferido",
+    "Intangible",
+    "Intereses diferidos",
+    "Inversiones Mobiliarias",
+    "Obligaciones Financieras",
+    "Otras cuentas por Pagar Relacionadas",
+    "Otras cuentas por cobrar (neto)",
+    "Otras cuentas por cobrar relacionadas",
+    "Otras cuentas por pagar",
+    "Otros Activos",
+    "PASIVO CORRIENTE",
+    "PASIVO NO CORRIENTE",
+    "POR DEFINIR ACTIVO",
+    "POR DEFINIR PASIVO",
+    "POR DEFINIR PATRIMONIO",
+    "Participaciones de los trabajadores diferidas",
+    "Propiedades, planta y equipo (neto)",
+    "Provisiones por beneficios a empleados",
+    "Reservas",
+    "Resultados Acumulados",
     "Resultados del Ejercicio",
-    # Sub-section headers for CORRIENTE / NO CORRIENTE grouping
-    "ACTIVO CORRIENTE", "ACTIVO NO CORRIENTE",
-    "PASIVO CORRIENTE", "PASIVO NO CORRIENTE",
-}
+    "Tributos por Pagar",
+    "Tributos por acreditar",
+})
 
 # ── BS account-prefix → display-group mappings ───────────────────────────
 # Used by both Excel and PDF export for grouping detail rows by category.
