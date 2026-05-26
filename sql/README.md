@@ -32,7 +32,7 @@ CASE.
 
 | File | Purpose |
 |---|---|
-| `VISTA_PNL_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_pnl` + `filter_for_statements` + `assign_partida_pl`. Returns rows with `SALDO`, `MES`, `PARTIDA_PL`, `IS_INTERCOMPANY`, `IS_STATEMENT_ELIGIBLE`. **The view enriches rows; it does not filter them** — callers pick the subset they want by filtering on `IS_STATEMENT_ELIGIBLE = 1` (statement view) or no filter (Excel's raw pivots that include inventory-side accounts like `60.x`). |
+| `VISTA_PNL_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_pnl` + `filter_for_statements` + `assign_partida_pl`. Returns rows with `SALDO`, `MES`, `PARTIDA_PL`, `IS_INTERCOMPANY`, `IS_STATEMENT_ELIGIBLE`. **The view enriches rows; it does not filter them** — callers add `WHERE IS_STATEMENT_ELIGIBLE = 1` to get the statement subset, or leave it off to also see inventory-side accounts like `60.x` for ad-hoc Excel-via-ODBC queries. |
 | `VISTA_BS_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_bs` + `assign_partida_bs`. Returns rows with `SALDO`, `MES`, `PARTIDA_BS`, `SECCION_BS`. Does **not** do cumulative-sum or reclassification (Phase B). |
 | `PARITY_CHECKS.sql` | SQL-only sanity checks (coverage, section consistency, row counts). |
 

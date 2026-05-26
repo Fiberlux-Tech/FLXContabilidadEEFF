@@ -8,9 +8,9 @@
 --     [FIBERTECH].VISTA_PNL_PREPARADO   ... etc.
 --
 -- Design intent: this view ENRICHES rows, it does not filter them.
--- Callers (website, Excel, PDF, ad-hoc Excel-via-ODBC) decide what subset of
--- the enriched data they want by filtering on IS_STATEMENT_ELIGIBLE,
--- PARTIDA_PL, IS_INTERCOMPANY, etc.
+-- Callers (the dashboard and ad-hoc Excel-via-ODBC users on the finance
+-- team) decide what subset of the enriched data they want by filtering on
+-- IS_STATEMENT_ELIGIBLE, PARTIDA_PL, IS_INTERCOMPANY, etc.
 --
 -- Replaces in Python: prepare_pnl + filter_for_statements + assign_partida_pl
 --   (backend/services/accounting/transforms.py:78-166)
