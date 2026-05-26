@@ -1,8 +1,8 @@
 # SQL Views Roadmap — push transforms into the database
 
-> **Status**: This is the **active capacity plan** as of 2026-05-24. **Phase A is complete** — P&L classification has moved into `REPORTES.VISTA_PNL_PREPARADO`, all callers are wired to the view, and the old Python pipeline (`prepare_pnl`, `filter_for_statements`, `assign_partida_pl`, `prepare_stmt` + 19 rule constants) and the Python-side parity harness (`sql/parity_check.py`) have been deleted. The SQL view is now the single source of truth for P&L row-level classification. Next up: Phase B (BS migration).
+> **Status**: This is the **active capacity plan** as of 2026-05-26. **All Phase A, B, C, and E DDL is deployed in prod.** Phase A is fully shipped (Python deleted). Phase B is fully shipped (Python deleted). **Phase C / E are half-shipped: every SQL view is live, but the Python dashboard code still calls `pl_summary` / `bs_summary` on row-level data — wiring the dashboard to read from the summary views is the only remaining work to realize the concurrency win.** Next up: Phase C Python wiring, then Phase D (drill-down via paginated SQL).
 > **Owner**: Backend team. DDL deploys require DBA (current `STERNERO` login is SELECT-only on the new views).
-> **Last updated**: 2026-05-24.
+> **Last updated**: 2026-05-26.
 > **Supersedes**: The Python-side Phase 2 (monthly fact pickles) plan that previously lived in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) and `docs/FACT_TABLE.md` (deleted 2026-05-22). The SQL views path delivers the same aggregated artifact in the database engine, shared across all workers, with no per-worker pickle-load tax.
 > **Related**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) (memory budget — Phase C of this doc is where the budget gets structurally easier).
 
@@ -23,8 +23,8 @@ The cache architecture is now back to on-demand fill plus the in-memory LRU + di
 - **DDL deployment requires DBA.** STERNERO has `SELECT WITH GRANT OPTION` on the source views and `SELECT` on the new views, but cannot `CREATE VIEW` in any schema other than its own. Every DDL change ships as a `.sql` file in `sql/` and we ask the DBA to run it.
 - **Per-CIA topology required for predicate pushdown.** `VISTA_ANALISIS_CECOS` is a `UNION ALL` of four per-company views, so any new umbrella view in `REPORTES` must follow the same shape to let the optimizer prune to one company when `CIA = ?` is filtered. We deploy 4 per-CIA views + a `REPORTES` umbrella for each statement.
 - **Trailing-space padding in source.** ~9% of rows have padded `CUENTA_CONTABLE` / `CENTRO_COSTO`. Source views don't `RTRIM`. New views must wrap text cols in `RTRIM()` once at the bottom, otherwise `LEFT()` / `LIKE` slices misbehave for those rows.
-- **The view enriches, it does not filter.** A row that doesn't belong to the statement (e.g. inventory account `60.x` or the synthetic `79.1.1.1.01`) is still returned by the view, carrying `IS_STATEMENT_ELIGIBLE = 0`. Callers add `WHERE IS_STATEMENT_ELIGIBLE = 1` for the statement; the Excel raw-pivot path uses the unfiltered set. **This is what makes one view serve both surfaces.**
-- **Parity must precede deletion.** Phase A's `sql/parity_check.py` compared per-`(CIA, MES, PARTIDA)` `SUM(SALDO)` from the view against the Python pipeline, and gated Step 4 on `PARITY OK ✓` for every year. That harness was deleted alongside Step 4 (the Python pipeline it compared against is gone). For Phase B, validation is structural — `sql/PARITY_CHECKS.sql` plus eyeballing dashboard totals against Excel before the deletion commit lands.
+- **The view enriches, it does not filter.** A row that doesn't belong to the statement (e.g. inventory account `60.x` or the synthetic `79.1.1.1.01`) is still returned by the view, carrying `IS_STATEMENT_ELIGIBLE = 0`. Callers add `WHERE IS_STATEMENT_ELIGIBLE = 1` for the statement. Today the dashboard is the only caller, and it always passes `eligible_only=True`. The unfiltered set survives in the view for any future ad-hoc consumer (finance team's Excel-via-ODBC queries, the drill-down endpoint, etc.) — the cost is zero so we keep the optionality. *(Pre-2026-05-26 the server-side Excel export was a second caller that needed the unfiltered set; that pipeline has been deleted.)*
+- **Parity must precede deletion.** Phase A's `sql/parity_check.py` compared per-`(CIA, MES, PARTIDA)` `SUM(SALDO)` from the view against the Python pipeline, and gated Step 4 on `PARITY OK ✓` for every year. That harness was deleted alongside Step 4 (the Python pipeline it compared against is gone). For Phases B / C, validation is one-shot — `sql/PARITY_CHECKS.sql` plus an ad-hoc Python diff script (not committed) that verifies to-the-centavo equivalence before the deletion commit lands.
 
 ## Roadmap
 
@@ -77,30 +77,29 @@ The expensive query was expensive because Python was doing classification + aggr
 - No more mid-day invalidate-then-fail clobbers.
 - Switching companies: still slow on cold workers until Phase C lands.
 
-**What's left.** Phase C still references the pre-Phase-A.5 cleanup work — only the "Refresh button stays removed" and "force_refresh ignore plumbing" notes remain as cleanup items. Those are tiny; will fold into Phase B or C.
+**What's left.** Stale `/tmp/flx_refresh.lock` on prod + staging hosts and a docs touch-up in `ARCHITECTURE.md`. Both folded into Phase C cleanup. (Earlier note about "delete force_refresh ignore plumbing" turned out to be wrong — `force_refresh` is real user-facing functionality, not scheduler leftover; nothing to delete.)
 
-### Phase B — Balance Sheet migration
+### Phase B — Balance Sheet migration  (shipped 2026-05-25)
 
-**Goal.** Same shape as Phase A, applied to the BS pipeline: `prepare_bs` + `assign_partida_bs` move into `VISTA_BS_PREPARADO`. View returns `SALDO` (sign-aware per asset/liability), `MES`, `PARTIDA_BS`, `SECCION_BS`, and an eligibility flag if needed.
+**Goal.** Same shape as Phase A, applied to the BS pipeline: `prepare_bs` + `assign_partida_bs` move into `VISTA_BS_PREPARADO`. View returns `SALDO` (sign-aware per asset/liability), `MES`, `PARTIDA_BS`, `SECCION_BS`. BS is naturally permissive (filters to class 1-5 and excludes `FUENTE LIKE 'CIERRE%'`); no `IS_STATEMENT_ELIGIBLE` analog needed.
 
-**What is shipped today.**
-- `sql/VISTA_BS_PREPARADO.sql` — DDL committed but **not deployed yet**.
+**What is shipped.**
+- `sql/VISTA_BS_PREPARADO.sql` — DDL for 4 per-CIA views + REPORTES umbrella, deployed to prod 2026-05-22 (DBA pre-deployed before Python wiring landed).
+- `backend/data/queries.py:fetch_bs_data` reads from the view; `_fetch_data` shared helper deleted along with it (Phase A had already left it with one caller).
+- `backend/services/accounting/transforms.py` gained `prepare_bs_from_view` — a thin dtype adapter mirroring `prepare_pnl_from_view`. The old `prepare_bs` / `assign_partida_bs` / `prepare_bs_stmt` are **deleted**.
+- `backend/services/accounting/rules.py`: deleted `BS_ACCOUNT_PREFIXES`, `BS_CLASSIFICATION`, `BS_CLASSIFICATION_OVERRIDES`. Kept `BS_PARTIDA_ORDER`, `BS_RECLASSIFICATION_RULES`, `BS_SECTION_ORDER`, `BS_NATIVE_SECTION_MAP`, `BS_ACTIVO_NO_CORRIENTE`, `BS_PASIVO_NO_CORRIENTE`, `BS_SUBTOTAL_LABELS`, `BS_GROUP_TABLES` (all display-only). Materialized `BS_PARTIDA_LABELS` into a literal frozenset of 35 entries to break its dependency on the deleted dicts.
+- `backend/config/fields.py`: deleted the orphaned `FIRST_CHAR` constant.
+- 10 cuentas land in `POR DEFINIR ACTIVO/PASIVO` (PRESTAMOS / DIETAS ACCIONISTAS, derecho-de-uso provisions). Pre-existing tech debt — old Python pipeline produced the same gap. Tracked in memory at [`project_unclassified_bs_cuentas.md`](../../.claude/projects/-home-administrator-FLXContabilidad/memory/project_unclassified_bs_cuentas.md).
 
-**Open question / DBA decision.** Before redeploying BS, decide whether the same enrichment-not-filtering pattern applies. Current draft excludes only `FUENTE LIKE 'CIERRE%'` and filters to class 1-5 — there's no `>=619`-style scope rule, so the view is naturally permissive already. Likely no `IS_STATEMENT_ELIGIBLE` needed for BS.
+**Commits.** `42c96ed` (Step 1 wiring) + `d1111e4` (Step 2 deletion). Parity was verified end-to-end on prod data: for all four CIAs in May 2025, fetch + prepare + `bs_summary` produced row-identical output to the legacy path, every PARTIDA_BS to-the-centavo.
 
-**Out of scope for Phase B** (handled later):
-- Cumulative `SUM` across months — Phase E (`VISTA_BS_PREPARADO_CUMSUM`).
-- Reclassification rules: BS accounts that move sections when end-of-period balance is negative (`BS_RECLASSIFICATION_RULES`) — Phase C's `VISTA_BS_SUMARIO` (3 rules, simple CASE).
-- `UTILIDAD NETA` injection from P&L into BS PATRIMONIO — stays in Python (crosses statement boundary; 5 lines).
-- `CORRIENTE` / `NO CORRIENTE` sub-section split — stays in Python (pure display ordering).
+**Post-ship DDL tweak.** When Phase C / E shipped, `VISTA_BS_PREPARADO.sql` (and `VISTA_PNL_PREPARADO.sql`) gained a `YEAR(FECHA) AS YEAR` column so the SUMARIO views can filter by year directly. Python `fetch_bs_data` / `fetch_pnl_data` still use the `FECHA >= ? AND FECHA < ?` range pattern and don't read the new column — additive change, no Python migration needed.
 
-**Steps.**
-1. **DBA**: deploy `sql/VISTA_BS_PREPARADO.sql`.
-2. Run `sql/PARITY_CHECKS.sql` and eyeball the dashboard / Excel BS totals against a known-good month before and after wire-up. (The Python-side parity harness from Phase A is gone; there is no automated numeric gate for Phase B.)
-3. Wire `fetch_bs_data` and `prepare_bs_stmt` callers to the view.
-4. Delete `prepare_bs`, `assign_partida_bs`, BS-related constants (`BS_CLASSIFICATION`, `BS_CLASSIFICATION_OVERRIDES`, `BS_NATIVE_SECTION_MAP`, etc. — but **keep** `BS_PARTIDA_ORDER`, `BS_GROUP_TABLES`, `BS_SECTION_ORDER`, `BS_PARTIDA_LABELS`, `BS_ACTIVO_NO_CORRIENTE`, `BS_PASIVO_NO_CORRIENTE`; those are display ordering not classification).
+**Success criteria — met.**
+- `git grep -E 'BS_CLASSIFICATION|BS_ACCOUNT_PREFIXES|prepare_bs_stmt|assign_partida_bs|prepare_bs\(' backend/` returns zero hits.
+- `load_bs_data` end-to-end works for all four CIAs (verified against 2025/5 prod data).
 
-### Phase C — pre-aggregated summary views  (load-bearing for concurrency)
+### Phase C — pre-aggregated summary views  (DDL shipped 2026-05-25; Python wiring pending)
 
 **Goal.** Push the `pl_summary` / `bs_summary` `GROUP BY` itself into SQL, so the dashboard fetches the summary table directly (~100 rows) instead of fetching row-level prepared data and grouping in pandas.
 
@@ -112,19 +111,28 @@ The expensive query was expensive because Python was doing classification + aggr
 
 This is the work that replaced the former Python-side fact-pickle plan (`docs/FACT_TABLE.md`, deleted 2026-05-22). Same end state (an aggregated payload), better mechanism (database engine instead of Python on our box).
 
-**Sequencing note.** Phase A and B (classification) must land first because Phase C is `GROUP BY … PARTIDA_PL` / `PARTIDA_BS`, and PARTIDA is what A and B materialize. Don't start C until A/B are wired and parity is proven; otherwise drift in the classification rules between Python and SQL would surface as drift in the summary totals, which is much harder to debug.
+**DDL — shipped to prod 2026-05-25.**
+- `sql/VISTA_PNL_SUMARIO.sql` — `GROUP BY CIA, YEAR, MES, PARTIDA_PL` with three SALDO columns (`SALDO_TOTAL` / `SALDO_EX_IC` / `SALDO_ONLY_IC`) computed in one pass via `SUM(CASE WHEN IS_INTERCOMPANY = 0/1 THEN SALDO END)`. Filter `IS_STATEMENT_ELIGIBLE = 1` baked in. **One DB roundtrip returns all three IC variants** — better than the originally planned 3 separate queries. ~100 rows per `(CIA, YEAR)`. Deployed to all 5 schemas (4 per-CIA + REPORTES umbrella).
+- `sql/VISTA_BS_SUMARIO.sql` — sits on top of `VISTA_BS_PREPARADO_CUMSUM` (Phase E), applies the three `BS_RECLASSIFICATION_RULES` + native-section sign flip in CASE expressions, groups to partida-grain. Reclassification went into SQL after all (there are only 3 rules, all simple prefix/exact match on negative last-month balance — cheaper as CASE than the originally planned Python hybrid). ~30 rows × 12 months per `(CIA, YEAR)`. Deployed to all 5 schemas.
 
-**Views (DDL drafted, not deployed).**
-- `sql/VISTA_PNL_SUMARIO.sql` — `GROUP BY CIA, YEAR, MES, PARTIDA_PL` with three SALDO columns (`SALDO_TOTAL` / `SALDO_EX_IC` / `SALDO_ONLY_IC`) computed in one pass via `SUM(CASE WHEN IS_INTERCOMPANY = 0 THEN SALDO END)`. Filter `IS_STATEMENT_ELIGIBLE = 1` baked in. ~100 rows per `(CIA, YEAR)`.
-- `sql/VISTA_BS_SUMARIO.sql` — sits on top of `VISTA_BS_PREPARADO_CUMSUM` (see Phase E), applies the three `BS_RECLASSIFICATION_RULES` + native-section sign flip in CASE expressions, groups to partida-grain. Reclassification went into SQL after all (there are only 3 rules, all simple prefix/exact match on negative last-month balance — cheaper as CASE than the originally planned Python hybrid). ~30 rows × 12 months per `(CIA, YEAR)`. Depends on Phase E shipping first.
+**Python wiring — pending (this is the remaining Phase C work).**
+- `backend/data/queries.py` needs `fetch_pnl_summary(conn, company, year)` (one call returning all 3 IC variants) and `fetch_bs_summary(conn, company, year)` (one call returning partida-level rows × 12 months).
+- `backend/services/accounting/statements.py` needs `pl_summary_from_view` / `bs_summary_from_view` entry points — thin wrappers that pivot the long-form SQL output to wide JAN..DEC + TOTAL and then call existing `build_pl_rows` / `_build_bs_rows` for the display structure (subtotals, CORRIENTE/NO CORRIENTE split, UTILIDAD NETA injection — all stay in Python).
+- 7 caller sites in `data_service.py` (lines 660, 719-721, 794, 896-898, 1042) get rewired.
+- Old `pl_summary` / `bs_summary` get deleted in the same PR.
 
-**Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net. Since the Python-side parity harness was deleted in Phase A Step 4, before Phase C deletes the Python `pl_summary` path, a new parity check needs to be written that compares the summary view output against the in-memory `pl_summary` output for a baseline month — and stays green for two weeks of dashboard use. Cheaper to author at C time than to preserve the old harness through B.
+**Decisions already settled** (from 2026-05-26 planning session):
+- BS reclassification: **pure SQL** in `VISTA_BS_SUMARIO` — done. Python's `_reclassify_bs_cuentas` becomes dead code after wiring.
+- P&L IC variants: **3 columns in 1 row** — done in DDL. Python issues 1 query instead of 3.
+- Parity gate: **manual eyeball, no formal harness**. Verify totals on staging for known months across all 4 CIAs, then delete Python `pl_summary` / `bs_summary` in the same PR. (Earlier draft said "2 weeks green production"; that was overridden during planning in favor of a one-shot diff.)
 
-**Cleanup that didn't fit in A.5.** The scheduler code was deleted in Phase A.5, but a few small follow-ups remain — fold into Phase B or C, whichever ships next:
+**Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net once the Python deletion lands. The chosen gate is a one-shot Python diff script (not committed) that fetches both paths for each `(CIA, YEAR)` and asserts to-the-centavo equivalence before the deletion commit; ongoing drift detection falls back to finance users noticing wrong totals on the dashboard. The `POR CLASIFICAR` warning in `prepare_pnl_from_view` is still the early-warning canary for source-data changes.
 
-- Delete the `force_refresh` ignore plumbing that the scheduler PR introduced (the Refresh button stays removed; that change was independently correct).
-- Remove any stale `/tmp/flx_refresh.lock` on the host (one-off cleanup).
-- Update [docs/ARCHITECTURE.md](ARCHITECTURE.md) caching-strategy section to reflect on-demand cache-fill as the single design.
+**Cleanup folded into Phase C.**
+- Remove the stale `/tmp/flx_refresh.lock` on prod + staging hosts (0-byte leftover from the deleted scheduler, 2026-05-24). Ops one-liner: `rm -f /tmp/flx_refresh.lock`.
+- Update [docs/ARCHITECTURE.md](ARCHITECTURE.md) caching-strategy section: replace `backend/data/.cache/` (wrong path) → `backend/.stmt_cache/`; replace "30 days file-based" → "on-demand fill, no TTL"; drop any scheduler reference.
+- DBA: drop the orphan `[REPORTES].[VISTA_BS_DETALLE]` view (its 4 per-CIA sources were dropped but the umbrella survived). `sql/DROP_DETALLE_VIEWS.sql` is idempotent.
+- (Earlier draft listed "delete `force_refresh` ignore plumbing" — that turned out to be real user-facing functionality, not scheduler leftover; nothing to delete.)
 
 ### Phase D — drill-down via paginated SQL  (the move that unlocks deleting the row-level df cache)
 
@@ -145,16 +153,16 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **Order vs Phase C+1.** Phase D should land **before** the Phase C+1 step that deletes the row-level df cache. Otherwise drill-down breaks. Suggested order: Phase C → Phase D → Phase C+1.
 
-### Phase E — BS cumsum view  (prerequisite for Phase C's BS summary)
+### Phase E — BS cumsum view  (DDL shipped 2026-05-25)
 
-**Goal.** Push the BS cumulative-sum across months into SQL via a window function. The dashboard's BS reports cumulative balances (each month column = "balance as of end of that month"), and today `statements.bs_summary` does the cumsum in pandas on top of the row-level prepared DataFrame ([statements.py:353-359](../backend/services/accounting/statements.py#L353-L359)). Phase E moves the cumsum into a view; Phase C's `VISTA_BS_SUMARIO` then sits on top of it.
+**Goal.** Push the BS cumulative-sum across months into SQL via a window function. The dashboard's BS reports cumulative balances (each month column = "balance as of end of that month"), and today `statements.bs_summary` does the cumsum in pandas on top of the row-level prepared DataFrame ([statements.py:353-359](../backend/services/accounting/statements.py#L353-L359)). Phase E moves the cumsum into a view; Phase C's `VISTA_BS_SUMARIO` sits on top of it.
 
-**View (DDL drafted, not deployed).**
-- `sql/VISTA_BS_PREPARADO_CUMSUM.sql` — stays at **cuenta-grain** (not partida-grain). Inner CTE groups to `(CIA, YEAR, MES, CUENTA_CONTABLE)` summing SALDO once per cuenta-month; outer SELECT applies `SUM(SALDO_MENSUAL) OVER (PARTITION BY CIA, YEAR, CUENTA_CONTABLE ORDER BY MES ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` for the running total. `PARTITION BY YEAR` means cumsum resets at Jan 1 of each year — matches the Python behavior (`fetch_bs_data` always starts at year start).
+**View — shipped to prod 2026-05-25.**
+- `sql/VISTA_BS_PREPARADO_CUMSUM.sql` — stays at **cuenta-grain** (not partida-grain). Inner CTE groups to `(CIA, YEAR, MES, CUENTA_CONTABLE)` summing SALDO once per cuenta-month; outer SELECT applies `SUM(SALDO_MENSUAL) OVER (PARTITION BY CIA, YEAR, CUENTA_CONTABLE ORDER BY MES ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` for the running total. `PARTITION BY YEAR` means cumsum resets at Jan 1 of each year — matches the Python behavior (`fetch_bs_data` always starts at year start). Deployed to all 5 schemas. ~6,000 rows per `(CIA, YEAR)`.
 
-**Why cuenta-grain (not partida-grain).** The three `BS_RECLASSIFICATION_RULES` operate per-cuenta on the last-month cumulative balance. Aggregating to partida first would lose the data needed to apply them. Phase C's `VISTA_BS_SUMARIO` is the partida-grain view that runs on top of this; it joins back to the last-month balance per cuenta to apply reclassification before grouping.
+**Why cuenta-grain (not partida-grain).** The three `BS_RECLASSIFICATION_RULES` operate per-cuenta on the last-month cumulative balance. Aggregating to partida first would lose the data needed to apply them. Phase C's `VISTA_BS_SUMARIO` is the partida-grain view that runs on top of this; its `last_month_balance` CTE joins back to per-cuenta last-month balance to apply reclassification before grouping.
 
-**Sequencing.** Phase B must ship first (Phase E reads from `VISTA_BS_PREPARADO`). Phase C's BS summary view depends on Phase E. So the BS ladder is: Phase B → Phase E → Phase C (BS summary). P&L Phase C is independent and can ship in parallel.
+**No Python caller yet.** Like the Phase C summary views, this view is deployed and queryable but no Python code currently reads from it. Wiring happens as part of Phase C's BS leg (`bs_summary_from_view` calls `VISTA_BS_SUMARIO`, which reads from `VISTA_BS_PREPARADO_CUMSUM` internally — Python never queries `VISTA_BS_PREPARADO_CUMSUM` directly).
 
 ### Phase C+1 — Simplification pass  (queued, depends on Phase C in prod)
 
@@ -231,11 +239,11 @@ Today 412 rows land in `PARTIDA_PL = 'POR CLASIFICAR'` and ~5,000 BS rows in `PO
 - **SQL view** (`VISTA_CLASIFICACION_GAPS`) — written then [reverted in `547a793`](https://github.com/Fiberlux-Tech/FLXContabilidadEEFF/commit/547a793). The DDL was never deployed; the file is gone.
 - **Python endpoint** (`/api/diagnostics/classification-gaps`) — preferred. Reuses the already-cached prepared DataFrame; one pandas filter, no extra DB roundtrip.
 
-Will ship as a separate PR after Phase A's deletion lands.
+Backlog item — not scheduled. Would ship as a separate PR; nothing else depends on it. The 10 BS cuentas currently in `POR DEFINIR ACTIVO/PASIVO` are tracked separately ([`project_unclassified_bs_cuentas.md`](../../.claude/projects/-home-administrator-FLXContabilidad/memory/project_unclassified_bs_cuentas.md)).
 
 ## What's NOT in this roadmap
 
 - Anything related to memory / cache sizing — see [SCALING_ROADMAP.md](SCALING_ROADMAP.md).
 - Stored procedures (we deliberately stick to views; no procedural SQL).
-- Indexed / materialized views (would help cumsum-heavy Phase C; out of scope until then).
+- Indexed / materialized views. Phase E's cumsum view runs on a window function over ~6k cuenta-month rows per CIA after the inner GROUP BY — sub-second in practice. If perf ever regresses, indexed views are the escalation path; not needed today.
 - Source-view (`VISTA_ANALISIS_CECOS`) changes. Those would need ERP-team coordination and are out of scope for this team.
