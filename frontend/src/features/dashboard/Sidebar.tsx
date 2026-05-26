@@ -6,7 +6,6 @@ import {
     PL_NAV_ITEMS, BS_NAV_ITEMS, ANALYSIS_NAV_ITEMS, ADMIN_NAV_ITEMS,
 } from '@/config/viewRegistry';
 import type { View } from '@/config/viewRegistry';
-import ExportButton from '@/components/ExportButton';
 
 function NavButton({ view, label, currentView, onClick }: {
     view: View;
@@ -90,10 +89,7 @@ const ICON_ADMIN = (
 
 export default function Sidebar() {
     const { user, logout, canAccess } = useAuth();
-    const {
-        currentView, setCurrentView,
-        reportData, exportFile, isExporting,
-    } = useReport();
+    const { currentView, setCurrentView } = useReport();
 
     const isBs = isBsView(currentView);
     const isAnalysis = isAnalysisView(currentView);
@@ -174,26 +170,6 @@ export default function Sidebar() {
                     </div>
                 ))}
             </nav>
-
-            {/* Export */}
-            {reportData && (
-                <div className="px-4 py-3 border-t border-nav-border">
-                    <p className="text-[10px] uppercase font-semibold text-txt-muted mb-2" style={{ letterSpacing: '0.8px' }}>
-                        Exportar
-                    </p>
-                    <div className="flex gap-1.5">
-                        <ExportButton variant="excel" size="chip" onClick={() => exportFile('excel')} disabled={isExporting} />
-                        <ExportButton variant="pdf" size="chip" onClick={() => exportFile('pdf')} disabled={isExporting} />
-                        <ExportButton
-                            variant="all"
-                            size="chip"
-                            onClick={() => exportFile('all')}
-                            disabled={isExporting}
-                            label={isExporting ? 'Generando...' : undefined}
-                        />
-                    </div>
-                </div>
-            )}
 
             {/* User */}
             <div className="px-4 py-3 border-t border-nav-border">

@@ -1,7 +1,7 @@
 """Data service — single fetch, transforms P&L + BS, returns JSON-ready dicts.
 
-Used by the web API to load all report data in one call.  Reuses the same
-fetch and transform pipeline as the CLI/export path.
+Sole data path for the web API: loads all report data in one call and
+serves it from an in-memory + disk cache.
 
 Split endpoints (load_pl_data / load_bs_data) allow the dashboard to fetch
 P&L first (fast) and defer BS until the user needs it, with background
@@ -35,7 +35,6 @@ from accounting.aggregation import (
 )
 from accounting.statements import pl_summary, bs_summary
 from accounting.notes import BS_DETAIL_ENTRIES
-from excel.builder import build_excel_data, build_bs_data
 from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MIN_YEAR
 from config.company import VALID_COMPANIES
 from config.fields import (
@@ -200,17 +199,6 @@ _caches: dict[str, LRUTTLCache] = {
     "pl_preagg_only_ic": LRUTTLCache("pl_preagg_only_ic"),
     "pl_sections": LRUTTLCache("pl_sections"),
 }
-
-
-# Public accessors used by routes.py
-def get_bs_cached(company: str, year: int) -> pd.DataFrame | None:
-    """Return cached prepared BS DataFrame or None."""
-    return _caches["bs"].get(company, year)
-
-
-def get_raw_cached(company: str, year: int) -> tuple | None:
-    """Return cached raw DataFrames or None."""
-    return _caches["raw"].get(company, year)
 
 
 def get_cache_stats() -> dict:

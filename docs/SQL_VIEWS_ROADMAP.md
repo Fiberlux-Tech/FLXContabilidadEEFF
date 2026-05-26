@@ -36,7 +36,7 @@ The cache architecture is now back to on-demand fill plus the in-memory LRU + di
 
 - `sql/VISTA_PNL_PREPARADO.sql` — DDL for 4 per-CIA views + REPORTES umbrella, with `IS_STATEMENT_ELIGIBLE` enrichment, live in DB.
 - `backend/data/queries.py:fetch_pnl_data` reads from the view with an `eligible_only` flag (statement path filters to `IS_STATEMENT_ELIGIBLE = 1`; Excel raw-pivot path passes `eligible_only=False`).
-- Dashboard ([data_service.py:714](../backend/services/data_service.py#L714)), Excel ([excel/builder.py:110](../backend/services/excel/builder.py#L110)), and PDF ([pdf/builder.py:36](../backend/services/pdf/builder.py#L36)) all call `prepare_pnl_from_view` — a thin dtype adapter — instead of the old classification pipeline.
+- Dashboard ([data_service.py](../backend/services/data_service.py)) calls `prepare_pnl_from_view` — a thin dtype adapter — instead of the old classification pipeline. (Historical note: the Excel and PDF export pipelines were the other two callers; both were deleted when server-side multi-tab export was removed.)
 - `prepare_pnl`, `filter_for_statements`, `assign_partida_pl`, `prepare_stmt`, the `_cuenta_digits` helper, and 19 PNL rule constants are **deleted** from `backend/services/accounting/`.
 - `sql/parity_check.py` is **deleted**. The view is now the single source of truth; see "Drift mitigation" below for what replaces the harness.
 - `sql/PARITY_CHECKS.sql` — SQL-only sanity checks (POR CLASIFICAR coverage, section consistency, row counts) — retained; run after any view DDL change.
@@ -88,13 +88,11 @@ The expensive query was expensive because Python was doing classification + aggr
 
 **Open question / DBA decision.** Before redeploying BS, decide whether the same enrichment-not-filtering pattern applies. Current draft excludes only `FUENTE LIKE 'CIERRE%'` and filters to class 1-5 — there's no `>=619`-style scope rule, so the view is naturally permissive already. Likely no `IS_STATEMENT_ELIGIBLE` needed for BS.
 
-**Out of scope for Phase B** (deferred to Phase C):
-- Cumulative `SUM` across months (`statements.py bs_summary` cumsum).
-- Reclassification rules: BS accounts that move sections when end-of-period balance is negative (`BS_RECLASSIFICATION_RULES`).
-- `UTILIDAD NETA` injection from P&L into BS PATRIMONIO.
-- `CORRIENTE` / `NO CORRIENTE` sub-section split.
-
-Each of these is order-sensitive against the cumsum and likely needs a stored function or a Python passthrough. Worth doing in pieces, not as one mega-view.
+**Out of scope for Phase B** (handled later):
+- Cumulative `SUM` across months — Phase E (`VISTA_BS_PREPARADO_CUMSUM`).
+- Reclassification rules: BS accounts that move sections when end-of-period balance is negative (`BS_RECLASSIFICATION_RULES`) — Phase C's `VISTA_BS_SUMARIO` (3 rules, simple CASE).
+- `UTILIDAD NETA` injection from P&L into BS PATRIMONIO — stays in Python (crosses statement boundary; 5 lines).
+- `CORRIENTE` / `NO CORRIENTE` sub-section split — stays in Python (pure display ordering).
 
 **Steps.**
 1. **DBA**: deploy `sql/VISTA_BS_PREPARADO.sql`.
@@ -116,9 +114,9 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **Sequencing note.** Phase A and B (classification) must land first because Phase C is `GROUP BY … PARTIDA_PL` / `PARTIDA_BS`, and PARTIDA is what A and B materialize. Don't start C until A/B are wired and parity is proven; otherwise drift in the classification rules between Python and SQL would surface as drift in the summary totals, which is much harder to debug.
 
-**Candidate views.**
-- `REPORTES.VISTA_PNL_SUMARIO` — `GROUP BY CIA, MES, PARTIDA_PL` with `IS_INTERCOMPANY` filter variants (or three columns: total, ex_ic, only_ic).
-- `REPORTES.VISTA_BS_SUMARIO_CUMSUM` — `GROUP BY CIA, PARTIDA_BS, SECCION_BS, MES` with `SUM(SUM(SALDO)) OVER (PARTITION BY … ORDER BY MES)` to do cumsum inside the view. Tricky because reclassification rules depend on the cumulative balance — see Phase B "out of scope" above. If the cumsum-plus-reclassification combination doesn't cleanly factor into a view, fall back to a "cumsum view + Python reclassification" hybrid; the cumsum alone is the expensive part.
+**Views (DDL drafted, not deployed).**
+- `sql/VISTA_PNL_SUMARIO.sql` — `GROUP BY CIA, YEAR, MES, PARTIDA_PL` with three SALDO columns (`SALDO_TOTAL` / `SALDO_EX_IC` / `SALDO_ONLY_IC`) computed in one pass via `SUM(CASE WHEN IS_INTERCOMPANY = 0 THEN SALDO END)`. Filter `IS_STATEMENT_ELIGIBLE = 1` baked in. ~100 rows per `(CIA, YEAR)`.
+- `sql/VISTA_BS_SUMARIO.sql` — sits on top of `VISTA_BS_PREPARADO_CUMSUM` (see Phase E), applies the three `BS_RECLASSIFICATION_RULES` + native-section sign flip in CASE expressions, groups to partida-grain. Reclassification went into SQL after all (there are only 3 rules, all simple prefix/exact match on negative last-month balance — cheaper as CASE than the originally planned Python hybrid). ~30 rows × 12 months per `(CIA, YEAR)`. Depends on Phase E shipping first.
 
 **Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net. Since the Python-side parity harness was deleted in Phase A Step 4, before Phase C deletes the Python `pl_summary` path, a new parity check needs to be written that compares the summary view output against the in-memory `pl_summary` output for a baseline month — and stays green for two weeks of dashboard use. Cheaper to author at C time than to preserve the old harness through B.
 
@@ -128,11 +126,35 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 - Remove any stale `/tmp/flx_refresh.lock` on the host (one-off cleanup).
 - Update [docs/ARCHITECTURE.md](ARCHITECTURE.md) caching-strategy section to reflect on-demand cache-fill as the single design.
 
-### Phase D — detail-table push-downs  (probably not worth it)
+### Phase D — drill-down via paginated SQL  (the move that unlocks deleting the row-level df cache)
 
-**Goal.** Make `detail_by_ceco`, `detail_by_cuenta`, `detail_ceco_by_cuenta`, etc. into SQL views that the user can pull directly.
+**Goal.** Replace `get_detail_records`'s "filter the in-memory DataFrame" approach with a parameterized SQL query against `VISTA_PNL_PREPARADO` / `VISTA_BS_PREPARADO` plus `OFFSET … FETCH NEXT N ROWS ONLY` pagination. The frontend gets the first page in <1 s plus a `COUNT(*)` total for the row-count hint.
 
-**Why probably not.** These run on already-cached `df_stmt` in memory; pandas grouping on prepared data is fast (sub-100 ms). The benefit would be removing the in-memory pivot cache (`preagg`) — small RAM win, not a latency win. Revisit only if the SCALING_ROADMAP memory budget gets tighter.
+**Why this matters.** Phase C makes the *summary* path beautiful but leaves a 400 MB pandas DataFrame in worker memory just so users can drill into a cell. After Phase D, drill-down goes straight to SQL and the row-level `df` / `pl_stmt` / `bs` caches in `data_service.py` can be deleted — *that's* what makes Phase C+1's memory wins real. Without Phase D, those caches have to stay because drill-down needs them.
+
+**No new DDL.** The existing `VISTA_PNL_PREPARADO` and `VISTA_BS_PREPARADO` views already expose every column the drill-down needs (ASIENTO, NIT, RAZON_SOCIAL, etc.). A wrapper view would only narrow the SELECT list and re-filter `IS_STATEMENT_ELIGIBLE = 1` — both of which the Python caller already does. Adding views just for that is maintenance burden without benefit.
+
+**Steps.**
+1. Add `fetch_pnl_detail(conn, company, year, partida, mes=None, filter_col=None, filter_val=None, ic_filter='all', offset=0, limit=500)` to `backend/data/queries.py`. Builds a parameterized query against `REPORTES.VISTA_PNL_PREPARADO` with `WHERE IS_STATEMENT_ELIGIBLE = 1 AND CIA = ? AND YEAR(FECHA) = ? AND PARTIDA_PL = ?` plus optional `MES`, filter, and IC predicates, then `ORDER BY SALDO DESC, ASIENTO, CUENTA_CONTABLE` (the tie-breakers ensure stable pagination) + `OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`.
+2. Add `fetch_bs_detail` mirror against `VISTA_BS_PREPARADO`. BS has no eligibility flag, so even simpler.
+3. Add `fetch_pnl_detail_count` / `fetch_bs_detail_count` companion functions returning `COUNT(*)` for the same WHERE clause — the frontend uses this to render "showing 500 of 12,345 entries".
+4. Rewrite `data_service.get_detail_records` to call the new functions instead of filtering `_caches["df"]`. The `force_refresh=True` foot-gun ([data_service.py:1223](../backend/services/data_service.py#L1223)) goes away because there's no cache to miss.
+5. Frontend (`DetailTable`): add a "Load more" button or virtual scroll that bumps `offset` by `limit`. Server-side sort/filter UI is optional — start with what the current UI shows.
+
+**Performance expectation.** A cell that returns 30,000 rows today builds the full 30,000-row JSON list server-side and ships it. Post-Phase-D the first page is 500 rows + a count; ~10× faster on the heavy cells, and the user starts seeing data immediately.
+
+**Order vs Phase C+1.** Phase D should land **before** the Phase C+1 step that deletes the row-level df cache. Otherwise drill-down breaks. Suggested order: Phase C → Phase D → Phase C+1.
+
+### Phase E — BS cumsum view  (prerequisite for Phase C's BS summary)
+
+**Goal.** Push the BS cumulative-sum across months into SQL via a window function. The dashboard's BS reports cumulative balances (each month column = "balance as of end of that month"), and today `statements.bs_summary` does the cumsum in pandas on top of the row-level prepared DataFrame ([statements.py:353-359](../backend/services/accounting/statements.py#L353-L359)). Phase E moves the cumsum into a view; Phase C's `VISTA_BS_SUMARIO` then sits on top of it.
+
+**View (DDL drafted, not deployed).**
+- `sql/VISTA_BS_PREPARADO_CUMSUM.sql` — stays at **cuenta-grain** (not partida-grain). Inner CTE groups to `(CIA, YEAR, MES, CUENTA_CONTABLE)` summing SALDO once per cuenta-month; outer SELECT applies `SUM(SALDO_MENSUAL) OVER (PARTITION BY CIA, YEAR, CUENTA_CONTABLE ORDER BY MES ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` for the running total. `PARTITION BY YEAR` means cumsum resets at Jan 1 of each year — matches the Python behavior (`fetch_bs_data` always starts at year start).
+
+**Why cuenta-grain (not partida-grain).** The three `BS_RECLASSIFICATION_RULES` operate per-cuenta on the last-month cumulative balance. Aggregating to partida first would lose the data needed to apply them. Phase C's `VISTA_BS_SUMARIO` is the partida-grain view that runs on top of this; it joins back to the last-month balance per cuenta to apply reclassification before grouping.
+
+**Sequencing.** Phase B must ship first (Phase E reads from `VISTA_BS_PREPARADO`). Phase C's BS summary view depends on Phase E. So the BS ladder is: Phase B → Phase E → Phase C (BS summary). P&L Phase C is independent and can ship in parallel.
 
 ### Phase C+1 — Simplification pass  (queued, depends on Phase C in prod)
 
@@ -142,7 +164,7 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 1. *"Why do we have multiple workers if we're going to cache everything?"* — The 3-worker design exists primarily because of memory pressure under the current Python pipeline (each worker independently caches ~400 MB DataFrames). The "smooth out concurrent slow requests" justification is real but quantitatively small for ~10–25 internal finance users. Phase C eliminates the memory pressure, which removes the dominant reason for 3 workers.
 
-2. *"Can we have task-typed workers — one for browsing, one for Excel, one for PDF?"* — Yes, the pattern exists (nginx split-routing or Celery), but the traffic profile here doesn't justify the operational complexity (two systemd units or a new Redis/RabbitMQ dependency, frontend polling changes, ~400 MB extra Python memory floor). Internal tool, sparse traffic, occasional exports — generic workers are the right call. **Decision: do not pursue task-typed workers.** Revisit only if export volume grows significantly or a new heavy endpoint appears.
+2. *"Can we have task-typed workers — one for browsing, one for Excel, one for PDF?"* — Moot as of the server-side export removal: all requests are equivalent dashboard JSON loads, so task-typing no longer has a meaningful axis to split on. Generic workers remain the right call.
 
 **What ships in Phase C+1.** Each item is independent; ship in order of confidence:
 
@@ -158,7 +180,7 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **What stays.**
 - **In-memory LRU+TTL cache** in `data_service.py`. Still useful — avoids re-querying SQL for every dashboard click within the 30-min TTL.
-- **At least 2 workers.** Excel and PDF exports are still ~5–10 s of CPU-bound rendering work (in `openpyxl` / `fpdf2`, not in data fetch). Dropping to 1 worker would mean every export freezes every other user. 2 workers is the safety floor.
+- **At least 2 workers.** Even after the server-side Excel/PDF export was removed, a single worker would still mean a slow dashboard load (cold-cache fetch) freezes every other user. 2 workers is the safety floor.
 - **Drill-down's row-level path.** Phase C only collapses the summary; drill-down into journal entries still needs row-level rows.
 
 **Architectural posture this leaves us with.**

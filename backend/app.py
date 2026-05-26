@@ -98,8 +98,8 @@ def create_app():
     # Register blueprints
     app.register_blueprint(auth_bp, url_prefix='/auth')
 
-    # Add services/ to Python path so bare imports inside the pipeline work
-    # (`from data_service import …`, `from pipeline import …`)
+    # Add services/ to Python path so bare imports inside services work
+    # (`from data_service import …`, `from headcount_service import …`).
     services_dir = os.path.join(_backend_dir, 'services')
     if services_dir not in sys.path:
         sys.path.insert(0, services_dir)

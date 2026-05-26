@@ -7,27 +7,22 @@ FLXContabilidad/
 ├── backend/              # All Python: Flask API + services + data + config
 │   ├── app.py            # Flask app factory, sys.path setup, CORS, blueprint registration
 │   ├── auth.py           # SQLite-based session auth (login, logout, /me, rate limiting)
-│   ├── routes.py         # API endpoints (data loading, exports, downloads, drill-down)
+│   ├── routes.py         # API endpoints (data loading, drill-down)
 │   ├── manage.py         # CLI for user management (create, list, delete, reset-password)
 │   ├── gunicorn.conf.py  # Production WSGI server config
-│   ├── output/           # Generated Excel/PDF files
 │   ├── logs/             # Access/error logs
 │   ├── services/         # Python data pipeline
 │   │   ├── data_service.py   # Single-fetch service with in-memory cache (30-min TTL)
-│   │   ├── pipeline.py       # Orchestrator: fetch → transform → export Excel/PDF
-│   │   ├── accounting/       # Transforms, aggregation, P&L/BS statement builders, rules
-│   │   ├── excel/            # Multi-sheet Excel generation (openpyxl)
-│   │   └── pdf/              # PDF generation (fpdf2) — cover, tables, notes
-│   ├── config/           # Shared config (settings, calendar, fields, company, nota, exceptions)
-│   ├── data/             # Data layer (db pool, SQL queries, fetcher, disk cache)
-│   └── models/           # Data model classes (PeriodContext, PnLReportData, PdfReportData)
+│   │   └── accounting/       # Transforms, aggregation, P&L/BS statement builders, rules
+│   ├── config/           # Shared config (settings, calendar, fields, company, exceptions)
+│   └── data/             # Data layer (db pool, SQL queries, fetcher, disk cache)
 ├── frontend/             # React + Vite + Tailwind
 │   ├── src/
 │   │   ├── App.tsx       # Root component (auth check → login or dashboard)
 │   │   ├── lib/api.ts    # Centralized HTTP client (cookies, error handling)
 │   │   ├── config/       # Constants, API endpoints
 │   │   ├── types/        # TypeScript interfaces
-│   │   ├── contexts/     # AuthContext (user state) + ReportContext (data/export/display state)
+│   │   ├── contexts/     # AuthContext (user state) + ReportContext (data/display state)
 │   │   ├── components/   # Shared components (ErrorBoundary)
 │   │   └── features/
 │   │       ├── auth/     # Login page + auth service
@@ -73,10 +68,8 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for full staging + prod topology.
 | POST   | /api/data/load-pl                | Fetch P&L only (BS pre-fetched in background) |
 | POST   | /api/data/load-bs                | Fetch BS only (requires P&L loaded first) |
 | POST   | /api/data/detail                 | Drill-down into journal entries           |
-| POST   | /api/export/excel                | Generate Excel report                    |
-| POST   | /api/export/pdf                  | Generate PDF report                      |
-| POST   | /api/export/all                  | Generate Excel + PDF                     |
-| GET    | /api/export/download/\<filename> | Download a generated file                |
+
+The dashboard's "Export current view to Excel" button is implemented entirely in the frontend (SheetJS in the browser) and does not call any backend endpoint.
 
 ## Authentication
 - **Storage**: SQLite file (`backend/users.db`)
@@ -113,31 +106,20 @@ data_service.load_report_data()
 ```
 
 ### Export Flow
-```
-POST /api/export/excel { company: "FIBERLUX", year: 2026 }
-    │
-    ▼
-_run_export()
-    ├── Attempt to reuse cached raw DataFrames from prior dashboard load
-    │   (eliminates redundant SQL Server round-trips)
-    │
-    ├── pipeline.run_report() → build_excel_data → export_to_excel → .xlsx
-    │                         → build_pdf_data  → export_to_pdf  → .pdf
-    │
-    └── Response: { excel: "filename.xlsx", pdf: "filename.pdf" }
-        │
-        ▼
-    Frontend opens: GET /api/export/download/filename.xlsx → send_file()
-```
+
+Excel export of the currently-displayed view is fully client-side:
+`useViewExport` in the dashboard reads the current report state from
+`ReportContext`, builds sheet definitions in the browser, and hands them
+to SheetJS to produce a `.xlsx` download. No `/api/export/*` endpoint
+exists — the backend is a pure JSON API.
 
 ## Caching Strategy
 
-Three layers, each serving a different purpose:
+Two layers, each serving a different purpose:
 
 | Layer | Location | TTL | Purpose |
 |-------|----------|-----|---------|
 | **In-memory** | `data_service.py` | 30 min | Fast dashboard reloads without DB queries |
-| **Export reuse** | `data_service.py` (raw cache) | 30 min | Export skips DB if dashboard already loaded |
 | **File-based** | `backend/data/.cache/` (CSV) | 30 days | Previous-year P&L/BS data (changes rarely) |
 
 All in-memory caches are keyed by `(company, year)` and protected by `threading.Lock`.

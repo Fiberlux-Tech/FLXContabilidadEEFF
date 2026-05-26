@@ -44,7 +44,6 @@ interface ReportState {
     currentView: View;
     isLoading: boolean;
     error: string | null;
-    isExporting: boolean;
     /** Whether BS data is being fetched separately */
     isBsLoading: boolean;
     bsError: string | null;
@@ -75,9 +74,6 @@ type ReportAction =
     | { type: 'BS_LOAD_START' }
     | { type: 'BS_LOAD_SUCCESS'; data: BSReportData; prevYearData: BSReportData | null }
     | { type: 'BS_LOAD_ERROR'; error: string }
-    | { type: 'EXPORT_START' }
-    | { type: 'EXPORT_SUCCESS' }
-    | { type: 'EXPORT_ERROR'; error: string }
     | { type: 'SECTION_LOAD_START' }
     | { type: 'SECTION_LOAD_SUCCESS'; section: string; data: PLSectionData; prevData: PLSectionData | null }
     | { type: 'SECTION_LOAD_ERROR'; error: string }
@@ -96,7 +92,6 @@ const initialState: ReportState = {
     currentView: 'pl',
     isLoading: false,
     error: null,
-    isExporting: false,
     isBsLoading: false,
     bsError: null,
     intercompanyFilter: 'all',
@@ -174,12 +169,6 @@ function reportReducer(state: ReportState, action: ReportAction): ReportState {
         }
         case 'BS_LOAD_ERROR':
             return { ...state, isBsLoading: false, bsError: action.error };
-        case 'EXPORT_START':
-            return { ...state, isExporting: true, error: null };
-        case 'EXPORT_SUCCESS':
-            return { ...state, isExporting: false };
-        case 'EXPORT_ERROR':
-            return { ...state, isExporting: false, error: action.error };
         case 'SECTION_LOAD_START':
             return { ...state, isSectionLoading: true, sectionError: null };
         case 'SECTION_LOAD_SUCCESS': {
@@ -232,8 +221,6 @@ interface IReportContext {
     error: string | null;
     companiesError: string | null;
     loadData: () => Promise<void>;
-    exportFile: (type: 'excel' | 'pdf' | 'all') => Promise<void>;
-    isExporting: boolean;
     isBsLoading: boolean;
     bsError: string | null;
     /** Whether a P&L detail section is currently loading */
@@ -446,40 +433,6 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
         }
     }, [state.currentView, state.reportData, state.loadedSections, state.proveedoresCeco, fetchSection]);
 
-    const exportFile = useCallback(async (type: 'excel' | 'pdf' | 'all') => {
-        if (!state.selectedCompany) return;
-        dispatch({ type: 'EXPORT_START' });
-
-        const endpointMap = {
-            excel: API_CONFIG.ENDPOINTS.EXPORT_EXCEL,
-            pdf: API_CONFIG.ENDPOINTS.EXPORT_PDF,
-            all: API_CONFIG.ENDPOINTS.EXPORT_ALL,
-        };
-
-        try {
-            const result = await api.post<Record<string, string>>(endpointMap[type], {
-                company: state.selectedCompany,
-                year: state.selectedYear,
-            });
-
-            for (const [key, filename] of Object.entries(result)) {
-                if (typeof filename !== 'string' || !filename.trim()) {
-                    console.warn(`Skipping invalid export filename for key "${key}"`);
-                    continue;
-                }
-                if (filename.includes('/') || filename.includes('\\')) {
-                    console.warn(`Skipping suspicious filename: ${filename}`);
-                    continue;
-                }
-                const url = `${API_CONFIG.ENDPOINTS.EXPORT_DOWNLOAD}/${encodeURIComponent(filename)}`;
-                window.open(url, '_blank');
-            }
-            dispatch({ type: 'EXPORT_SUCCESS' });
-        } catch (err: unknown) {
-            dispatch({ type: 'EXPORT_ERROR', error: err instanceof Error ? err.message : 'Error al exportar' });
-        }
-    }, [state.selectedCompany, state.selectedYear]);
-
     const trailingMonthSources = useMemo(
         () => getTrailing12MonthSources(state.selectedYear),
         [state.selectedYear],
@@ -579,8 +532,7 @@ export function ReportProvider({ children }: { children: React.ReactNode }) {
             isLoading: state.isLoading,
             error: state.error,
             companiesError: state.companiesError,
-            loadData, exportFile,
-            isExporting: state.isExporting,
+            loadData,
             isBsLoading: state.isBsLoading,
             bsError: state.bsError,
             isSectionLoading: state.isSectionLoading,

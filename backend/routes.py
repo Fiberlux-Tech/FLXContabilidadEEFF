@@ -1,14 +1,11 @@
-"""API routes — data loading, report exports, file downloads."""
+"""API routes — data loading and detail drill-down."""
 
-import os
 import functools
 import logging
 import time
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request, send_file, session
+from flask import Blueprint, jsonify, request
 
 from auth import login_required, view_required, any_view_required, admin_required, require_view_or_403
 from helpers import ok, error
@@ -21,15 +18,13 @@ from config.fields import (
 )
 from config.exceptions import (
     RequestValidationError, PlantillasError, QueryError,
-    ExportError, DataValidationError,
+    DataValidationError,
 )
-from config.settings import get_config
 from data_service import (
     load_report_data, load_pl_data, load_bs_data, load_pl_section,
-    get_detail_records, get_raw_cached, get_bs_cached, get_cache_stats,
+    get_detail_records, get_cache_stats,
     VALID_PL_SECTIONS,
 )
-from pipeline import run_report
 from headcount_service import (
     load_headcount, load_headcount_ym, save_headcount_csv, get_roster_detail,
 )
@@ -45,13 +40,6 @@ assert not _unknown_sections, (
     f"Add them to backend/config/views.py and frontend/src/config/viewRegistry.ts."
 )
 del _unknown_sections
-
-# In-memory map of generated export filename -> owning user_id. Populated by
-# the export handler, checked by the download handler. Not persisted — a
-# server restart drops the map and previously-generated files become
-# undownloadable, which is acceptable (users can regenerate).
-_export_owners: dict[str, int] = {}
-_export_owners_lock = threading.Lock()
 
 
 @api_bp.errorhandler(RequestValidationError)
@@ -261,124 +249,6 @@ def get_detail(body, company, year):
                                  filter_col=filter_col, filter_val=filter_val,
                                  ic_filter=ic_filter)
     return ok({'records': records})
-
-
-# ── Exports ─────────────────────────────────────────────────────────────
-
-def _run_export(company: str, year: int, excel_only: bool = False) -> dict:
-    """Run the export pipeline and return file paths.
-
-    Attempts to reuse cached raw DataFrames from a prior dashboard load,
-    eliminating redundant SQL Server round-trips.
-    """
-    cfg = get_config()
-    output_dir = cfg.output_dir
-
-    # Reuse cached data from prior dashboard load if available
-    cached_raw = get_raw_cached(company, year)
-    cached_bs = get_bs_cached(company, year)
-
-    excel_path, pdf_path = run_report(
-        company, year, None, None,
-        "year", None,
-        excel_only=excel_only,
-        output_dir=output_dir,
-        cached_raw=cached_raw,
-        cached_bs_prepared=cached_bs,
-    )
-    result = {}
-    if excel_path:
-        result['excel'] = os.path.basename(excel_path)
-    if pdf_path:
-        result['pdf'] = os.path.basename(pdf_path)
-    return result
-
-
-_EXPORT_TYPE_MAP = {
-    'excel': True,   # excel_only=True
-    'pdf':   False,  # excel_only=False
-    'all':   False,  # excel_only=False
-}
-
-
-def _export_handler(export_type: str):
-    """Shared logic for all export endpoints."""
-    body = request.get_json(silent=True) or {}
-
-    company, year = _validate_company_year(body)
-
-    try:
-        result = _run_export(company, year, excel_only=_EXPORT_TYPE_MAP[export_type])
-        # Track ownership of generated files so other users can't download them.
-        user_id = session.get('user_id')
-        if user_id is not None:
-            with _export_owners_lock:
-                for fname in result.values():
-                    _export_owners[fname] = user_id
-        return ok(result)
-    except FileNotFoundError:
-        return error('Archivo de reporte no encontrado', 404)
-    except ExportError as exc:
-        logger.exception("Export error during %s for %s/%s", export_type, company, year)
-        return error(str(exc), 500)
-    except OSError as exc:
-        logger.exception("OS error during %s export for %s/%s", export_type, company, year)
-        return error('Error de sistema de archivos', 500)
-    except PlantillasError as exc:
-        logger.exception("Error exporting %s for %s/%s", export_type, company, year)
-        return error('Error interno del servidor', 500)
-
-
-@api_bp.route('/export/excel', methods=['POST'])
-@any_view_required(['pl', 'bs'])
-def export_excel():
-    """Generate Excel report and return download filename."""
-    return _export_handler('excel')
-
-
-@api_bp.route('/export/pdf', methods=['POST'])
-@any_view_required(['pl', 'bs'])
-def export_pdf():
-    """Generate PDF report and return download filename."""
-    return _export_handler('pdf')
-
-
-@api_bp.route('/export/all', methods=['POST'])
-@any_view_required(['pl', 'bs'])
-def export_all():
-    """Generate both Excel and PDF reports."""
-    return _export_handler('all')
-
-
-@api_bp.route('/export/download/<filename>', methods=['GET'])
-@login_required
-def download_file(filename):
-    """Download a generated report file. Only the user who generated the
-    file (or an admin) can download it.
-    """
-    cfg = get_config()
-
-    # Sanitize: only allow basename, no path traversal
-    safe_name = os.path.basename(filename)
-    filepath = os.path.join(cfg.output_dir, safe_name)
-
-    # Defense-in-depth: ensure resolved path stays within output_dir
-    real_output = os.path.realpath(cfg.output_dir)
-    real_file = os.path.realpath(filepath)
-    if not real_file.startswith(real_output + os.sep):
-        return error('Acceso denegado', 403)
-
-    # Ownership check — admins bypass; everyone else must own the file.
-    if not session.get('is_admin'):
-        with _export_owners_lock:
-            owner_id = _export_owners.get(safe_name)
-        if owner_id != session.get('user_id'):
-            return error('Acceso denegado', 403)
-
-    if not os.path.isfile(filepath):
-        return error('Archivo no encontrado', 404)
-
-    return send_file(filepath, as_attachment=True, download_name=safe_name)
 
 
 # ── Headcount ──────────────────────────────────────────────────────────

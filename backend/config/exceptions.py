@@ -13,10 +13,6 @@ class QueryError(PlantillasError):
     """Database query execution or data-fetching errors."""
 
 
-class ExportError(PlantillasError):
-    """File export errors (Excel, PDF)."""
-
-
 class DataValidationError(PlantillasError):
     """Missing columns or invalid data in input DataFrames."""
 
