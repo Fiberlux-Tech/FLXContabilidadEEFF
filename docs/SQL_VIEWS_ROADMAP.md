@@ -153,16 +153,26 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **Order vs Phase C+1.** Phase D should land **before** the Phase C+1 step that deletes the row-level df cache. Otherwise drill-down breaks. Suggested order: Phase C → Phase D → Phase C+1.
 
-### Phase E — BS cumsum view  (DDL shipped 2026-05-25)
+### Phase E — BS cumsum view  (DDL shipped 2026-05-25, patched 2026-05-26)
 
 **Goal.** Push the BS cumulative-sum across months into SQL via a window function. The dashboard's BS reports cumulative balances (each month column = "balance as of end of that month"), and today `statements.bs_summary` does the cumsum in pandas on top of the row-level prepared DataFrame ([statements.py:353-359](../backend/services/accounting/statements.py#L353-L359)). Phase E moves the cumsum into a view; Phase C's `VISTA_BS_SUMARIO` sits on top of it.
 
 **View — shipped to prod 2026-05-25.**
-- `sql/VISTA_BS_PREPARADO_CUMSUM.sql` — stays at **cuenta-grain** (not partida-grain). Inner CTE groups to `(CIA, YEAR, MES, CUENTA_CONTABLE)` summing SALDO once per cuenta-month; outer SELECT applies `SUM(SALDO_MENSUAL) OVER (PARTITION BY CIA, YEAR, CUENTA_CONTABLE ORDER BY MES ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` for the running total. `PARTITION BY YEAR` means cumsum resets at Jan 1 of each year — matches the Python behavior (`fetch_bs_data` always starts at year start). Deployed to all 5 schemas. ~6,000 rows per `(CIA, YEAR)`.
+- `sql/VISTA_BS_PREPARADO_CUMSUM.sql` — stays at **cuenta-grain** (not partida-grain). Three CTEs:
+  1. `months(MES)` — calendar generator emitting 1..12.
+  2. `cuenta_years` — one row per `(CIA, YEAR, CUENTA_CONTABLE)` carrying the cuenta's `PARTIDA_BS` / `SECCION_BS` / `DESCRIPCION` attributes.
+  3. `monthly` — `GROUP BY (CIA, YEAR, MES, CUENTA_CONTABLE) SUM(SALDO)` from `VISTA_BS_PREPARADO`.
+  4. `dense` — `cuenta_years CROSS JOIN months LEFT JOIN monthly` with `COALESCE(SALDO_MENSUAL, 0)`. This **densifies** the input so every cuenta has all 12 months even if there was no activity in a given month.
+
+  Outer SELECT runs `SUM(SALDO_MENSUAL) OVER (PARTITION BY CIA, YEAR, CUENTA_CONTABLE ORDER BY MES ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` over the dense input. `PARTITION BY YEAR` means cumsum resets at Jan 1 of each year — matches the Python behavior (`fetch_bs_data` always starts at year start). Deployed to all 5 schemas. ~1,500 rows per `(CIA, YEAR)` for FIBERLINE (`121 cuentas × 12 months`).
+
+**2026-05-26 patch — calendar densification.** The original DDL ran the window function directly on the `monthly` CTE, which only had rows for `(cuenta, MES)` pairs that had journal activity in that month. A cuenta like `50.1.1.1.01` (Capital Emitido) booked once on Jan 1 produced exactly one row (`MES=1`), so `VISTA_BS_SUMARIO WHERE MES=5` returned nothing for it and the dashboard's TOTAL ACTIVO for May was ~S/. 4.6M too low across multiple partidas. The patch introduces `months` + `cuenta_years` + `dense` CTEs so that every cuenta gets all 12 months with the cumulative balance correctly carried forward across empty months. Post-patch, TOTAL ACTIVO for FIBERLINE May 2025 went from S/. 11,510,810.47 → S/. 16,126,321.00 (vs Python S/. 16,086,457.31); residual diff is the reclassification-timing semantic gap below + the not-yet-injected `Resultados del Ejercicio`.
 
 **Why cuenta-grain (not partida-grain).** The three `BS_RECLASSIFICATION_RULES` operate per-cuenta on the last-month cumulative balance. Aggregating to partida first would lose the data needed to apply them. Phase C's `VISTA_BS_SUMARIO` is the partida-grain view that runs on top of this; its `last_month_balance` CTE joins back to per-cuenta last-month balance to apply reclassification before grouping.
 
 **No Python caller yet.** Like the Phase C summary views, this view is deployed and queryable but no Python code currently reads from it. Wiring happens as part of Phase C's BS leg (`bs_summary_from_view` calls `VISTA_BS_SUMARIO`, which reads from `VISTA_BS_PREPARADO_CUMSUM` internally — Python never queries `VISTA_BS_PREPARADO_CUMSUM` directly).
+
+**Open issue — reclassification timing semantics (decision pending before Python wiring).** Python's `_reclassify_bs_cuentas` evaluates the "balance is negative" predicate at the **displayed month's** cumulative balance: when the dashboard shows May, the rule fires if MES=5 cumsum is negative. SQL's `VISTA_BS_SUMARIO` evaluates it at the **last available month for the year** (effectively MES=12 for closed years, max-MES for the in-progress year) via `FIRST_VALUE(SALDO_CUMSUM) OVER (... ORDER BY MES DESC)`. For cuentas whose cumulative balance crosses zero between the displayed month and year-end, the two paths reach different reclassification verdicts — measured as S/. 39,863.69 net across TOTAL ACTIVO for FIBERLINE 2025/5 (two pairs that sum to zero within their sections: `14*` cuentas ±S/. 34,024.27 and `42.2*` cuentas ±S/. 5,839.42). Decision before wiring: change SQL CASE to evaluate at the displayed month (pure-SQL stays viable; needs a `MES_PARAMETER` join), or change Python to match SQL semantics (simpler, but means historical Excel exports could disagree with the dashboard for cuentas mid-flip). Either way: not a Phase E bug — the cumsum is correct; the question is which "last month" the reclassification rule should use.
 
 ### Phase C+1 — Simplification pass  (queued, depends on Phase C in prod)
 

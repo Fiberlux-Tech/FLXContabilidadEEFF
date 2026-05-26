@@ -29,46 +29,92 @@
 --   PARTIDA_BS       VARCHAR(60)     — inherited
 --   SECCION_BS       VARCHAR(12)     — inherited
 --   CUENTA_CONTABLE  VARCHAR
---   DESCRIPCION      VARCHAR         — latest non-null description for this cuenta
+--   DESCRIPCION      VARCHAR         — MAX(DESCRIPCION) per cuenta-year
 --   SALDO_MENSUAL    DECIMAL(28,8)   — SUM(SALDO) for that (cia, year, mes, cuenta)
+--                                     (0 when no activity that month)
 --   SALDO_CUMSUM     DECIMAL(28,8)   — running total Jan 1 through end of MES
 --
--- Window function semantics:
---   SUM(SALDO_MENSUAL) OVER (
---       PARTITION BY CIA, YEAR, CUENTA_CONTABLE
---       ORDER BY MES
---       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
---   )
--- This is the cumsum the BS shows: each month's column = "balance as of end of
--- that month".  PARTITION BY YEAR means cumsum resets at Jan 1 of each year —
--- matches the Python behavior (fetch_bs_data always starts at year start).
+-- =============================================================================
+-- 2026-05-26 patch — calendar densification.
+-- =============================================================================
+-- Original DDL ran SUM() OVER directly on a `monthly` CTE that only had rows
+-- for (cuenta, MES) pairs with activity. A cuenta booked once on Jan 1
+-- produced exactly one row (MES=1), so downstream queries asking
+-- "balance at end of MES=5?" got nothing back and treated it as zero.
+-- VISTA_BS_SUMARIO TOTAL ACTIVO for FIBERLINE May 2025 came back ~S/. 4.6M
+-- too low across multiple partidas (PATRIMONIO disappeared entirely; class
+-- 33/3x ACTIVO cuentas booked only at year-open showed as zero from MES=2).
 --
--- Why the inner aggregation step (CTE `monthly`):
---   The source view emits one row per journal entry; we need one row per
---   (cia, year, mes, cuenta) before the cumsum so the window function adds up
---   one number per month, not millions.  PARTIDA_BS / SECCION_BS / DESCRIPCION
---   are functionally dependent on CUENTA_CONTABLE so we carry them via MAX().
+-- The patch introduces three CTEs:
+--   * months(MES)    — calendar generator emitting 1..12
+--   * cuenta_years   — one row per (CIA, YEAR, CUENTA) carrying attributes
+--   * monthly        — GROUP BY (CIA, YEAR, MES, CUENTA) SUM(SALDO), unchanged
+--   * dense          — cuenta_years CROSS JOIN months LEFT JOIN monthly,
+--                      COALESCE(SALDO_MENSUAL, 0)
+--
+-- Window function then runs over the dense input — every cuenta has all 12
+-- months, gap months contribute +0 to the running sum so the prior cumulative
+-- balance carries forward correctly.
+--
+-- Row count: ~1,500 per (CIA, YEAR) on FIBERLINE (121 cuentas × 12 months);
+-- ~3,000 on FIBERTECH (251 × 12).
+--
+-- Post-patch verification (2026-05-26):
+--   * 50.1.1.1.01 Capital Emitido: 12 rows, all CUMSUM = S/. 10,180,068.00 ✓
+--   * Row count = n_cuentas × 12 exactly for all 4 CIAs in 2025 ✓
+--   * VISTA_BS_SUMARIO TOTAL ACTIVO FIBERLINE 2025/5 = S/. 16,126,321.00
+--     (was 11,510,810.47; Python dashboard 16,086,457.31; residual
+--     S/. 39,863.69 is the reclassification-timing semantic gap — see
+--     "Open issue" in docs/SQL_VIEWS_ROADMAP.md Phase E).
 -- =============================================================================
 
 
 CREATE OR ALTER VIEW [FIBERLINE].[VISTA_BS_PREPARADO_CUMSUM] AS
-WITH monthly AS (
+WITH
+months(MES) AS (
+    SELECT 1  UNION ALL SELECT 2  UNION ALL SELECT 3  UNION ALL SELECT 4
+    UNION ALL SELECT 5  UNION ALL SELECT 6  UNION ALL SELECT 7  UNION ALL SELECT 8
+    UNION ALL SELECT 9  UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
+),
+cuenta_years AS (
     SELECT
         CIA,
-        YEAR(FECHA)                     AS YEAR,
+        YEAR(FECHA)      AS YEAR,
+        CUENTA_CONTABLE,
+        MAX(PARTIDA_BS)  AS PARTIDA_BS,
+        MAX(SECCION_BS)  AS SECCION_BS,
+        MAX(DESCRIPCION) AS DESCRIPCION
+    FROM [FIBERLINE].[VISTA_BS_PREPARADO]
+    GROUP BY CIA, YEAR(FECHA), CUENTA_CONTABLE
+),
+monthly AS (
+    SELECT
+        CIA,
+        YEAR(FECHA) AS YEAR,
         MES,
         CUENTA_CONTABLE,
-        MAX(PARTIDA_BS)                 AS PARTIDA_BS,
-        MAX(SECCION_BS)                 AS SECCION_BS,
-        MAX(DESCRIPCION)                AS DESCRIPCION,
         CAST(SUM(SALDO) AS DECIMAL(28, 8)) AS SALDO_MENSUAL
     FROM [FIBERLINE].[VISTA_BS_PREPARADO]
     GROUP BY CIA, YEAR(FECHA), MES, CUENTA_CONTABLE
+),
+dense AS (
+    SELECT
+        cy.CIA, cy.YEAR, m.MES,
+        cy.CUENTA_CONTABLE, cy.PARTIDA_BS, cy.SECCION_BS, cy.DESCRIPCION,
+        COALESCE(mo.SALDO_MENSUAL, 0) AS SALDO_MENSUAL
+    FROM cuenta_years cy
+    CROSS JOIN months m
+    LEFT JOIN monthly mo
+      ON  mo.CIA             = cy.CIA
+      AND mo.YEAR            = cy.YEAR
+      AND mo.CUENTA_CONTABLE = cy.CUENTA_CONTABLE
+      AND mo.MES             = m.MES
 )
 SELECT
-    CIA, YEAR, MES, PARTIDA_BS, SECCION_BS,
+    CIA, YEAR, MES,
+    PARTIDA_BS, SECCION_BS,
     CUENTA_CONTABLE, DESCRIPCION,
-    SALDO_MENSUAL,
+    CAST(SALDO_MENSUAL AS DECIMAL(28, 8)) AS SALDO_MENSUAL,
     CAST(
         SUM(SALDO_MENSUAL) OVER (
             PARTITION BY CIA, YEAR, CUENTA_CONTABLE
@@ -76,24 +122,56 @@ SELECT
             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         )
     AS DECIMAL(28, 8)) AS SALDO_CUMSUM
-FROM monthly;
+FROM dense;
 GO
 
 
 CREATE OR ALTER VIEW [FIBERTECH].[VISTA_BS_PREPARADO_CUMSUM] AS
-WITH monthly AS (
+WITH
+months(MES) AS (
+    SELECT 1  UNION ALL SELECT 2  UNION ALL SELECT 3  UNION ALL SELECT 4
+    UNION ALL SELECT 5  UNION ALL SELECT 6  UNION ALL SELECT 7  UNION ALL SELECT 8
+    UNION ALL SELECT 9  UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
+),
+cuenta_years AS (
     SELECT
-        CIA, YEAR(FECHA) AS YEAR, MES, CUENTA_CONTABLE,
+        CIA,
+        YEAR(FECHA)      AS YEAR,
+        CUENTA_CONTABLE,
         MAX(PARTIDA_BS)  AS PARTIDA_BS,
         MAX(SECCION_BS)  AS SECCION_BS,
-        MAX(DESCRIPCION) AS DESCRIPCION,
+        MAX(DESCRIPCION) AS DESCRIPCION
+    FROM [FIBERTECH].[VISTA_BS_PREPARADO]
+    GROUP BY CIA, YEAR(FECHA), CUENTA_CONTABLE
+),
+monthly AS (
+    SELECT
+        CIA,
+        YEAR(FECHA) AS YEAR,
+        MES,
+        CUENTA_CONTABLE,
         CAST(SUM(SALDO) AS DECIMAL(28, 8)) AS SALDO_MENSUAL
     FROM [FIBERTECH].[VISTA_BS_PREPARADO]
     GROUP BY CIA, YEAR(FECHA), MES, CUENTA_CONTABLE
+),
+dense AS (
+    SELECT
+        cy.CIA, cy.YEAR, m.MES,
+        cy.CUENTA_CONTABLE, cy.PARTIDA_BS, cy.SECCION_BS, cy.DESCRIPCION,
+        COALESCE(mo.SALDO_MENSUAL, 0) AS SALDO_MENSUAL
+    FROM cuenta_years cy
+    CROSS JOIN months m
+    LEFT JOIN monthly mo
+      ON  mo.CIA             = cy.CIA
+      AND mo.YEAR            = cy.YEAR
+      AND mo.CUENTA_CONTABLE = cy.CUENTA_CONTABLE
+      AND mo.MES             = m.MES
 )
 SELECT
-    CIA, YEAR, MES, PARTIDA_BS, SECCION_BS,
-    CUENTA_CONTABLE, DESCRIPCION, SALDO_MENSUAL,
+    CIA, YEAR, MES,
+    PARTIDA_BS, SECCION_BS,
+    CUENTA_CONTABLE, DESCRIPCION,
+    CAST(SALDO_MENSUAL AS DECIMAL(28, 8)) AS SALDO_MENSUAL,
     CAST(
         SUM(SALDO_MENSUAL) OVER (
             PARTITION BY CIA, YEAR, CUENTA_CONTABLE
@@ -101,24 +179,56 @@ SELECT
             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         )
     AS DECIMAL(28, 8)) AS SALDO_CUMSUM
-FROM monthly;
+FROM dense;
 GO
 
 
 CREATE OR ALTER VIEW [NEXTNET].[VISTA_BS_PREPARADO_CUMSUM] AS
-WITH monthly AS (
+WITH
+months(MES) AS (
+    SELECT 1  UNION ALL SELECT 2  UNION ALL SELECT 3  UNION ALL SELECT 4
+    UNION ALL SELECT 5  UNION ALL SELECT 6  UNION ALL SELECT 7  UNION ALL SELECT 8
+    UNION ALL SELECT 9  UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
+),
+cuenta_years AS (
     SELECT
-        CIA, YEAR(FECHA) AS YEAR, MES, CUENTA_CONTABLE,
+        CIA,
+        YEAR(FECHA)      AS YEAR,
+        CUENTA_CONTABLE,
         MAX(PARTIDA_BS)  AS PARTIDA_BS,
         MAX(SECCION_BS)  AS SECCION_BS,
-        MAX(DESCRIPCION) AS DESCRIPCION,
+        MAX(DESCRIPCION) AS DESCRIPCION
+    FROM [NEXTNET].[VISTA_BS_PREPARADO]
+    GROUP BY CIA, YEAR(FECHA), CUENTA_CONTABLE
+),
+monthly AS (
+    SELECT
+        CIA,
+        YEAR(FECHA) AS YEAR,
+        MES,
+        CUENTA_CONTABLE,
         CAST(SUM(SALDO) AS DECIMAL(28, 8)) AS SALDO_MENSUAL
     FROM [NEXTNET].[VISTA_BS_PREPARADO]
     GROUP BY CIA, YEAR(FECHA), MES, CUENTA_CONTABLE
+),
+dense AS (
+    SELECT
+        cy.CIA, cy.YEAR, m.MES,
+        cy.CUENTA_CONTABLE, cy.PARTIDA_BS, cy.SECCION_BS, cy.DESCRIPCION,
+        COALESCE(mo.SALDO_MENSUAL, 0) AS SALDO_MENSUAL
+    FROM cuenta_years cy
+    CROSS JOIN months m
+    LEFT JOIN monthly mo
+      ON  mo.CIA             = cy.CIA
+      AND mo.YEAR            = cy.YEAR
+      AND mo.CUENTA_CONTABLE = cy.CUENTA_CONTABLE
+      AND mo.MES             = m.MES
 )
 SELECT
-    CIA, YEAR, MES, PARTIDA_BS, SECCION_BS,
-    CUENTA_CONTABLE, DESCRIPCION, SALDO_MENSUAL,
+    CIA, YEAR, MES,
+    PARTIDA_BS, SECCION_BS,
+    CUENTA_CONTABLE, DESCRIPCION,
+    CAST(SALDO_MENSUAL AS DECIMAL(28, 8)) AS SALDO_MENSUAL,
     CAST(
         SUM(SALDO_MENSUAL) OVER (
             PARTITION BY CIA, YEAR, CUENTA_CONTABLE
@@ -126,24 +236,56 @@ SELECT
             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         )
     AS DECIMAL(28, 8)) AS SALDO_CUMSUM
-FROM monthly;
+FROM dense;
 GO
 
 
 CREATE OR ALTER VIEW [FIBERLUX].[VISTA_BS_PREPARADO_CUMSUM] AS
-WITH monthly AS (
+WITH
+months(MES) AS (
+    SELECT 1  UNION ALL SELECT 2  UNION ALL SELECT 3  UNION ALL SELECT 4
+    UNION ALL SELECT 5  UNION ALL SELECT 6  UNION ALL SELECT 7  UNION ALL SELECT 8
+    UNION ALL SELECT 9  UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
+),
+cuenta_years AS (
     SELECT
-        CIA, YEAR(FECHA) AS YEAR, MES, CUENTA_CONTABLE,
+        CIA,
+        YEAR(FECHA)      AS YEAR,
+        CUENTA_CONTABLE,
         MAX(PARTIDA_BS)  AS PARTIDA_BS,
         MAX(SECCION_BS)  AS SECCION_BS,
-        MAX(DESCRIPCION) AS DESCRIPCION,
+        MAX(DESCRIPCION) AS DESCRIPCION
+    FROM [FIBERLUX].[VISTA_BS_PREPARADO]
+    GROUP BY CIA, YEAR(FECHA), CUENTA_CONTABLE
+),
+monthly AS (
+    SELECT
+        CIA,
+        YEAR(FECHA) AS YEAR,
+        MES,
+        CUENTA_CONTABLE,
         CAST(SUM(SALDO) AS DECIMAL(28, 8)) AS SALDO_MENSUAL
     FROM [FIBERLUX].[VISTA_BS_PREPARADO]
     GROUP BY CIA, YEAR(FECHA), MES, CUENTA_CONTABLE
+),
+dense AS (
+    SELECT
+        cy.CIA, cy.YEAR, m.MES,
+        cy.CUENTA_CONTABLE, cy.PARTIDA_BS, cy.SECCION_BS, cy.DESCRIPCION,
+        COALESCE(mo.SALDO_MENSUAL, 0) AS SALDO_MENSUAL
+    FROM cuenta_years cy
+    CROSS JOIN months m
+    LEFT JOIN monthly mo
+      ON  mo.CIA             = cy.CIA
+      AND mo.YEAR            = cy.YEAR
+      AND mo.CUENTA_CONTABLE = cy.CUENTA_CONTABLE
+      AND mo.MES             = m.MES
 )
 SELECT
-    CIA, YEAR, MES, PARTIDA_BS, SECCION_BS,
-    CUENTA_CONTABLE, DESCRIPCION, SALDO_MENSUAL,
+    CIA, YEAR, MES,
+    PARTIDA_BS, SECCION_BS,
+    CUENTA_CONTABLE, DESCRIPCION,
+    CAST(SALDO_MENSUAL AS DECIMAL(28, 8)) AS SALDO_MENSUAL,
     CAST(
         SUM(SALDO_MENSUAL) OVER (
             PARTITION BY CIA, YEAR, CUENTA_CONTABLE
@@ -151,7 +293,7 @@ SELECT
             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
         )
     AS DECIMAL(28, 8)) AS SALDO_CUMSUM
-FROM monthly;
+FROM dense;
 GO
 
 
@@ -171,25 +313,25 @@ GO
 
 
 -- =============================================================================
--- Expected query pattern from data_service.load_bs_data:
+-- Expected query pattern from data_service.load_bs_data (post Phase C wiring):
 --
---   SELECT MES, PARTIDA_BS, SECCION_BS, CUENTA_CONTABLE, DESCRIPCION,
---          SALDO_CUMSUM
---   FROM REPORTES.VISTA_BS_PREPARADO_CUMSUM
+--   SELECT MES, PARTIDA_BS, SECCION_BS, SALDO
+--   FROM REPORTES.VISTA_BS_SUMARIO
 --   WHERE CIA = ? AND YEAR = ?;
 --
--- Returns one row per (mes, cuenta) — roughly 12 × ~500 cuentas = ~6000 rows
--- per (company, year).  Python applies BS_RECLASSIFICATION_RULES (per-cuenta
--- on the last-month SALDO_CUMSUM), aggregates to partida-grain, injects
--- UTILIDAD NETA, and emits the display structure via _build_bs_rows.
+-- Python never queries VISTA_BS_PREPARADO_CUMSUM directly — VISTA_BS_SUMARIO
+-- sits on top of it and is the only consumer.
 --
--- Validation expectation (run after deploy):
---   SELECT TOP 20 *
+-- Post-deploy verification:
+--   SELECT MES, CAST(SALDO_CUMSUM AS DECIMAL(20,2)) AS CUMSUM
 --   FROM REPORTES.VISTA_BS_PREPARADO_CUMSUM
---   WHERE CIA = 'FIBERLINE' AND YEAR = 2025 AND MES = 12
---   ORDER BY ABS(SALDO_CUMSUM) DESC;
+--   WHERE CIA = 'FIBERLINE' AND YEAR = 2025 AND CUENTA_CONTABLE = '50.1.1.1.01'
+--   ORDER BY MES;
+--   -- Expected: 12 rows, all CUMSUM = 10180068.00
 --
--- Each SALDO_CUMSUM at MES=12 should equal the SUM of SALDO_MENSUAL across
--- MES 1..12 for the same cuenta.  Spot-check 3-5 high-balance accounts
--- against the dashboard BS column for DEC.
+--   SELECT CIA, YEAR, COUNT(*) AS n_rows, COUNT(DISTINCT CUENTA_CONTABLE) AS n_cuentas
+--   FROM REPORTES.VISTA_BS_PREPARADO_CUMSUM
+--   WHERE YEAR = 2025
+--   GROUP BY CIA, YEAR;
+--   -- Expected: n_rows = n_cuentas * 12 exactly for every CIA
 -- =============================================================================

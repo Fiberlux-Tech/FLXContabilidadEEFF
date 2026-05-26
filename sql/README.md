@@ -35,7 +35,7 @@ CASE.
 | `VISTA_PNL_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_pnl` + `filter_for_statements` + `assign_partida_pl`. Returns rows with `SALDO`, `YEAR`, `MES`, `PARTIDA_PL`, `IS_INTERCOMPANY`, `IS_STATEMENT_ELIGIBLE`. **The view enriches rows; it does not filter them** — callers add `WHERE IS_STATEMENT_ELIGIBLE = 1` to get the statement subset, or leave it off to also see inventory-side accounts like `60.x` for ad-hoc Excel-via-ODBC queries (and for debugging — keeping unfiltered rows visible is how we discover new ERP accounts falling outside the `>=619` rule). |
 | `VISTA_BS_PREPARADO.sql` | 4 per-CIA views + REPORTES umbrella. Replaces `prepare_bs` + `assign_partida_bs`. Returns rows with `SALDO`, `YEAR`, `MES`, `PARTIDA_BS`, `SECCION_BS`. Does **not** do cumulative-sum or reclassification (those live in `VISTA_BS_PREPARADO_CUMSUM` and `VISTA_BS_SUMARIO`). |
 | `VISTA_PNL_SUMARIO.sql` | Phase C — pre-aggregated P&L summary. `GROUP BY CIA, YEAR, MES, PARTIDA_PL` with three SALDO columns (total / ex_ic / only_ic) computed in one pass. ~100 rows per `(CIA, YEAR)`. Filters `IS_STATEMENT_ELIGIBLE = 1` internally since aggregated rows are always statement-eligible. |
-| `VISTA_BS_PREPARADO_CUMSUM.sql` | Phase E — BS at cuenta-grain with monthly cumulative SALDO via `SUM() OVER (PARTITION BY CIA, YEAR, CUENTA ORDER BY MES)`. Stays at cuenta-grain because reclassification needs per-cuenta last-month balance. |
+| `VISTA_BS_PREPARADO_CUMSUM.sql` | Phase E — BS at cuenta-grain with monthly cumulative SALDO via `SUM() OVER (PARTITION BY CIA, YEAR, CUENTA ORDER BY MES)`. **Calendar-densified** (`cuenta_years CROSS JOIN months(1..12) LEFT JOIN monthly`) so cuentas with no activity in a month still emit a row carrying the prior cumulative balance forward. Patched 2026-05-26 to fix the gap-month bug. Stays at cuenta-grain because reclassification needs per-cuenta last-month balance. |
 | `VISTA_BS_SUMARIO.sql` | Phase C — pre-aggregated BS summary on top of `VISTA_BS_PREPARADO_CUMSUM`. Applies the three `BS_RECLASSIFICATION_RULES` + native-section sign flip, then groups to partida-grain. ~30 rows × 12 months per `(CIA, YEAR)`. |
 | `DROP_DETALLE_VIEWS.sql` | One-time drop of the redundant `VISTA_PNL_DETALLE` / `VISTA_BS_DETALLE` views the DBA deployed during Phase D exploration. The PREPARADO views (now with `YEAR`) cover the drill-down path directly. |
 | `PARITY_CHECKS.sql` | SQL-only sanity checks (coverage, section consistency, row counts). |
@@ -70,13 +70,21 @@ remaining safety net is the `POR CLASIFICAR` warning emitted by
 `prepare_pnl_from_view` whenever an unrecognised CUENTA_CONTABLE flows
 through. Watch `backend/logs/error.log` for spikes after editing rules.
 
-## Out of scope here (Phase B candidates)
+## What stays in Python after Phase C/D/E
 
-- P&L summary pivot (`pl_summary`) — easy SQL once views land.
-- BS cumulative sum across months — needs window functions.
-- BS reclassification rules (negative balance → move section) — order-sensitive
-  with the cumsum; stays in Python for now.
-- UTILIDAD NETA injection into BS — depends on P&L summary; do after the
-  PL_SUMARIO view exists.
-- Detail pivots (CECO/CUENTA/NOTA) — lazy; only worth it if profiling shows
-  these are slow.
+The five view files above cover row-level enrichment (A/B), pre-aggregation
+(C), drill-down (D, no DDL), and cumsum (E). These bits stay in Python because
+they're either presentation, cross-statement, or trivially small:
+
+- **`build_pl_rows`** (statements.py) — the P&L display structure: UTILIDAD
+  BRUTA / UTILIDAD OPERATIVA / UTILIDAD NETA subtotal rows. Presentation.
+- **`_build_bs_rows`** + `BS_PARTIDA_ORDER` + CORRIENTE / NO CORRIENTE split.
+  Pure display ordering.
+- **UTILIDAD NETA injection into BS PATRIMONIO** (`extract_utilidad_neta`).
+  Crosses the P&L/BS boundary; 5 lines in Python. Without it, the BS shows
+  no `Resultados del Ejercicio` row (which is why `VISTA_BS_SUMARIO`
+  TOTAL PASIVO+PATRIMONIO doesn't balance against TOTAL ACTIVO on its own).
+- **BS-balance validation** (`_validate_bs_balance`). One assertion at the
+  edge of the pipeline.
+- **Detail pivots** (CECO / CUENTA / NOTA) — lazy, computed from already-cached
+  prepared data, sub-100ms. Only worth a view if profiling shows them slow.
