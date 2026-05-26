@@ -15,6 +15,8 @@
 --   CENTRO_COSTO, DESC_CECO, FECHA, ASIENTO,
 --   DEBITO_LOCAL, CREDITO_LOCAL, FUENTE, CONTABILIDAD,
 --   SALDO        DECIMAL(28,8)   -- DEBITO-CREDITO for classes 1/2/3, else CREDITO-DEBITO
+--   YEAR         INT             -- YEAR(FECHA), so callers filter on
+--                                   (CIA, YEAR) without recomputing.
 --   MES          INT             -- MONTH(FECHA)
 --   PARTIDA_BS   VARCHAR(60)     -- override→2-char dict→POR DEFINIR fallback
 --   SECCION_BS   VARCHAR(12)     -- ACTIVO / PASIVO / PATRIMONIO
@@ -55,6 +57,7 @@ SELECT
         END
     AS DECIMAL(28, 8)) AS SALDO,
 
+    YEAR(FECHA)  AS YEAR,
     MONTH(FECHA) AS MES,
 
     -- PARTIDA_BS (transforms.py:201-227)
@@ -136,6 +139,7 @@ SELECT
         CASE WHEN FIRST_CHAR IN ('1','2','3') THEN DEBITO_LOCAL - CREDITO_LOCAL
              ELSE CREDITO_LOCAL - DEBITO_LOCAL END
     AS DECIMAL(28, 8)) AS SALDO,
+    YEAR(FECHA)  AS YEAR,
     MONTH(FECHA) AS MES,
     CASE
         WHEN CUENTA_CONTABLE LIKE '16.7.1.1.01%' THEN 'Tributos por Pagar'
@@ -211,6 +215,7 @@ SELECT
         CASE WHEN FIRST_CHAR IN ('1','2','3') THEN DEBITO_LOCAL - CREDITO_LOCAL
              ELSE CREDITO_LOCAL - DEBITO_LOCAL END
     AS DECIMAL(28, 8)) AS SALDO,
+    YEAR(FECHA)  AS YEAR,
     MONTH(FECHA) AS MES,
     CASE
         WHEN CUENTA_CONTABLE LIKE '16.7.1.1.01%' THEN 'Tributos por Pagar'
@@ -286,6 +291,7 @@ SELECT
         CASE WHEN FIRST_CHAR IN ('1','2','3') THEN DEBITO_LOCAL - CREDITO_LOCAL
              ELSE CREDITO_LOCAL - DEBITO_LOCAL END
     AS DECIMAL(28, 8)) AS SALDO,
+    YEAR(FECHA)  AS YEAR,
     MONTH(FECHA) AS MES,
     CASE
         WHEN CUENTA_CONTABLE LIKE '16.7.1.1.01%' THEN 'Tributos por Pagar'

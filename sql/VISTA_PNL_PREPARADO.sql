@@ -20,10 +20,18 @@
 --   CENTRO_COSTO, DESC_CECO, FECHA, ASIENTO,
 --   DEBITO_LOCAL, CREDITO_LOCAL, FUENTE, CONTABILIDAD,
 --   SALDO                  DECIMAL(28,8)  -- CREDITO_LOCAL - DEBITO_LOCAL
+--   YEAR                   INT            -- YEAR(FECHA), so callers filter on
+--                                            (CIA, YEAR) without recomputing.
 --   MES                    INT            -- MONTH(FECHA)
 --   PARTIDA_PL             VARCHAR(40)    -- 15-rule classification (np.select order)
 --   IS_INTERCOMPANY        BIT
---   IS_STATEMENT_ELIGIBLE  BIT            -- 1 = belongs to the P&L statement
+--   IS_STATEMENT_ELIGIBLE  BIT            -- 1 = belongs to the P&L statement.
+--                                            View does NOT filter on this flag.
+--                                            Callers add WHERE IS_STATEMENT_ELIGIBLE = 1
+--                                            for the statement subset; keeping the
+--                                            unfiltered rows visible lets us discover
+--                                            new ERP accounts that fall outside the
+--                                            >=619 rule when debugging.
 --
 -- IS_STATEMENT_ELIGIBLE rule (mirrors transforms.filter_for_statements):
 --   1 when CAST(LEFT(REPLACE(CUENTA_CONTABLE, '.', ''), 3) AS INT) >= 619
@@ -54,6 +62,7 @@ SELECT
     DEBITO_LOCAL, CREDITO_LOCAL, FUENTE, CONTABILIDAD,
 
     CAST(CREDITO_LOCAL - DEBITO_LOCAL AS DECIMAL(28, 8)) AS SALDO,
+    YEAR(FECHA)  AS YEAR,
     MONTH(FECHA) AS MES,
 
     -- PARTIDA_PL — mirrors transforms.py:112-145 (np.select, first match wins)
@@ -141,6 +150,7 @@ SELECT
     CENTRO_COSTO, DESC_CECO, FECHA, ASIENTO,
     DEBITO_LOCAL, CREDITO_LOCAL, FUENTE, CONTABILIDAD,
     CAST(CREDITO_LOCAL - DEBITO_LOCAL AS DECIMAL(28, 8)) AS SALDO,
+    YEAR(FECHA)  AS YEAR,
     MONTH(FECHA) AS MES,
     CASE
         WHEN CUENTA_CONTABLE IN ('68.9.9.1.01', '68.7.1.1.01') THEN 'PROVISION INCOBRABLE'
@@ -197,6 +207,7 @@ SELECT
     CENTRO_COSTO, DESC_CECO, FECHA, ASIENTO,
     DEBITO_LOCAL, CREDITO_LOCAL, FUENTE, CONTABILIDAD,
     CAST(CREDITO_LOCAL - DEBITO_LOCAL AS DECIMAL(28, 8)) AS SALDO,
+    YEAR(FECHA)  AS YEAR,
     MONTH(FECHA) AS MES,
     CASE
         WHEN CUENTA_CONTABLE IN ('68.9.9.1.01', '68.7.1.1.01') THEN 'PROVISION INCOBRABLE'
@@ -253,6 +264,7 @@ SELECT
     CENTRO_COSTO, DESC_CECO, FECHA, ASIENTO,
     DEBITO_LOCAL, CREDITO_LOCAL, FUENTE, CONTABILIDAD,
     CAST(CREDITO_LOCAL - DEBITO_LOCAL AS DECIMAL(28, 8)) AS SALDO,
+    YEAR(FECHA)  AS YEAR,
     MONTH(FECHA) AS MES,
     CASE
         WHEN CUENTA_CONTABLE IN ('68.9.9.1.01', '68.7.1.1.01') THEN 'PROVISION INCOBRABLE'
