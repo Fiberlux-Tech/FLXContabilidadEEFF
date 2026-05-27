@@ -119,10 +119,10 @@ Two layers, each serving a different purpose:
 
 | Layer | Location | TTL | Purpose |
 |-------|----------|-----|---------|
-| **In-memory** | `data_service.py` | 30 min | Fast dashboard reloads without DB queries |
-| **File-based** | `backend/data/.cache/` (CSV) | 30 days | Previous-year P&L/BS data (changes rarely) |
+| **In-memory** | `data_service.py` (LRU+TTL) | 30 min | Fast dashboard reloads without DB queries |
+| **File-based** | `backend/.stmt_cache/` (pickle) | on-demand fill, no TTL | Cold-start path for prepared P&L/BS DataFrames |
 
-All in-memory caches are keyed by `(company, year)` and protected by `threading.Lock`.
+All in-memory caches are keyed by `(company, year)` and protected by `threading.Lock`; cross-worker concurrent fills are deduped by an `fcntl` flock (`/tmp/flx_inflight_*.lock`). The disk pickle layer is slated for removal in SQL views Phase C+1 (see [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md)) once Phase C shrinks the cached payload to ~10 KB.
 
 ## Accounting Logic Boundary
 

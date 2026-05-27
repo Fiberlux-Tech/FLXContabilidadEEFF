@@ -129,9 +129,10 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 **Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net once the Python deletion lands. The chosen gate is a one-shot Python diff script (not committed) that fetches both paths for each `(CIA, YEAR)` and asserts to-the-centavo equivalence before the deletion commit; ongoing drift detection falls back to finance users noticing wrong totals on the dashboard. The `POR CLASIFICAR` warning in `prepare_pnl_from_view` is still the early-warning canary for source-data changes.
 
 **Cleanup folded into Phase C.**
-- Remove the stale `/tmp/flx_refresh.lock` on prod + staging hosts (0-byte leftover from the deleted scheduler, 2026-05-24). Ops one-liner: `rm -f /tmp/flx_refresh.lock`.
-- Update [docs/ARCHITECTURE.md](ARCHITECTURE.md) caching-strategy section: replace `backend/data/.cache/` (wrong path) → `backend/.stmt_cache/`; replace "30 days file-based" → "on-demand fill, no TTL"; drop any scheduler reference.
-- DBA: drop the orphan `[REPORTES].[VISTA_BS_DETALLE]` view (its 4 per-CIA sources were dropped but the umbrella survived). `sql/DROP_DETALLE_VIEWS.sql` is idempotent.
+- ~~Remove the stale `/tmp/flx_refresh.lock`~~ — done (was gone by 2026-05-26 audit; nothing left to remove). The `/tmp/flx_inflight_*.lock` files from `_CrossProcLock` are *not* stale — those go away in Phase C+1 when the flock layer is deleted.
+- ~~Update [docs/ARCHITECTURE.md](ARCHITECTURE.md) caching-strategy section~~ — done 2026-05-26: now reflects `backend/.stmt_cache/`, on-demand fill, and links forward to Phase C+1 for the disk-layer removal.
+- DBA: drop the orphan `[REPORTES].[VISTA_BS_DETALLE]` view (its 4 per-CIA sources were dropped but the umbrella survived). One-shot ask, not a script — the DDL is just `DROP VIEW IF EXISTS [REPORTES].[VISTA_BS_DETALLE];`. (Earlier draft referenced a `sql/DROP_DETALLE_VIEWS.sql` file; that was never actually written and the one-liner doesn't justify one.)
+- ~~Done 2026-05-26: `data/fetcher.py` lost the `need_pdf` parameter and the `eligible_only=False` raw-pivot branches; `fetch_all_data` now returns only `(raw_current_full, raw_bs)` for the one live caller, and `data_service.py` dropped the unread `_caches["raw"]` writer.~~
 - (Earlier draft listed "delete `force_refresh` ignore plumbing" — that turned out to be real user-facing functionality, not scheduler leftover; nothing to delete.)
 
 ### Phase D — drill-down via paginated SQL  (the move that unlocks deleting the row-level df cache)

@@ -189,7 +189,6 @@ _caches: dict[str, LRUTTLCache] = {
     "result": LRUTTLCache("result"),
     "df": LRUTTLCache("df", max_entries=6),
     "bs": LRUTTLCache("bs", max_entries=6),
-    "raw": LRUTTLCache("raw", max_entries=6),
     "pl_result": LRUTTLCache("pl_result"),
     "bs_result": LRUTTLCache("bs_result"),
     "pl_df": LRUTTLCache("pl_df"),
@@ -630,10 +629,8 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
 
     t0 = time.perf_counter()
 
-    # Single fetch — gets P&L + BS + previous year data
-    raw, raw_current_full, raw_prev, raw_bs, raw_bs_prev = fetch_all_data(
-        company, year, None, need_pdf=False,
-    )
+    # Single fetch — gets P&L + BS for the current year
+    raw_current_full, raw_bs = fetch_all_data(company, year, None)
 
     logger.info("Data fetch: %.2fs (%d PnL rows, %d BS rows)", time.perf_counter() - t0, len(raw_current_full), len(raw_bs))
 
@@ -665,8 +662,6 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
     _caches["pl_preagg"].set(company, year, preaggregate(df_stmt))
     if df_bs is not None:
         _caches["bs"].set(company, year, df_bs)
-    _caches["raw"].set(company, year, (raw, raw_current_full, raw_prev, raw_bs, raw_bs_prev))
-
     # Cross-populate split caches so split endpoints get instant hits
     _caches["pl_df"].set(company, year, pl)
     # pl_result for the summary-only fast path
@@ -693,11 +688,10 @@ def _run_pl_summary_only(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, 
     Returns (df_stmt, preagg, pl_df, summary_records_dict).
 
     raw_current_full comes from VISTA_PNL_PREPARADO and already has SALDO,
-    MES, PARTIDA_PL, and IS_INTERCOMPANY computed in SQL. If it was fetched
-    with eligible_only=False (the shared fetch_all_data path used by exports),
-    we subset to IS_STATEMENT_ELIGIBLE = 1 here; the fast path
-    (fetch_pnl_only, eligible_only=True default) already returns only the
-    eligible subset.
+    MES, PARTIDA_PL, and IS_INTERCOMPANY computed in SQL. Both fetch paths
+    (fetch_all_data and fetch_pnl_only) default to eligible_only=True, so
+    IS_STATEMENT_ELIGIBLE is normally already filtered in SQL; the subset
+    below is defensive in case the column is still present.
     """
     df_stmt = prepare_pnl_from_view(raw_current_full)
     if "IS_STATEMENT_ELIGIBLE" in df_stmt.columns:
