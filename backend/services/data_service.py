@@ -23,6 +23,7 @@ import pandas as pd
 
 from data.fetcher import (
     fetch_all_data, fetch_pnl_only, fetch_bs_only,
+    fetch_pnl_summary_only, fetch_bs_summary_only,
 )
 from accounting.transforms import prepare_pnl_from_view, prepare_bs_from_view
 from accounting.aggregation import (
@@ -33,7 +34,7 @@ from accounting.aggregation import (
     detail_proveedores_by_ceco, ALLOWED_PROVEEDORES_CECOS,
     bs_detail_by_cuenta, bs_top20_by_nit, append_total_row,
 )
-from accounting.statements import pl_summary, bs_summary
+from accounting.statements import pl_summary_from_view, bs_summary_from_view
 from accounting.notes import BS_DETAIL_ENTRIES
 from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MIN_YEAR
 from config.company import VALID_COMPANIES
@@ -637,12 +638,16 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
     t1 = time.perf_counter()
 
     # P&L transforms — reuse _run_pl_transforms (shared with load_pl_data)
-    df_stmt, pl, pl_records = _run_pl_transforms(raw_current_full)
+    df_stmt, pl, pl_records = _run_pl_transforms(raw_current_full, company, year)
 
-    # BS transforms — no month filtering; cumsum carries balances forward naturally
+    # BS transforms — no month filtering; cumsum carries balances forward naturally.
+    # df_bs is still derived from the row-level fetch (raw_bs) because the BS
+    # note tables in load_bs_data and the row-level cache at _caches["bs"] rely
+    # on it.  The summary itself comes from VISTA_BS_SUMARIO (Phase C).
     df_bs = prepare_bs_from_view(raw_bs) if not raw_bs.empty else None
     if df_bs is not None:
-        bs = bs_summary(df_bs, include_detail=False, pl_summary_df=pl)
+        bs_long = fetch_bs_summary_only(company, year)
+        bs = bs_summary_from_view(bs_long, pl_summary_df=pl)
     else:
         bs = pd.DataFrame()
 
@@ -682,29 +687,25 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
 
 # ── Split P&L / BS loading (fast dashboard path) ──────────────────────
 
-def _run_pl_summary_only(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+def _run_pl_summary_only(raw_current_full: pd.DataFrame, company: str, year: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     """Fast path: prepare data + compute only P&L summaries (no detail pivots).
 
     Returns (df_stmt, preagg, pl_df, summary_records_dict).
 
-    raw_current_full comes from VISTA_PNL_PREPARADO and already has SALDO,
-    MES, PARTIDA_PL, and IS_INTERCOMPANY computed in SQL. Both fetch paths
-    (fetch_all_data and fetch_pnl_only) default to eligible_only=True, so
-    IS_STATEMENT_ELIGIBLE is normally already filtered in SQL; the subset
-    below is defensive in case the column is still present.
+    raw_current_full comes from VISTA_PNL_PREPARADO and is kept for the
+    detail/drill-down path (cached as df_stmt by callers).  The three P&L
+    summaries themselves are built from VISTA_PNL_SUMARIO via a single
+    SQL roundtrip — one row returns SALDO_TOTAL / SALDO_EX_IC / SALDO_ONLY_IC.
     """
     df_stmt = prepare_pnl_from_view(raw_current_full)
     if "IS_STATEMENT_ELIGIBLE" in df_stmt.columns:
         df_stmt = df_stmt[df_stmt["IS_STATEMENT_ELIGIBLE"].astype(bool)].copy()
     preagg = preaggregate(df_stmt)
 
-    pl = pl_summary(df_stmt)
-    pl_ex_ic = pl_summary(df_stmt[~df_stmt[IS_INTERCOMPANY]])
-    pl_only_ic = pl_summary(df_stmt[df_stmt[IS_INTERCOMPANY]])
-
-    pl = ensure_month_columns(pl)
-    pl_ex_ic = ensure_month_columns(pl_ex_ic)
-    pl_only_ic = ensure_month_columns(pl_only_ic)
+    summaries = pl_summary_from_view(fetch_pnl_summary_only(company, year))
+    pl         = ensure_month_columns(summaries["total"])
+    pl_ex_ic   = ensure_month_columns(summaries["ex_ic"])
+    pl_only_ic = ensure_month_columns(summaries["only_ic"])
 
     records = {
         "pl_summary": _df_to_records(pl),
@@ -714,13 +715,13 @@ def _run_pl_summary_only(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, 
     return df_stmt, preagg, pl, records
 
 
-def _run_pl_transforms(raw_current_full: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+def _run_pl_transforms(raw_current_full: pd.DataFrame, company: str, year: int) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Full P&L transform pipeline: summaries + all detail sections.
 
     Returns (df_stmt, pl_df, all_records_dict).
     Used by load_report_data (exports / full-load path).
     """
-    df_stmt, preagg, pl, records = _run_pl_summary_only(raw_current_full)
+    df_stmt, preagg, pl, records = _run_pl_summary_only(raw_current_full, company, year)
 
     # Compute IC preaggs once for the whole loop (this is the cold "everything
     # at once" path — no in-memory cache to populate).
@@ -773,8 +774,9 @@ def _try_pl_stmt_from_disk(company: str, year: int):
     _caches["pl_preagg_ex_ic"].set(company, year, preagg_ex_ic)
     _caches["pl_preagg_only_ic"].set(company, year, preagg_only_ic)
     _caches["df"].set(company, year, df_stmt)
-    pl = pl_summary(df_stmt)
-    pl = ensure_month_columns(pl)
+    pl = ensure_month_columns(
+        pl_summary_from_view(fetch_pnl_summary_only(company, year))["total"]
+    )
     _caches["pl_df"].set(company, year, pl)
     return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
 
@@ -830,7 +832,7 @@ def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = Fal
             raw = fetch_pnl_only(company, year)
             logger.info("P&L fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
 
-            df_stmt, preagg, pl, _ = _run_pl_summary_only(raw)
+            df_stmt, preagg, pl, _ = _run_pl_summary_only(raw, company, year)
             preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
             preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
 
@@ -874,14 +876,12 @@ def load_pl_data(company: str, year: int, *, force_refresh: bool = False) -> dic
 
     df_stmt, _, _, _ = _ensure_pl_stmt_cached(company, year, force_refresh=force_refresh)
 
-    # Compute summaries from cached df_stmt
-    pl = pl_summary(df_stmt)
-    pl_ex_ic = pl_summary(df_stmt[~df_stmt[IS_INTERCOMPANY]])
-    pl_only_ic = pl_summary(df_stmt[df_stmt[IS_INTERCOMPANY]])
-
-    pl = ensure_month_columns(pl)
-    pl_ex_ic = ensure_month_columns(pl_ex_ic)
-    pl_only_ic = ensure_month_columns(pl_only_ic)
+    # Compute summaries from VISTA_PNL_SUMARIO — one SQL roundtrip returns all
+    # three IC variants.  df_stmt stays cached for the detail/drill-down path.
+    summaries = pl_summary_from_view(fetch_pnl_summary_only(company, year))
+    pl         = ensure_month_columns(summaries["total"])
+    pl_ex_ic   = ensure_month_columns(summaries["ex_ic"])
+    pl_only_ic = ensure_month_columns(summaries["only_ic"])
 
     result = {
         "pl_summary": _df_to_records(pl),
@@ -1020,8 +1020,12 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
 
             t1 = time.perf_counter()
             if not raw_bs.empty:
+                # df_bs (row-level) stays for the note tables + NIT rankings below
+                # and for the _caches["bs"] writer further down (still consumed by
+                # get_detail_records until Phase D ships paginated drill-down).
                 df_bs = prepare_bs_from_view(raw_bs)
-                bs = bs_summary(df_bs, include_detail=False, pl_summary_df=pl_df)
+                bs_long = fetch_bs_summary_only(company, year)
+                bs = bs_summary_from_view(bs_long, pl_summary_df=pl_df)
             else:
                 df_bs = None
                 bs = pd.DataFrame()

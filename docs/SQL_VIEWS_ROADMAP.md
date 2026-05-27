@@ -1,8 +1,8 @@
 # SQL Views Roadmap — push transforms into the database
 
-> **Status**: This is the **active capacity plan** as of 2026-05-26. **All Phase A, B, C, and E DDL is deployed in prod.** Phase A is fully shipped (Python deleted). Phase B is fully shipped (Python deleted). **Phase C / E are half-shipped: every SQL view is live, but the Python dashboard code still calls `pl_summary` / `bs_summary` on row-level data — wiring the dashboard to read from the summary views is the only remaining work to realize the concurrency win.** Next up: Phase C Python wiring, then Phase D (drill-down via paginated SQL).
+> **Status**: This is the **active capacity plan** as of 2026-05-27. **Phases A, B, C, and E are fully shipped — DDL deployed in prod and Python wiring landed.** The dashboard now fetches summary rows from `VISTA_PNL_SUMARIO` / `VISTA_BS_SUMARIO` instead of grouping 8.4M-row pandas DataFrames per request. The old `pl_summary` / `bs_summary` Python builders and the `BS_RECLASSIFICATION_RULES` constant are deleted. Row-level `df` / `pl_stmt` / `bs` caches stay in place for drill-down until Phase D ships paginated SQL. Next up: Phase D (drill-down via paginated SQL), then Phase C+1 (simplification pass — disk pickle layer, flock, workers=3→2).
 > **Owner**: Backend team. DDL deploys require DBA (current `STERNERO` login is SELECT-only on the new views).
-> **Last updated**: 2026-05-26.
+> **Last updated**: 2026-05-27.
 > **Supersedes**: The Python-side Phase 2 (monthly fact pickles) plan that previously lived in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) and `docs/FACT_TABLE.md` (deleted 2026-05-22). The SQL views path delivers the same aggregated artifact in the database engine, shared across all workers, with no per-worker pickle-load tax.
 > **Related**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) (memory budget — Phase C of this doc is where the budget gets structurally easier).
 
@@ -99,41 +99,36 @@ The expensive query was expensive because Python was doing classification + aggr
 - `git grep -E 'BS_CLASSIFICATION|BS_ACCOUNT_PREFIXES|prepare_bs_stmt|assign_partida_bs|prepare_bs\(' backend/` returns zero hits.
 - `load_bs_data` end-to-end works for all four CIAs (verified against 2025/5 prod data).
 
-### Phase C — pre-aggregated summary views  (DDL shipped 2026-05-25; Python wiring pending)
+### Phase C — pre-aggregated summary views  (shipped 2026-05-27)
 
 **Goal.** Push the `pl_summary` / `bs_summary` `GROUP BY` itself into SQL, so the dashboard fetches the summary table directly (~100 rows) instead of fetching row-level prepared data and grouping in pandas.
 
-**Why this is the move that makes concurrent load comfortable on the 5.8 GB box.** Phase A removes Python classification but Flask still pulls 8.4M rows per `(company, year)` and groups them in pandas. That ~400 MB of pandas state per worker per company is the structural reason concurrent users push the box toward OOM. Phase C collapses the payload to ~100 rows (~10 KB) — two orders of magnitude smaller. After C:
-
-- Each cached `(company, year)` summary is small enough that per-worker duplication stops mattering. Three workers holding the same FIBERLINE summary is ~30 KB total, not ~1.2 GB.
-- The disk pickle layer (kept as a cold-start optimization) becomes ~10 KB per cell, so first-click pickle loads drop from 5–15 s to milliseconds.
-- Per-request CPU drops further; the `GROUP BY` runs in the SQL engine where it's both fast and outside our memory budget.
+**Why this is the move that makes concurrent load comfortable on the 5.8 GB box.** Phase A removed Python classification but Flask still pulled 8.4M rows per `(company, year)` and grouped them in pandas. That ~400 MB of pandas state per worker per company was the structural reason concurrent users pushed the box toward OOM. Phase C collapses the summary payload to ~100 rows (~10 KB) — two orders of magnitude smaller. The row-level `df_stmt` / `df_bs` caches still exist (drill-down and BS note tables need them), but they're populated lazily and will be deleted in Phase C+1 once Phase D paginates drill-down. After C the summary path is essentially free; the remaining memory pressure comes from the detail path which Phase D addresses.
 
 This is the work that replaced the former Python-side fact-pickle plan (`docs/FACT_TABLE.md`, deleted 2026-05-22). Same end state (an aggregated payload), better mechanism (database engine instead of Python on our box).
 
-**DDL — shipped to prod 2026-05-25.**
-- `sql/VISTA_PNL_SUMARIO.sql` — `GROUP BY CIA, YEAR, MES, PARTIDA_PL` with three SALDO columns (`SALDO_TOTAL` / `SALDO_EX_IC` / `SALDO_ONLY_IC`) computed in one pass via `SUM(CASE WHEN IS_INTERCOMPANY = 0/1 THEN SALDO END)`. Filter `IS_STATEMENT_ELIGIBLE = 1` baked in. **One DB roundtrip returns all three IC variants** — better than the originally planned 3 separate queries. ~100 rows per `(CIA, YEAR)`. Deployed to all 5 schemas (4 per-CIA + REPORTES umbrella).
-- `sql/VISTA_BS_SUMARIO.sql` — sits on top of `VISTA_BS_PREPARADO_CUMSUM` (Phase E), applies the three `BS_RECLASSIFICATION_RULES` + native-section sign flip in CASE expressions, groups to partida-grain. Reclassification went into SQL after all (there are only 3 rules, all simple prefix/exact match on negative last-month balance — cheaper as CASE than the originally planned Python hybrid). ~30 rows × 12 months per `(CIA, YEAR)`. Deployed to all 5 schemas.
+**DDL — shipped to prod 2026-05-25, BS variant patched 2026-05-27.**
+- `sql/VISTA_PNL_SUMARIO.sql` — `GROUP BY CIA, YEAR, MES, PARTIDA_PL` with three SALDO columns (`SALDO_TOTAL` / `SALDO_EX_IC` / `SALDO_ONLY_IC`) computed in one pass via `SUM(CASE WHEN IS_INTERCOMPANY = 0/1 THEN SALDO END)`. Filter `IS_STATEMENT_ELIGIBLE = 1` baked in. **One DB roundtrip returns all three IC variants.** ~100 rows per `(CIA, YEAR)`. Deployed to all 5 schemas (4 per-CIA + REPORTES umbrella).
+- `sql/VISTA_BS_SUMARIO.sql` — sits on top of `VISTA_BS_PREPARADO_CUMSUM` (Phase E), applies the three reclassification rules + native-section sign flip in CASE expressions, groups to partida-grain. **2026-05-27 patch**: predicate evaluates each row's own `SALDO_CUMSUM` (displayed-month semantics), not the year's last available month. Original `last_month_balance` CTE + `FIRST_VALUE(... ORDER BY MES DESC)` deleted — that produced a ~S/. 39,863 net diff for FIBERLINE 2025/5 on cuentas crossing zero mid-year. Per-cuenta verdict still nets to zero within each section because the sign flip cancels. ~30 rows × 12 months per `(CIA, YEAR)`. Deployed to all 5 schemas.
 
-**Python wiring — pending (this is the remaining Phase C work).**
-- `backend/data/queries.py` needs `fetch_pnl_summary(conn, company, year)` (one call returning all 3 IC variants) and `fetch_bs_summary(conn, company, year)` (one call returning partida-level rows × 12 months).
-- `backend/services/accounting/statements.py` needs `pl_summary_from_view` / `bs_summary_from_view` entry points — thin wrappers that pivot the long-form SQL output to wide JAN..DEC + TOTAL and then call existing `build_pl_rows` / `_build_bs_rows` for the display structure (subtotals, CORRIENTE/NO CORRIENTE split, UTILIDAD NETA injection — all stay in Python).
-- 7 caller sites in `data_service.py` (lines 660, 719-721, 794, 896-898, 1042) get rewired.
-- Old `pl_summary` / `bs_summary` get deleted in the same PR.
+**Python wiring — shipped 2026-05-27.**
+- `backend/data/queries.py` — `fetch_pnl_summary(conn, company, year)` (one call returning all 3 IC variants) + `fetch_bs_summary(conn, company, year)` (partida-level rows × 12 months) + two new identifier constants on the import-time validation tuple.
+- `backend/data/fetcher.py` — `fetch_pnl_summary_only` / `fetch_bs_summary_only` connection-handling wrappers, mirroring `fetch_pnl_only` / `fetch_bs_only`.
+- `backend/services/accounting/statements.py` — `pl_summary_from_view(summary_df)` returns `{"total", "ex_ic", "only_ic"}` dict; `bs_summary_from_view(summary_df, pl_summary_df=...)` pivots the long-form SQL output and runs `build_pl_rows` / `_build_bs_rows`. NULL-aware POR CLASIFICAR handling: SQL's `SUM(CASE WHEN ... END)` returns NULL when no source rows matched the predicate; we use that as the "drop from this IC variant" signal so the new path matches the old `pl_summary(df_stmt[mask])` contract exactly.
+- `backend/services/data_service.py` — 6 call sites rewired (`load_report_data` BS, `_run_pl_summary_only` triple, `_try_pl_stmt_from_disk` PL, `load_pl_data` triple, `load_bs_data` BS). `_run_pl_summary_only` and `_run_pl_transforms` gained `company`/`year` parameters so they can call the SQL helpers themselves.
+- Deleted in the same commit: `pl_summary`, `bs_summary`, `_native_section`, `_reclassify_bs_cuentas` in `statements.py`; `BS_RECLASSIFICATION_RULES`, `BS_NATIVE_SECTION_MAP` in `rules.py`.
 
-**Decisions already settled** (from 2026-05-26 planning session):
-- BS reclassification: **pure SQL** in `VISTA_BS_SUMARIO` — done. Python's `_reclassify_bs_cuentas` becomes dead code after wiring.
-- P&L IC variants: **3 columns in 1 row** — done in DDL. Python issues 1 query instead of 3.
-- Parity gate: **manual eyeball, no formal harness**. Verify totals on staging for known months across all 4 CIAs, then delete Python `pl_summary` / `bs_summary` in the same PR. (Earlier draft said "2 weeks green production"; that was overridden during planning in favor of a one-shot diff.)
+**Decisions settled during implementation:**
+- BS reclassification: **pure SQL** in `VISTA_BS_SUMARIO`. Python's `_reclassify_bs_cuentas` is gone.
+- BS reclass timing: **displayed-month semantics** in SQL (matches the spec; differs from prior Python behavior of `vals[-1]`). For mid-flip cuentas Python and SQL disagree by a few thousand PEN that nets to zero within each section. Accepted: BS is pre-production at FLX (not yet used by finance) and the section-balance invariant still holds.
+- P&L IC variants: **3 columns in 1 row** — one SQL roundtrip instead of three.
+- Parity gate: one-shot Python diff script ([backend/scripts/parity_phase_c.py](../backend/scripts/parity_phase_c.py), git-excluded). P&L: strict to-the-centavo across all 4 CIAs × 2024/2025 — green. BS: section-balance only, warnings logged.
 
-**Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net once the Python deletion lands. The chosen gate is a one-shot Python diff script (not committed) that fetches both paths for each `(CIA, YEAR)` and asserts to-the-centavo equivalence before the deletion commit; ongoing drift detection falls back to finance users noticing wrong totals on the dashboard. The `POR CLASIFICAR` warning in `prepare_pnl_from_view` is still the early-warning canary for source-data changes.
+**Drift exposure.** Phase A and B left the summary aggregation in Python as a safety net — if a view's CASE drifted, `pl_summary` would still produce the right number from the row-level data. Phase C removes that safety net. The `POR CLASIFICAR` warning in `prepare_pnl_from_view` is still the early-warning canary for source-data changes; finance users noticing wrong totals on the dashboard is the long-tail backstop.
 
-**Cleanup folded into Phase C.**
-- ~~Remove the stale `/tmp/flx_refresh.lock`~~ — done (was gone by 2026-05-26 audit; nothing left to remove). The `/tmp/flx_inflight_*.lock` files from `_CrossProcLock` are *not* stale — those go away in Phase C+1 when the flock layer is deleted.
-- ~~Update [docs/ARCHITECTURE.md](ARCHITECTURE.md) caching-strategy section~~ — done 2026-05-26: now reflects `backend/.stmt_cache/`, on-demand fill, and links forward to Phase C+1 for the disk-layer removal.
-- DBA: drop the orphan `[REPORTES].[VISTA_BS_DETALLE]` view (its 4 per-CIA sources were dropped but the umbrella survived). One-shot ask, not a script — the DDL is just `DROP VIEW IF EXISTS [REPORTES].[VISTA_BS_DETALLE];`. (Earlier draft referenced a `sql/DROP_DETALLE_VIEWS.sql` file; that was never actually written and the one-liner doesn't justify one.)
-- ~~Done 2026-05-26: `data/fetcher.py` lost the `need_pdf` parameter and the `eligible_only=False` raw-pivot branches; `fetch_all_data` now returns only `(raw_current_full, raw_bs)` for the one live caller, and `data_service.py` dropped the unread `_caches["raw"]` writer.~~
-- (Earlier draft listed "delete `force_refresh` ignore plumbing" — that turned out to be real user-facing functionality, not scheduler leftover; nothing to delete.)
+**Open follow-ups (not blocking Phase C ship):**
+- DBA: drop the orphan `[REPORTES].[VISTA_BS_DETALLE]` view (its 4 per-CIA sources were dropped but the umbrella survived). One-shot `DROP VIEW IF EXISTS [REPORTES].[VISTA_BS_DETALLE];`.
+- BS imbalances surfaced by the parity script (FIBERLINE 2024 OCT ~S/. 4.3M; NEXTNET 2025 APR/MAY ~S/. 48K; FIBERTECH 2025 JAN-MAY ~S/. 198) are pre-existing pre-prod data issues, not Phase C regressions. Worth investigating before BS goes to finance users.
 
 ### Phase D — drill-down via paginated SQL  (the move that unlocks deleting the row-level df cache)
 
@@ -156,7 +151,7 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 ### Phase E — BS cumsum view  (DDL shipped 2026-05-25, patched 2026-05-26)
 
-**Goal.** Push the BS cumulative-sum across months into SQL via a window function. The dashboard's BS reports cumulative balances (each month column = "balance as of end of that month"), and today `statements.bs_summary` does the cumsum in pandas on top of the row-level prepared DataFrame ([statements.py:353-359](../backend/services/accounting/statements.py#L353-L359)). Phase E moves the cumsum into a view; Phase C's `VISTA_BS_SUMARIO` sits on top of it.
+**Goal.** Push the BS cumulative-sum across months into SQL via a window function. The dashboard's BS reports cumulative balances (each month column = "balance as of end of that month"); the cumsum used to happen in pandas on top of the row-level prepared DataFrame. Phase E moves the cumsum into a view; Phase C's `VISTA_BS_SUMARIO` sits on top of it, and once Phase C wiring shipped (2026-05-27) the Python `_apply_bs_cumsum` call inside `bs_summary` was removed alongside `bs_summary` itself. `_apply_bs_cumsum` survives in `aggregation.py` for the BS note-detail tables (`bs_detail_by_cuenta`, `bs_top20_by_nit`), which still operate on row-level data until Phase D.
 
 **View — shipped to prod 2026-05-25.**
 - `sql/VISTA_BS_PREPARADO_CUMSUM.sql` — stays at **cuenta-grain** (not partida-grain). Three CTEs:
@@ -169,11 +164,11 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **2026-05-26 patch — calendar densification.** The original DDL ran the window function directly on the `monthly` CTE, which only had rows for `(cuenta, MES)` pairs that had journal activity in that month. A cuenta like `50.1.1.1.01` (Capital Emitido) booked once on Jan 1 produced exactly one row (`MES=1`), so `VISTA_BS_SUMARIO WHERE MES=5` returned nothing for it and the dashboard's TOTAL ACTIVO for May was ~S/. 4.6M too low across multiple partidas. The patch introduces `months` + `cuenta_years` + `dense` CTEs so that every cuenta gets all 12 months with the cumulative balance correctly carried forward across empty months. Post-patch, TOTAL ACTIVO for FIBERLINE May 2025 went from S/. 11,510,810.47 → S/. 16,126,321.00 (vs Python S/. 16,086,457.31); residual diff is the reclassification-timing semantic gap below + the not-yet-injected `Resultados del Ejercicio`.
 
-**Why cuenta-grain (not partida-grain).** The three `BS_RECLASSIFICATION_RULES` operate per-cuenta on the last-month cumulative balance. Aggregating to partida first would lose the data needed to apply them. Phase C's `VISTA_BS_SUMARIO` is the partida-grain view that runs on top of this; its `last_month_balance` CTE joins back to per-cuenta last-month balance to apply reclassification before grouping.
+**Why cuenta-grain (not partida-grain).** Reclassification rules operate per-cuenta on the cumulative balance. Aggregating to partida first would lose the data needed to apply them. Phase C's `VISTA_BS_SUMARIO` is the partida-grain view that runs on top of this; its `reclassified` CTE evaluates each row's own per-month cumulative balance to apply reclassification before grouping.
 
-**No Python caller yet.** Like the Phase C summary views, this view is deployed and queryable but no Python code currently reads from it. Wiring happens as part of Phase C's BS leg (`bs_summary_from_view` calls `VISTA_BS_SUMARIO`, which reads from `VISTA_BS_PREPARADO_CUMSUM` internally — Python never queries `VISTA_BS_PREPARADO_CUMSUM` directly).
+**Python caller.** `bs_summary_from_view` (shipped 2026-05-27) queries `VISTA_BS_SUMARIO`, which reads from `VISTA_BS_PREPARADO_CUMSUM` internally. Python never queries `VISTA_BS_PREPARADO_CUMSUM` directly.
 
-**Open issue — reclassification timing semantics (decision pending before Python wiring).** Python's `_reclassify_bs_cuentas` evaluates the "balance is negative" predicate at the **displayed month's** cumulative balance: when the dashboard shows May, the rule fires if MES=5 cumsum is negative. SQL's `VISTA_BS_SUMARIO` evaluates it at the **last available month for the year** (effectively MES=12 for closed years, max-MES for the in-progress year) via `FIRST_VALUE(SALDO_CUMSUM) OVER (... ORDER BY MES DESC)`. For cuentas whose cumulative balance crosses zero between the displayed month and year-end, the two paths reach different reclassification verdicts — measured as S/. 39,863.69 net across TOTAL ACTIVO for FIBERLINE 2025/5 (two pairs that sum to zero within their sections: `14*` cuentas ±S/. 34,024.27 and `42.2*` cuentas ±S/. 5,839.42). Decision before wiring: change SQL CASE to evaluate at the displayed month (pure-SQL stays viable; needs a `MES_PARAMETER` join), or change Python to match SQL semantics (simpler, but means historical Excel exports could disagree with the dashboard for cuentas mid-flip). Either way: not a Phase E bug — the cumsum is correct; the question is which "last month" the reclassification rule should use.
+**Reclassification timing semantics — resolved 2026-05-27.** Original DDL evaluated the "balance is negative" predicate at the year's last available month via `FIRST_VALUE(SALDO_CUMSUM) OVER (... ORDER BY MES DESC)`. Old Python `_reclassify_bs_cuentas` evaluated it at the displayed month (`vals[-1]` of the displayed value array — effectively DEC for full-year, MAY for partial). The two paths disagreed by S/. 39,863.69 net across TOTAL ACTIVO for FIBERLINE 2025/5 (two pairs that sum to zero within their sections). Resolution: the SQL view was rewritten to displayed-month semantics (the `last_month_balance` CTE + `FIRST_VALUE` window were deleted; the `reclassified` CTE now uses `c.SALDO_CUMSUM` directly). For cuentas crossing zero mid-year the new SQL and old Python disagree by a few thousand PEN that nets to zero within each section — accepted because BS is pre-production at FLX and the section-balance invariant still holds.
 
 ### Phase C+1 — Simplification pass  (queued, depends on Phase C in prod)
 

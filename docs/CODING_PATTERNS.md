@@ -77,19 +77,19 @@ The accounting transformation pipeline is the core of this system. Its logic mus
 
 **Protected modules** (changes require explicit accounting justification):
 - `backend/services/accounting/rules.py` — BS classification constants, BS reclassification rules, display order, P&L display helpers (subtotal labels, detail categories). P&L row-level classification lives in the SQL view; this module no longer holds those constants.
-- `backend/services/accounting/transforms.py` — SALDO computation for BS (sign by account class), BS partida assignment (np.select priority order), and the dtype adapter `prepare_pnl_from_view` that shapes view rows for downstream aggregation. P&L SALDO / filtering / partida assignment all moved to the SQL view in Phase A.
-- `backend/services/accounting/statements.py` — P&L row structure (subtotal formulas: UTILIDAD BRUTA, OPERATIVA, NETA), BS row structure (CORRIENTE/NO CORRIENTE split, reclassification, Resultados del Ejercicio injection), balance validation (ACTIVO = PASIVO + PATRIMONIO)
-- `backend/services/accounting/aggregation.py` — Pivot logic (monthly sums, cumsum for BS), period aggregation, resultado financiero split (prefix "77" = ingresos)
-- `backend/data/queries.py` — SQL query construction (reads `VISTA_PNL_PREPARADO` for P&L; raw `VISTA_ANALISIS_CECOS` for BS), date range logic, closing entry exclusion
-- `sql/VISTA_PNL_PREPARADO.sql` — SQL view in `[FIBERLINE|FIBERTECH|NEXTNET|FIBERLUX].VISTA_PNL_PREPARADO` that owns P&L row-level classification (SALDO, MES, PARTIDA_PL, IS_INTERCOMPANY, IS_STATEMENT_ELIGIBLE). **Single source of truth** for P&L classification rules since Phase A Step 4. Editing the CASE blocks must be done in **all four per-CIA views**; validate by running `sql/PARITY_CHECKS.sql` and eyeballing dashboard totals against Excel for a known-good month. The Python-side parity harness was deleted in Phase A Step 4 — see [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md) "Drift mitigation" for the current posture.
-- `sql/VISTA_BS_PREPARADO.sql` — DDL committed, not yet deployed; will own BS classification once Phase B ships. See [sql/README.md](../sql/README.md) for topology.
+- `backend/services/accounting/transforms.py` — dtype adapters `prepare_pnl_from_view` / `prepare_bs_from_view` that shape view rows for downstream detail aggregations. All row-level classification (SALDO, MES, PARTIDA, IS_INTERCOMPANY, IS_STATEMENT_ELIGIBLE) lives in SQL since Phase A/B.
+- `backend/services/accounting/statements.py` — P&L row structure (subtotal formulas: UTILIDAD BRUTA, OPERATIVA, NETA), BS row structure (CORRIENTE/NO CORRIENTE split, Resultados del Ejercicio injection), balance validation (ACTIVO = PASIVO + PATRIMONIO), and the view-based summary builders `pl_summary_from_view` / `bs_summary_from_view` that pivot the SUMARIO output and run the display helpers. Reclassification + sign flips happen in SQL (`VISTA_BS_SUMARIO`) since Phase C.
+- `backend/services/accounting/aggregation.py` — Detail pivots (per-CECO, per-cuenta, NIT top-20, BS note tables), monthly cumsum helper for detail paths, resultado financiero split (prefix "77" = ingresos). Summary aggregation moved to SQL in Phase C.
+- `backend/data/queries.py` — SQL query construction. Statement summaries read `VISTA_PNL_SUMARIO` / `VISTA_BS_SUMARIO` (Phase C); detail / drill-down reads `VISTA_PNL_PREPARADO` / `VISTA_BS_PREPARADO`.
+- `sql/VISTA_PNL_PREPARADO.sql` / `sql/VISTA_BS_PREPARADO.sql` — Row-level classification views. **Single source of truth** for classification rules. Editing the CASE blocks must be done in **all four per-CIA views**; validate by running `sql/PARITY_CHECKS.sql` and eyeballing dashboard totals for a known-good month. See [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md) "Drift mitigation" for the current posture.
+- `sql/VISTA_PNL_SUMARIO.sql` / `sql/VISTA_BS_SUMARIO.sql` — Pre-aggregated summary views. `VISTA_BS_SUMARIO` also owns BS reclassification + native-section sign flip (Phase C). Same per-CIA editing discipline.
 
 **Sacred invariants** (must hold true at all times):
 1. P&L SALDO = CREDITO_LOCAL − DEBITO_LOCAL (never reversed)
 2. BS SALDO: Assets (1,2,3) = DEBITO − CREDITO; Liabilities/Equity (4,5) = CREDITO − DEBITO
-3. BS accounts with negative cumulative balance are reclassified per BS_RECLASSIFICATION_RULES (sign flipped on section change)
-4. Cross-section overrides (native section ≠ assigned section) flip sign automatically
-5. P&L PARTIDA assignment in `VISTA_PNL_PREPARADO` is priority-ordered (CASE WHEN); first matching condition wins, just like the np.select it replaced. Rule order is intentional — edits must preserve priority semantics. BS PARTIDA assignment in `assign_partida_bs()` uses np.select with the same priority discipline.
+3. BS accounts with negative cumulative balance at the displayed month are reclassified in `VISTA_BS_SUMARIO` (sign flipped on section change). Three rules, in priority order — see the view's CASE expression.
+4. Cross-section overrides (native section ≠ assigned section) flip sign automatically in `VISTA_BS_SUMARIO`.
+5. P&L PARTIDA assignment in `VISTA_PNL_PREPARADO` is priority-ordered (CASE WHEN); first matching condition wins. Rule order is intentional — edits must preserve priority semantics. Same discipline for BS PARTIDA assignment in `VISTA_BS_PREPARADO`.
 6. Year-end closing entries (FUENTE LIKE 'CIERRE%') are always excluded from both P&L and BS
 7. P&L shows monthly flows; BS shows cumulative balances (cumsum applied)
 8. "Resultados del Ejercicio" in PATRIMONIO = cumulative UTILIDAD NETA from P&L

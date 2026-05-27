@@ -14,11 +14,14 @@ SQL_SCHEMA = "REPORTES"
 SQL_VIEW = "VISTA_ANALISIS_CECOS"
 SQL_VIEW_PNL_PREPARADO = "VISTA_PNL_PREPARADO"
 SQL_VIEW_BS_PREPARADO = "VISTA_BS_PREPARADO"
+SQL_VIEW_PNL_SUMARIO = "VISTA_PNL_SUMARIO"
+SQL_VIEW_BS_SUMARIO = "VISTA_BS_SUMARIO"
 
 # Validate identifiers at import time to prevent any injection via constants.
 import re as _re
 _IDENT_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-for _ident in (SQL_SCHEMA, SQL_VIEW, SQL_VIEW_PNL_PREPARADO, SQL_VIEW_BS_PREPARADO):
+for _ident in (SQL_SCHEMA, SQL_VIEW, SQL_VIEW_PNL_PREPARADO, SQL_VIEW_BS_PREPARADO,
+               SQL_VIEW_PNL_SUMARIO, SQL_VIEW_BS_SUMARIO):
     if not _IDENT_RE.match(_ident):
         raise ValueError(f"Invalid SQL identifier: {_ident!r}")
 
@@ -106,4 +109,56 @@ def fetch_bs_data(conn: pyodbc.Connection, company: str, year: int, month: int |
         raise QueryError(f"Failed to fetch BS for {company}/{year}: {exc}") from exc
 
     logger.info("Fetched %d BS rows for %s/%s", len(result), company, year)
+    return result
+
+
+def fetch_pnl_summary(conn: pyodbc.Connection, company: str, year: int) -> pd.DataFrame:
+    """Fetch the pre-aggregated P&L summary from REPORTES.VISTA_PNL_SUMARIO.
+
+    The view groups VISTA_PNL_PREPARADO by (CIA, YEAR, MES, PARTIDA_PL) and
+    returns three SALDO columns in one row: SALDO_TOTAL, SALDO_EX_IC (non-
+    intercompany only), and SALDO_ONLY_IC (intercompany only). The dashboard
+    builds all three pl_summary variants from one SQL roundtrip.
+
+    Returns ~100 rows per (company, year).
+    """
+    query = (
+        "SELECT MES, PARTIDA_PL, SALDO_TOTAL, SALDO_EX_IC, SALDO_ONLY_IC "
+        f"FROM {SQL_SCHEMA}.{SQL_VIEW_PNL_SUMARIO} "
+        "WHERE CIA = ? AND YEAR = ?"
+    )
+    params = [company, year]
+    logger.debug("PNL summary query: %s | params: %s", query, params)
+    try:
+        result = pd.read_sql(query, conn, params=params)
+    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
+        raise QueryError(f"Failed to fetch P&L summary for {company}/{year}: {exc}") from exc
+
+    logger.info("Fetched %d P&L summary rows for %s/%s", len(result), company, year)
+    return result
+
+
+def fetch_bs_summary(conn: pyodbc.Connection, company: str, year: int) -> pd.DataFrame:
+    """Fetch the pre-aggregated BS summary from REPORTES.VISTA_BS_SUMARIO.
+
+    The view sits on VISTA_BS_PREPARADO_CUMSUM, applies the three
+    reclassification rules + native-section sign flips in SQL, and groups
+    to partida-grain per month. SALDO is each month's cumulative balance
+    (sign-corrected).
+
+    Returns ~30 partidas × 12 months = ~360 rows per (company, year).
+    """
+    query = (
+        "SELECT MES, PARTIDA_BS, SECCION_BS, SALDO "
+        f"FROM {SQL_SCHEMA}.{SQL_VIEW_BS_SUMARIO} "
+        "WHERE CIA = ? AND YEAR = ?"
+    )
+    params = [company, year]
+    logger.debug("BS summary query: %s | params: %s", query, params)
+    try:
+        result = pd.read_sql(query, conn, params=params)
+    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
+        raise QueryError(f"Failed to fetch BS summary for {company}/{year}: {exc}") from exc
+
+    logger.info("Fetched %d BS summary rows for %s/%s", len(result), company, year)
     return result

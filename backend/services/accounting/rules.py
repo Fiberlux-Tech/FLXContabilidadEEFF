@@ -1,11 +1,15 @@
 """Account classification rules — P&L display helpers, BS mappings, display order.
 
-P&L row-level classification was moved to REPORTES.VISTA_PNL_PREPARADO in
-Phase A of SQL_VIEWS_ROADMAP.md; BS row-level classification was moved to
-REPORTES.VISTA_BS_PREPARADO in Phase B. What remains here is display-only:
-partida ordering, subtotal labels, CORRIENTE/NO CORRIENTE membership, and
-the cumsum-time reclassification rules that statements.bs_summary still
-applies in Python.
+All row-level classification + summary aggregation lives in SQL views now:
+  * Phase A (2026-05-24): VISTA_PNL_PREPARADO  — P&L classification
+  * Phase B (2026-05-25): VISTA_BS_PREPARADO   — BS classification
+  * Phase C (2026-05-27): VISTA_PNL_SUMARIO    — P&L summary GROUP BY
+                          VISTA_BS_SUMARIO     — BS summary + reclassification
+                                                 + cumsum + sign flip
+
+What remains here is display-only: partida ordering, subtotal labels,
+CORRIENTE/NO CORRIENTE membership, and the per-partida group tables that
+the BS note detail aggregations still use.
 """
 
 
@@ -60,27 +64,7 @@ BS_PARTIDA_ORDER = [
     "Resultados del Ejercicio",
 ]
 
-# Dynamic reclassification: accounts that move between sections when cumulative
-# SALDO is negative.  Each rule is (prefix, match_mode, target_partida, target_section).
-# match_mode: "exact" = cuenta_code must equal prefix; "prefix" = startswith.
-# Rules are evaluated in order; first match wins.
-BS_RECLASSIFICATION_RULES: list[tuple[str, str, str, str]] = [
-    ("12.2.1.1.01", "exact",  "Anticipos Recibidos",                     "PASIVO"),
-    ("14",          "prefix", "Provisiones por beneficios a empleados",   "PASIVO"),
-    ("42.2",        "prefix", "Anticipos Otorgados",                      "ACTIVO"),
-]
-
 BS_SECTION_ORDER = ["ACTIVO", "PASIVO", "PATRIMONIO"]
-
-# Maps account first character to its native BS section.
-# Used by _native_section() to determine default classification.
-BS_NATIVE_SECTION_MAP: dict[str, str] = {
-    "1": "ACTIVO",
-    "2": "ACTIVO",
-    "3": "ACTIVO",
-    "4": "PASIVO",
-    "5": "PATRIMONIO",
-}
 
 # Sub-section classification: partidas that belong to NO CORRIENTE.
 # Everything not listed here defaults to CORRIENTE for its section.

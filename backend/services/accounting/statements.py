@@ -5,14 +5,13 @@ import pandas as pd
 
 from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MONTH_NAMES_SET
 from accounting.rules import (
-    BS_SECTION_ORDER, BS_RECLASSIFICATION_RULES,
+    BS_SECTION_ORDER,
     BS_PARTIDA_ORDER,
     BS_ACTIVO_NO_CORRIENTE, BS_PASIVO_NO_CORRIENTE,
-    BS_NATIVE_SECTION_MAP,
 )
-from accounting.aggregation import TOTAL_COL, pivot_by_month, _apply_bs_cumsum, last_data_month
+from accounting.aggregation import TOTAL_COL, pivot_by_month
 from config.exceptions import DataValidationError
-from config.fields import PARTIDA_PL, PARTIDA_BS, SECCION_BS, CUENTA_CONTABLE, DESCRIPCION
+from config.fields import PARTIDA_PL, PARTIDA_BS, SECCION_BS, MES, SALDO
 
 
 logger = logging.getLogger("plantillas.statement_builder")
@@ -93,14 +92,6 @@ def build_partida_lookup(pivot, val_cols):
     partida_values = pivot[PARTIDA_PL].tolist()
     numeric_matrix = pivot[val_cols].values.astype(float)
     return {partida: numeric_matrix[i] for i, partida in enumerate(partida_values)}
-
-
-def pl_summary(df):
-    pivot = pivot_by_month(df, PARTIDA_PL, add_total=True)
-    mes_cols = [c for c in pivot.columns if c in MONTH_NAMES_SET]
-    val_cols = mes_cols + [TOTAL_COL]
-    lookup = build_partida_lookup(pivot, val_cols)
-    return build_pl_rows(lookup, val_cols)
 
 
 def _group_partidas_by_section(section_map):
@@ -249,47 +240,6 @@ def _build_bs_rows(partida_lookup, cuenta_detail, val_cols, section_map, *, incl
     return pd.DataFrame(rows, columns=[PARTIDA_BS] + val_cols)
 
 
-def _native_section(cuenta_code):
-    """Return the native BS section based on account first character."""
-    return BS_NATIVE_SECTION_MAP.get(cuenta_code[0], "PATRIMONIO")
-
-
-def _reclassify_bs_cuentas(cuenta_rows, val_cols):
-    """Apply reclassification rules and fix sign for cross-section overrides.
-
-    Returns a list of (partida, seccion, cuenta_code, label, vals) tuples
-    with reclassified entries moved to their target partida/section.
-
-    Rules are defined in BS_RECLASSIFICATION_RULES (rules.py) as
-    (prefix, match_mode, target_partida, target_section) tuples.
-    """
-    result = []
-    for partida, seccion, cuenta_code, label, vals in cuenta_rows:
-        last_val = vals[-1]
-
-        # Dynamic reclassification: move accounts with negative balance
-        reclassified = False
-        for rule_prefix, match_mode, target_partida, target_section in BS_RECLASSIFICATION_RULES:
-            matches = (cuenta_code == rule_prefix if match_mode == "exact"
-                       else cuenta_code.startswith(rule_prefix))
-            if matches and last_val < 0:
-                vals = -vals  # flip sign for section change
-                result.append((target_partida, target_section, cuenta_code, label, vals))
-                reclassified = True
-                break
-        if reclassified:
-            continue
-
-        # Static cross-section overrides: flip sign when account's native section
-        # differs from its assigned section (e.g. class 1 account assigned to PASIVO)
-        native = _native_section(cuenta_code)
-        if native != seccion:
-            vals = -vals
-
-        result.append((partida, seccion, cuenta_code, label, vals))
-    return result
-
-
 def extract_utilidad_neta(pl_df, bs_val_cols, last_month: int | None = None):
     """Extract cumulative UTILIDAD NETA from a P&L summary for the BS.
 
@@ -332,78 +282,114 @@ def extract_utilidad_neta(pl_df, bs_val_cols, last_month: int | None = None):
     return cumulative
 
 
-def bs_summary(df, *, include_detail=True, pl_summary_df=None, strict_balance=False,
-               keep_months: list[str] | None = None):
-    """BS summary with monthly cumulative columns, account detail per partida.
+# ── Phase C: view-based summary builders ─────────────────────────────────
+#
+# These read from the pre-aggregated REPORTES.VISTA_PNL_SUMARIO and
+# REPORTES.VISTA_BS_SUMARIO views (Phase C of docs/SQL_VIEWS_ROADMAP.md).
+# Classification, GROUP BY, BS cumsum, and BS reclassification all live in
+# SQL.  Python's only remaining job is to pivot MES → wide columns and run
+# the existing build_pl_rows / _build_bs_rows display-structure helpers.
 
-    Parameters
-    ----------
-    pl_summary_df : pd.DataFrame or None
-        The P&L summary DataFrame (output of ``pl_summary()``).
-        When provided, cumulative UTILIDAD NETA is injected as
-        "Resultados del Ejercicio" in PATRIMONIO.
-    strict_balance : bool
-        If True, raise DataValidationError on BS imbalance instead of warning.
-    keep_months : list[str] or None
-        Month column names to keep in the output (e.g. ["DEC"]).
-        When None all months present in the data are shown.
+
+def _pl_summary_from_long(summary_df: pd.DataFrame, saldo_col: str) -> pd.DataFrame:
+    """Build one P&L summary frame from VISTA_PNL_SUMARIO using *saldo_col*.
+
+    *saldo_col* is one of 'SALDO_TOTAL', 'SALDO_EX_IC', 'SALDO_ONLY_IC'.
+
+    SQL's SUM(CASE WHEN cond THEN val END) returns NULL when no source rows
+    matched the predicate for that (partida, month).  We use that signal to
+    distinguish "no rows existed" (drop the partida from this variant) from
+    "rows existed and netted to zero" (keep the zero row, matching the old
+    pl_summary contract that pivoted a filtered DataFrame).
     """
-    # Cuenta-level pivot (finest grain — we'll aggregate partidas from this)
-    last_month = last_data_month(df)
-    cuenta_pivot = pivot_by_month(
-        df, [PARTIDA_BS, SECCION_BS, CUENTA_CONTABLE, DESCRIPCION],
-        add_total=False,
-    )
-    cuenta_pivot, mes_cols, val_cols = _apply_bs_cumsum(
-        cuenta_pivot, keep_months, last_month=last_month,
-    )
+    # Drop partidas that had zero source rows in this IC variant — i.e. every
+    # MES is NULL.  Rows that have a 0.0 SUM (rows existed, summed to zero)
+    # are kept so the partida still appears in the display.
+    has_any_row = summary_df.groupby(PARTIDA_PL, observed=True)[saldo_col].apply(lambda s: s.notna().any())
+    keep_partidas = has_any_row[has_any_row].index
+    long = summary_df[summary_df[PARTIDA_PL].isin(keep_partidas)][[MES, PARTIDA_PL, saldo_col]].copy()
+    long[saldo_col] = long[saldo_col].fillna(0)
+    long = long.rename(columns={saldo_col: SALDO})
+    pivot = pivot_by_month(long, PARTIDA_PL, add_total=True)
+    mes_cols = [c for c in pivot.columns if c in MONTH_NAMES_SET]
+    val_cols = mes_cols + [TOTAL_COL]
+    lookup = build_partida_lookup(pivot, val_cols)
+    return build_pl_rows(lookup, val_cols)
 
-    # Build raw cuenta rows
-    partida_list = cuenta_pivot[PARTIDA_BS].tolist()
-    seccion_list = cuenta_pivot[SECCION_BS].tolist()
-    cuenta_list = cuenta_pivot[CUENTA_CONTABLE].tolist()
-    desc_list = cuenta_pivot[DESCRIPCION].tolist()
-    val_matrix = cuenta_pivot[val_cols].values.astype(float)
-    raw_rows = [
-        (partida, seccion, cuenta, f"{cuenta}  {desc}", vals)
-        for partida, seccion, cuenta, desc, vals
-        in zip(partida_list, seccion_list, cuenta_list, desc_list, val_matrix)
-    ]
 
-    # Apply dynamic reclassification
-    reclass_rows = _reclassify_bs_cuentas(raw_rows, val_cols)
+def pl_summary_from_view(summary_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Build the three P&L summary DataFrames from a VISTA_PNL_SUMARIO fetch.
 
-    # Rebuild partida lookups and cuenta detail from reclassified data
+    *summary_df* is the output of data.queries.fetch_pnl_summary (long-form,
+    one row per (MES, PARTIDA_PL) with three SALDO columns).  This function
+    pivots each SALDO column to wide JAN..DEC + TOTAL and runs build_pl_rows
+    for the display structure.
+
+    Returns a dict with keys "total" / "ex_ic" / "only_ic", each a DataFrame
+    ready for ensure_month_columns + _df_to_records at the caller.
+    """
+    return {
+        "total":   _pl_summary_from_long(summary_df, "SALDO_TOTAL"),
+        "ex_ic":   _pl_summary_from_long(summary_df, "SALDO_EX_IC"),
+        "only_ic": _pl_summary_from_long(summary_df, "SALDO_ONLY_IC"),
+    }
+
+
+def bs_summary_from_view(summary_df: pd.DataFrame, *,
+                          pl_summary_df: pd.DataFrame | None = None,
+                          strict_balance: bool = False,
+                          keep_months: list[str] | None = None) -> pd.DataFrame:
+    """Build the BS summary DataFrame from a VISTA_BS_SUMARIO fetch.
+
+    *summary_df* is the output of data.queries.fetch_bs_summary (long-form,
+    one row per (MES, PARTIDA_BS, SECCION_BS) with the sign-corrected
+    cumulative SALDO).  Reclassification + sign flips + cumsum all happened
+    in SQL — Python only pivots and renders.
+
+    *pl_summary_df* is the output of pl_summary_from_view()["total"] (or any
+    P&L summary with a "UTILIDAD NETA" row).  When provided, cumulative
+    UTILIDAD NETA is injected as "Resultados del Ejercicio" in PATRIMONIO.
+
+    *keep_months*: optional list of month column names to keep (e.g. ["DEC"]).
+    When None all 12 months are emitted.
+
+    Detail rows (cuenta-grain) are NOT included — VISTA_BS_SUMARIO is
+    partida-grain.  All live callers pass include_detail=False, so this is
+    feature-parity with bs_summary(df, include_detail=False, ...).
+    """
+    if summary_df.empty:
+        return pd.DataFrame()
+
+    pivot = pivot_by_month(summary_df, [PARTIDA_BS, SECCION_BS], add_total=False)
+    # pivot_by_month already calls ensure_month_columns → all 12 months present.
+    mes_cols = list(MONTH_NAMES_LIST)
+    val_cols = [c for c in mes_cols if keep_months is None or c in keep_months]
+
+    partida_list = pivot[PARTIDA_BS].tolist()
+    seccion_list = pivot[SECCION_BS].tolist()
+    val_matrix = pivot[val_cols].values.astype(float)
+
     zeros = np.zeros(len(val_cols))
-    partida_lookup = {}
-    section_map = {}
-    cuenta_detail = {}
-
-    for partida, seccion, cuenta_code, label, vals in reclass_rows:
-        # Accumulate partida totals
+    partida_lookup: dict[str, np.ndarray] = {}
+    section_map: dict[str, str] = {}
+    for partida, seccion, vals in zip(partida_list, seccion_list, val_matrix):
         if partida not in partida_lookup:
             partida_lookup[partida] = zeros.copy()
             section_map[partida] = seccion
         partida_lookup[partida] += vals
 
-        # Collect detail lines
-        cuenta_detail.setdefault(partida, []).append((label, vals))
-
-    # Sort detail lines by cuenta within each partida
-    for partida in cuenta_detail:
-        cuenta_detail[partida].sort(key=lambda x: x[0])
-
-    # Inject "Resultados del Ejercicio" (cumulative UTILIDAD NETA from P&L)
-    # Use ALL month columns for cumsum (same logic as BS accounts above),
-    # then pick only the display columns.
+    # Inject "Resultados del Ejercicio" (cumulative UTILIDAD NETA from P&L).
+    # Use the same last_month gating as the old bs_summary: zero out months
+    # past max(MES) so a partial-year view doesn't carry the closed cumulative
+    # into future months.
     if pl_summary_df is not None:
-        utilidad_neta_all = extract_utilidad_neta(pl_summary_df, mes_cols, last_month=last_month)
-        if utilidad_neta_all is not None:
-            # Map month names to their cumulative values
-            month_to_cum = dict(zip(mes_cols, utilidad_neta_all))
-            # Pick only the display columns (val_cols)
-            utilidad_neta = np.array([month_to_cum.get(c, 0.0) for c in val_cols])
+        last_month = int(summary_df[MES].max())
+        utilidad_neta = extract_utilidad_neta(pl_summary_df, val_cols, last_month=last_month)
+        if utilidad_neta is not None:
             partida_lookup["Resultados del Ejercicio"] = utilidad_neta
             section_map["Resultados del Ejercicio"] = "PATRIMONIO"
 
-    return _build_bs_rows(partida_lookup, cuenta_detail, val_cols, section_map, include_detail=include_detail, strict_balance=strict_balance)
+    return _build_bs_rows(
+        partida_lookup, {}, val_cols, section_map,
+        include_detail=False, strict_balance=strict_balance,
+    )

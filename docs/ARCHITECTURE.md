@@ -89,15 +89,19 @@ data_service.load_report_data()
     ├── Check in-memory cache (30-min TTL) → return if fresh
     │
     ├── fetch_all_data() → concurrent SQL Server queries (ThreadPoolExecutor)
-    │   └── Returns: raw, raw_current_full, raw_prev, raw_bs, raw_bs_prev
+    │   └── Returns: (raw_current_full, raw_bs)
     │
-    ├── Transforms: prepare_pnl_from_view (dtype adapter; classification already done by SQL view) → pl_summary
-    ├── BS: prepare_bs_stmt → bs_summary
-    ├── Detail pivots: preaggregate → sales_details, proyectos_especiales,
-    │   detail_by_ceco (costo, gasto_venta, gasto_admin, dya_costo, dya_gasto),
-    │   detail_resultado_financiero (ingresos/gastos split)
+    ├── Summary (Phase C): fetch_pnl_summary_only + fetch_bs_summary_only →
+    │       pl_summary_from_view / bs_summary_from_view  (~100 + ~360 rows from
+    │       VISTA_PNL_SUMARIO / VISTA_BS_SUMARIO; no row-level aggregation in Python)
     │
-    ├── Cache: result dict + raw DataFrames + prepared BS + statement DataFrame
+    ├── Detail prep: prepare_pnl_from_view (dtype adapter; classification already done by SQL view) →
+    │       preaggregate → sales_details, proyectos_especiales,
+    │       detail_by_ceco (costo, gasto_venta, gasto_admin, dya_costo, dya_gasto),
+    │       detail_resultado_financiero (ingresos/gastos split).  Row-level df_stmt
+    │       cached for drill-down (until Phase D ships paginated SQL drill-down).
+    │
+    ├── Cache: result dict + row-level df_stmt + prepared BS + section preaggs
     │
     └── Response: { pl_summary, bs_summary, ingresos_ordinarios, ingresos_proyectos,
                     ingresos_intercompany, costo, gasto_venta, gasto_admin, dya_costo, dya_gasto,
