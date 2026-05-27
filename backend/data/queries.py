@@ -6,6 +6,7 @@ import pyodbc
 
 from config.period import month_end_boundary
 from config.exceptions import QueryError
+from config.fields import PARTIDA_PL, PARTIDA_BS
 
 
 logger = logging.getLogger("plantillas.queries")
@@ -162,3 +163,210 @@ def fetch_bs_summary(conn: pyodbc.Connection, company: str, year: int) -> pd.Dat
 
     logger.info("Fetched %d BS summary rows for %s/%s", len(result), company, year)
     return result
+
+
+# ── Phase D: drill-down detail (paginated, server-side filter/sort) ──────
+#
+# These functions back the /api/data/detail endpoint. The row-level
+# VISTA_*_PREPARADO views are the source; pagination uses OFFSET ... FETCH.
+# Column-name whitelisting is defense-in-depth at the SQL boundary — the
+# routes layer also validates, but queries.py enforces independently.
+
+_DETAIL_SELECT_COLS = (
+    "ASIENTO, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL, "
+    "CENTRO_COSTO, DESC_CECO, FECHA, SALDO"
+)
+
+# Columns whose values may be substring-matched via WHERE <col> LIKE ?
+_DETAIL_FILTER_COLS: frozenset[str] = frozenset({
+    "ASIENTO", "CUENTA_CONTABLE", "DESCRIPCION",
+    "NIT", "RAZON_SOCIAL", "CENTRO_COSTO", "DESC_CECO",
+})
+
+_IC_FILTER_CLAUSES = {
+    "all": "",
+    "ex_ic": " AND IS_INTERCOMPANY = 0",
+    "only_ic": " AND IS_INTERCOMPANY = 1",
+}
+
+# Wildcard chars that must be neutralised before wrapping the user-supplied
+# filter value with %...% for a partial-match LIKE.
+_LIKE_WILDCARDS = ("\\", "%", "_", "[")
+
+
+def _escape_like(val: str) -> str:
+    """Escape LIKE wildcards so user input matches literally inside %...%."""
+    for ch in _LIKE_WILDCARDS:
+        val = val.replace(ch, "\\" + ch)
+    return val
+
+
+def _build_detail_where(view_name: str, partida_col: str,
+                        year_month_pairs: list[tuple[int, int]],
+                        *, eligible_clause: str,
+                        filter_col: str | None, ic_filter: str) -> tuple[str, list]:
+    """Build the shared WHERE clause + params for fetch_*_detail and counts.
+
+    Returns (where_sql, params). Caller appends ORDER BY / OFFSET / FETCH or
+    SELECT COUNT(*) wrapping.
+
+    Validates *partida_col*, *filter_col*, *ic_filter* against constants; the
+    only thing interpolated into SQL is whitelisted column / view names.
+    """
+    if partida_col not in (PARTIDA_PL, PARTIDA_BS):
+        raise QueryError(f"Invalid partida column: {partida_col!r}")
+    if ic_filter not in _IC_FILTER_CLAUSES:
+        raise QueryError(f"Invalid ic_filter: {ic_filter!r}")
+    if not year_month_pairs:
+        raise QueryError("year_month_pairs must be non-empty")
+    if filter_col is not None and filter_col not in _DETAIL_FILTER_COLS:
+        raise QueryError(f"Invalid filter_col: {filter_col!r}")
+
+    # SQL Server doesn't accept (YEAR, MES) IN ((?,?), ...) row-constructor
+    # syntax — error 4145 ("non-boolean type ... near ','").  Use an OR-chain
+    # of equality pairs instead; the optimizer plans them identically.
+    pair_clause = " OR ".join(["(YEAR = ? AND MES = ?)"] * len(year_month_pairs))
+    where = (
+        f"FROM {SQL_SCHEMA}.{view_name} "
+        f"WHERE CIA = ? AND {partida_col} = ?"
+        f"{eligible_clause}"
+        f" AND ({pair_clause})"
+        f"{_IC_FILTER_CLAUSES[ic_filter]}"
+    )
+    params: list = []  # CIA + partida are added by caller (it knows them)
+    for year, mes in year_month_pairs:
+        params.extend([year, mes])
+    if filter_col is not None:
+        where += f" AND {filter_col} LIKE ? ESCAPE '\\'"
+    return where, params
+
+
+def _run_detail_query(conn: pyodbc.Connection, view_name: str, partida_col: str,
+                      company: str, partida: str,
+                      year_month_pairs: list[tuple[int, int]],
+                      *, eligible_clause: str,
+                      offset: int, limit: int,
+                      filter_col: str | None, filter_val: str | None,
+                      ic_filter: str) -> pd.DataFrame:
+    if offset < 0 or limit < 1:
+        raise QueryError(f"Invalid pagination: offset={offset}, limit={limit}")
+    where, where_params = _build_detail_where(
+        view_name, partida_col, year_month_pairs,
+        eligible_clause=eligible_clause, filter_col=filter_col, ic_filter=ic_filter,
+    )
+    query = (
+        f"SELECT {_DETAIL_SELECT_COLS} {where} "
+        "ORDER BY SALDO DESC, ASIENTO, CUENTA_CONTABLE "
+        "OFFSET ? ROWS FETCH NEXT ? ROWS ONLY"
+    )
+    params: list = [company, partida, *where_params]
+    if filter_col is not None and filter_val is not None:
+        params.append(f"%{_escape_like(filter_val)}%")
+    params.extend([offset, limit])
+    logger.debug("Detail query: %s | params: %s", query, params)
+    try:
+        result = pd.read_sql(query, conn, params=params)
+    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
+        raise QueryError(
+            f"Failed to fetch detail for {company}/{partida} ({view_name}): {exc}"
+        ) from exc
+    return result
+
+
+def _run_detail_count(conn: pyodbc.Connection, view_name: str, partida_col: str,
+                      company: str, partida: str,
+                      year_month_pairs: list[tuple[int, int]],
+                      *, eligible_clause: str,
+                      filter_col: str | None, filter_val: str | None,
+                      ic_filter: str) -> int:
+    where, where_params = _build_detail_where(
+        view_name, partida_col, year_month_pairs,
+        eligible_clause=eligible_clause, filter_col=filter_col, ic_filter=ic_filter,
+    )
+    query = f"SELECT COUNT(*) {where}"
+    params: list = [company, partida, *where_params]
+    if filter_col is not None and filter_val is not None:
+        params.append(f"%{_escape_like(filter_val)}%")
+    try:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        row = cur.fetchone()
+    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
+        raise QueryError(
+            f"Failed to count detail for {company}/{partida} ({view_name}): {exc}"
+        ) from exc
+    return int(row[0])
+
+
+def fetch_pnl_detail(conn: pyodbc.Connection, company: str,
+                     year_month_pairs: list[tuple[int, int]], partida: str,
+                     *, offset: int = 0, limit: int = 500,
+                     filter_col: str | None = None, filter_val: str | None = None,
+                     ic_filter: str = "all") -> pd.DataFrame:
+    """Paginated journal-entry drill-down from VISTA_PNL_PREPARADO.
+
+    Filters to statement-eligible rows only.  *year_month_pairs* lets one
+    query span multiple months in (potentially) multiple years — used for
+    multi-month cell selections and trailing-12M views.
+
+    Returns a DataFrame of up to *limit* rows ordered by
+    SALDO DESC, ASIENTO, CUENTA_CONTABLE (stable for pagination).
+    """
+    df = _run_detail_query(
+        conn, SQL_VIEW_PNL_PREPARADO, PARTIDA_PL, company, partida, year_month_pairs,
+        eligible_clause=" AND IS_STATEMENT_ELIGIBLE = 1",
+        offset=offset, limit=limit,
+        filter_col=filter_col, filter_val=filter_val, ic_filter=ic_filter,
+    )
+    logger.info("Fetched %d P&L detail rows for %s/%s (offset=%d, limit=%d)",
+                len(df), company, partida, offset, limit)
+    return df
+
+
+def fetch_pnl_detail_count(conn: pyodbc.Connection, company: str,
+                           year_month_pairs: list[tuple[int, int]], partida: str,
+                           *, filter_col: str | None = None, filter_val: str | None = None,
+                           ic_filter: str = "all") -> int:
+    """COUNT(*) companion for fetch_pnl_detail — same WHERE clause."""
+    n = _run_detail_count(
+        conn, SQL_VIEW_PNL_PREPARADO, PARTIDA_PL, company, partida, year_month_pairs,
+        eligible_clause=" AND IS_STATEMENT_ELIGIBLE = 1",
+        filter_col=filter_col, filter_val=filter_val, ic_filter=ic_filter,
+    )
+    logger.info("Counted %d P&L detail rows for %s/%s", n, company, partida)
+    return n
+
+
+def fetch_bs_detail(conn: pyodbc.Connection, company: str,
+                    year_month_pairs: list[tuple[int, int]], partida: str,
+                    *, offset: int = 0, limit: int = 500,
+                    filter_col: str | None = None, filter_val: str | None = None,
+                    ic_filter: str = "all") -> pd.DataFrame:
+    """Paginated journal-entry drill-down from VISTA_BS_PREPARADO.
+
+    No eligibility flag on BS — every class 1-5 row is eligible.  Same
+    pagination + ordering contract as fetch_pnl_detail.
+    """
+    df = _run_detail_query(
+        conn, SQL_VIEW_BS_PREPARADO, PARTIDA_BS, company, partida, year_month_pairs,
+        eligible_clause="",
+        offset=offset, limit=limit,
+        filter_col=filter_col, filter_val=filter_val, ic_filter=ic_filter,
+    )
+    logger.info("Fetched %d BS detail rows for %s/%s (offset=%d, limit=%d)",
+                len(df), company, partida, offset, limit)
+    return df
+
+
+def fetch_bs_detail_count(conn: pyodbc.Connection, company: str,
+                          year_month_pairs: list[tuple[int, int]], partida: str,
+                          *, filter_col: str | None = None, filter_val: str | None = None,
+                          ic_filter: str = "all") -> int:
+    """COUNT(*) companion for fetch_bs_detail — same WHERE clause."""
+    n = _run_detail_count(
+        conn, SQL_VIEW_BS_PREPARADO, PARTIDA_BS, company, partida, year_month_pairs,
+        eligible_clause="",
+        filter_col=filter_col, filter_val=filter_val, ic_filter=ic_filter,
+    )
+    logger.info("Counted %d BS detail rows for %s/%s", n, company, partida)
+    return n

@@ -26,6 +26,24 @@ ALL_VIEW_IDS: frozenset[str] = frozenset({
 })
 
 
+# Views that read from VISTA_BS_PREPARADO (everything else uses the P&L view).
+# Derived from naming convention rather than declared on each view: BS views
+# all start with 'bs'.  Non-data views (upload_planilla, admin_users) never
+# hit the drill-down endpoint and the discriminator isn't consulted for them.
+BS_VIEW_IDS: frozenset[str] = frozenset({v for v in ALL_VIEW_IDS if v.startswith('bs')})
+
+
+def statement_for_view(view_id: str) -> str:
+    """Return 'bs' or 'pl' for routing detail queries to the right SQL view.
+
+    Used by the drill-down endpoint to pick between fetch_pnl_detail /
+    fetch_bs_detail.  Unknown view_ids fall through as 'pl' — they're
+    rejected by ALL_VIEW_IDS validation upstream, so this branch is
+    defensive only.
+    """
+    return 'bs' if view_id in BS_VIEW_IDS else 'pl'
+
+
 def _verify_sync_with_frontend() -> None:
     """Compare ALL_VIEW_IDS with the IDs declared in viewRegistry.ts.
 

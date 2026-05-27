@@ -24,6 +24,8 @@ import pandas as pd
 from data.fetcher import (
     fetch_all_data, fetch_pnl_only, fetch_bs_only,
     fetch_pnl_summary_only, fetch_bs_summary_only,
+    fetch_pnl_detail_only, fetch_pnl_detail_count_only,
+    fetch_bs_detail_only, fetch_bs_detail_count_only,
 )
 from accounting.transforms import prepare_pnl_from_view, prepare_bs_from_view
 from accounting.aggregation import (
@@ -38,6 +40,7 @@ from accounting.statements import pl_summary_from_view, bs_summary_from_view
 from accounting.notes import BS_DETAIL_ENTRIES
 from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MIN_YEAR
 from config.company import VALID_COMPANIES
+from config.views import statement_for_view
 from config.fields import (
     ASIENTO, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL,
     CENTRO_COSTO, DESC_CECO, FECHA, SALDO, PARTIDA_PL, PARTIDA_BS, MES,
@@ -1190,60 +1193,48 @@ _MONTH_NAME_TO_NUM = {v: k for k, v in MONTH_NAMES.items()}
 
 
 def get_detail_records(
-    company: str, year: int, partida: str, month: str | None = None,
+    company: str, view_id: str, partida: str,
+    year_month_pairs: list[tuple[int, int]],
+    *, offset: int = 0, limit: int = 500,
     filter_col: str | None = None, filter_val: str | None = None,
     ic_filter: str = "all",
-) -> list[dict]:
-    """Return raw journal entries matching the given partida + optional month/filter.
+) -> tuple[list[dict], int]:
+    """Paginated journal-entry drill-down for a single (view, partida) cell.
 
-    If month is None, returns records for all months (full period).
-    If the data hasn't been loaded yet, triggers a load first.
-    Checks P&L data first; if no match, falls back to BS data.
+    Routes to VISTA_PNL_PREPARADO or VISTA_BS_PREPARADO via statement_for_view
+    (Phase D, 2026-05-27).  No longer touches in-memory row-level caches;
+    each call hits SQL Server with parameterized WHERE + OFFSET/FETCH so the
+    summary path and drill-down path no longer share state.
 
-    ic_filter: "all" (default), "ex_ic" (exclude intercompany),
-               "only_ic" (only intercompany rows).
+    *year_month_pairs* is a list of (year, MES) tuples — one per period the
+    cell spans.  A single-month cell sends one pair; a multi-month cell or
+    trailing-12M selection sends N pairs in one query.
+
+    Returns (records, total) where *records* is the current page and
+    *total* is COUNT(*) for the same WHERE clause (for "X of Y" UI).
     """
-    # Try P&L first
-    df = _caches["df"].get(company, year)
-    if df is None:
-        load_pl_data(company, year, force_refresh=True)
-        df = _caches["df"].get(company, year)
-
-    partida_col = PARTIDA_PL
-    if df is not None and (df[PARTIDA_PL] == partida).any():
-        pass  # use P&L df
+    statement = statement_for_view(view_id)
+    if statement == "bs":
+        df = fetch_bs_detail_only(
+            company, year_month_pairs, partida,
+            offset=offset, limit=limit,
+            filter_col=filter_col, filter_val=filter_val, ic_filter=ic_filter,
+        )
+        total = fetch_bs_detail_count_only(
+            company, year_month_pairs, partida,
+            filter_col=filter_col, filter_val=filter_val, ic_filter=ic_filter,
+        )
     else:
-        # Fall back to BS
-        df_bs = _caches["bs"].get(company, year)
-        if df_bs is None:
-            load_bs_data(company, year, force_refresh=True)
-            df_bs = _caches["bs"].get(company, year)
-        if df_bs is not None:
-            df = df_bs
-            partida_col = PARTIDA_BS
-        elif df is None:
-            return []
+        df = fetch_pnl_detail_only(
+            company, year_month_pairs, partida,
+            offset=offset, limit=limit,
+            filter_col=filter_col, filter_val=filter_val, ic_filter=ic_filter,
+        )
+        total = fetch_pnl_detail_count_only(
+            company, year_month_pairs, partida,
+            filter_col=filter_col, filter_val=filter_val, ic_filter=ic_filter,
+        )
 
-    mask = df[partida_col] == partida
-
-    if month is not None:
-        month_num = _MONTH_NAME_TO_NUM.get(month)
-        if month_num is None:
-            return []
-        mask = mask & (df[MES] == month_num)
-
-    if filter_col and filter_val is not None:
-        if filter_col not in _FILTERABLE_COLUMNS:
-            return []
-        mask = mask & (df[filter_col].astype(str) == filter_val)
-
-    # Apply intercompany filter
-    if ic_filter == "ex_ic" and IS_INTERCOMPANY in df.columns:
-        mask = mask & (~df[IS_INTERCOMPANY])
-    elif ic_filter == "only_ic" and IS_INTERCOMPANY in df.columns:
-        mask = mask & (df[IS_INTERCOMPANY])
-
-    result = df.loc[mask, _DETAIL_COLUMNS].copy()
-    result[FECHA] = result[FECHA].dt.strftime("%Y-%m-%d")
-    result = result.sort_values(SALDO, ascending=False).reset_index(drop=True)
-    return _df_to_records(result)
+    if not df.empty:
+        df[FECHA] = pd.to_datetime(df[FECHA]).dt.strftime("%Y-%m-%d")
+    return _df_to_records(df[_DETAIL_COLUMNS]), total

@@ -206,17 +206,66 @@ _ALLOWED_FILTER_COLS = {
     CENTRO_COSTO, DESC_CECO,
 }
 
+# Reverse lookup: month name → month number. Built here (not imported from
+# data_service) to keep routes thin.
+from config.calendar import MONTH_NAMES as _MONTH_NAMES
+_MONTH_NAME_TO_NUM = {v: k for k, v in _MONTH_NAMES.items()}
+
+# Pagination caps.  500 is the default page; the cap is raised for the
+# "Export all matching rows" path which carries limit=50_000 explicitly.
+_MAX_LIMIT = 50_000
+_MAX_PERIODS = 24            # 2 years of monthly cells, with headroom
+
+
+def _parse_periods(raw, fallback_year: int) -> list[tuple[int, int]]:
+    """Validate and normalize the request's ``periods`` field.
+
+    Each entry must be {"year": int, "month": "JAN"|...|"DEC"}.  Returns
+    a sorted list of (year, month_num) tuples for the SQL helpers.
+
+    Year range is anchored to the request's ``year`` ± 1 so trailing-12M
+    selections (which cross the year boundary) are accepted without
+    rubber-stamping arbitrary historical lookups.
+    """
+    if not isinstance(raw, list) or not raw:
+        raise RequestValidationError('periods debe ser una lista no vacia')
+    if len(raw) > _MAX_PERIODS:
+        raise RequestValidationError(f'periods supera el limite de {_MAX_PERIODS}')
+
+    year_lo, year_hi = fallback_year - 1, fallback_year + 1
+    seen: set[tuple[int, int]] = set()
+    pairs: list[tuple[int, int]] = []
+    for i, p in enumerate(raw):
+        if not isinstance(p, dict):
+            raise RequestValidationError(f'periods[{i}] debe ser objeto')
+        year = p.get('year', fallback_year)
+        month = (p.get('month') or '').strip().upper()
+        if not isinstance(year, int) or not (year_lo <= year <= year_hi):
+            raise RequestValidationError(
+                f'periods[{i}].year invalido (esperado entre {year_lo} y {year_hi})')
+        if month not in MONTH_NAMES_SET:
+            raise RequestValidationError(f'periods[{i}].month invalido: {month}')
+        mes = _MONTH_NAME_TO_NUM[month]
+        key = (year, mes)
+        if key in seen:
+            continue  # de-dup duplicates client may send by accident
+        seen.add(key)
+        pairs.append(key)
+    return pairs
+
 
 @api_bp.route('/data/detail', methods=['POST'])
 @login_required
 @_handle_data_errors("getting detail")
 def get_detail(body, company, year):
-    """Return raw journal entries for a specific cell in a P&L view.
+    """Paginated journal-entry drill-down for one cell.
 
     Body: { "company": "FIBERLUX", "year": 2026,
-            "view_id": "ingresos",
-            "partida": "INGRESOS ORDINARIOS", "month": "JAN",
-            "filter_col": "CUENTA_CONTABLE", "filter_val": "7011101" }
+            "view_id": "ingresos", "partida": "INGRESOS ORDINARIOS",
+            "periods": [{"year": 2026, "month": "JAN"}, ...],
+            "filter_col": "CUENTA_CONTABLE", "filter_val": "7011",
+            "ic_filter": "all", "offset": 0, "limit": 500 }
+    Returns: { "records": [...], "total": int, "offset": int, "limit": int }
     """
     view_id = (body.get('view_id') or '').strip()
     if not view_id:
@@ -228,27 +277,33 @@ def get_detail(body, company, year):
         return forbidden
 
     partida = body.get('partida', '').strip()
-    month = body.get('month', '').strip().upper() if body.get('month') else None
-    filter_col = body.get('filter_col')
-    filter_val = body.get('filter_val')
-    ic_filter = body.get('ic_filter', 'all')
-
-    if month and month not in MONTH_NAMES_SET:
-        raise RequestValidationError(f'Mes invalido: {month}')
-
-    if filter_col and filter_col not in _ALLOWED_FILTER_COLS:
-        raise RequestValidationError(f'Columna de filtro no permitida: {filter_col}')
-
     if not partida:
         raise RequestValidationError('partida es requerido')
 
+    year_month_pairs = _parse_periods(body.get('periods'), fallback_year=year)
+
+    filter_col = body.get('filter_col')
+    filter_val = body.get('filter_val')
+    if filter_col and filter_col not in _ALLOWED_FILTER_COLS:
+        raise RequestValidationError(f'Columna de filtro no permitida: {filter_col}')
+
+    ic_filter = body.get('ic_filter', 'all')
     if ic_filter not in ('all', 'ex_ic', 'only_ic'):
         raise RequestValidationError(f'ic_filter invalido: {ic_filter}')
 
-    records = get_detail_records(company, year, partida, month,
-                                 filter_col=filter_col, filter_val=filter_val,
-                                 ic_filter=ic_filter)
-    return ok({'records': records})
+    offset = body.get('offset', 0)
+    limit = body.get('limit', 500)
+    if not isinstance(offset, int) or offset < 0:
+        raise RequestValidationError('offset debe ser entero >= 0')
+    if not isinstance(limit, int) or not (1 <= limit <= _MAX_LIMIT):
+        raise RequestValidationError(f'limit debe ser entero entre 1 y {_MAX_LIMIT}')
+
+    records, total = get_detail_records(
+        company, view_id, partida, year_month_pairs,
+        offset=offset, limit=limit,
+        filter_col=filter_col, filter_val=filter_val, ic_filter=ic_filter,
+    )
+    return ok({'records': records, 'total': total, 'offset': offset, 'limit': limit})
 
 
 # ── Headcount ──────────────────────────────────────────────────────────
