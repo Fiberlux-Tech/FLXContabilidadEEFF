@@ -19,6 +19,11 @@ export const DETAIL_COLS = Object.keys(DETAIL_HEADERS);
 export const PAGE_SIZES: number[] = [25, 50, 100];
 export const DEFAULT_PAGE_SIZE = PAGE_SIZES[0];
 
+// Server side: filtering only allowed on these (SALDO and FECHA excluded).
+const FILTERABLE_COLS = new Set([
+    'ASIENTO', 'CUENTA_CONTABLE', 'DESCRIPCION', 'NIT', 'RAZON_SOCIAL', 'CENTRO_COSTO', 'DESC_CECO',
+]);
+
 const COL_WIDTHS: Record<string, string> = {
     ASIENTO: '9%',
     CUENTA_CONTABLE: '9%',
@@ -32,14 +37,16 @@ const COL_WIDTHS: Record<string, string> = {
 };
 
 interface DetailDataTableProps {
-    detailRows: ReportRow[];
-    filteredRows: ReportRow[];
+    detailRows: ReportRow[];          // current page only (server-paginated)
     filters: Record<string, string>;
+    activeFilterCol: string | null;   // when set, other filter inputs are disabled
     updateFilter: (col: string, value: string) => void;
-    page: number;
-    setPage: (fn: (p: number) => number) => void;
-    pageSize: number;
-    setPageSize: (size: number) => void;
+    offset: number;
+    limit: number;
+    total: number;
+    onOffsetChange: (newOffset: number) => void;
+    onLimitChange: (newLimit: number) => void;
+    isLoading: boolean;
     grouped: boolean;
 }
 
@@ -96,19 +103,24 @@ function renderDataRow(row: ReportRow, key: string | number): ReactNode {
     );
 }
 
-export default function DetailDataTable({ detailRows, filteredRows, filters, updateFilter, page, setPage, pageSize, setPageSize, grouped }: DetailDataTableProps) {
+export default function DetailDataTable({
+    detailRows, filters, activeFilterCol, updateFilter,
+    offset, limit, total, onOffsetChange, onLimitChange,
+    isLoading, grouped,
+}: DetailDataTableProps) {
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
-    const groups = useMemo(() => (grouped ? buildGroups(filteredRows) : []), [grouped, filteredRows]);
+    // Grouping subtotal is over the current page only — PLNoteView disables
+    // the grouped toggle when the data spans more than one page, so when we
+    // reach this branch the page is the whole result.
+    const groups = useMemo(() => (grouped ? buildGroups(detailRows) : []), [grouped, detailRows]);
     const grandTotal = useMemo(() => {
         if (!grouped) return 0;
-        return filteredRows.reduce((acc, r) => acc + (typeof r.SALDO === 'number' ? r.SALDO : 0), 0);
-    }, [grouped, filteredRows]);
+        return detailRows.reduce((acc, r) => acc + (typeof r.SALDO === 'number' ? r.SALDO : 0), 0);
+    }, [grouped, detailRows]);
 
-    const totalPages = Math.ceil(filteredRows.length / pageSize);
-    const start = page * pageSize;
-    const pageRows = filteredRows.slice(start, start + pageSize);
-    const hasFilters = Object.values(filters).some(v => v.length > 0);
+    const hasFilter = activeFilterCol !== null;
+    const pageEnd = offset + detailRows.length;
 
     const toggleGroup = (prefix: string) => {
         setExpandedGroups(prev => {
@@ -124,8 +136,7 @@ export default function DetailDataTable({ detailRows, filteredRows, filters, upd
             {grouped && (
                 <div className="flex justify-end mb-2 px-1">
                     <span className="text-xs text-txt-muted">
-                        {groups.length} grupo{groups.length === 1 ? '' : 's'} · {filteredRows.length} registro{filteredRows.length === 1 ? '' : 's'}
-                        {hasFilters && ` (${detailRows.length} total)`}
+                        {groups.length} grupo{groups.length === 1 ? '' : 's'} · {detailRows.length} registro{detailRows.length === 1 ? '' : 's'}
                     </span>
                 </div>
             )}
@@ -146,17 +157,27 @@ export default function DetailDataTable({ detailRows, filteredRows, filters, upd
                             ))}
                         </tr>
                         <tr>
-                            {DETAIL_COLS.map(col => (
-                                <th key={col} style={{ padding: '4px 8px 10px', borderBottom: '1px solid #eee' }}>
-                                    <input
-                                        type="text"
-                                        value={filters[col] ?? ''}
-                                        onChange={e => updateFilter(col, e.target.value)}
-                                        placeholder="Filtrar..."
-                                        className={`filter-input ${col === 'SALDO' ? 'text-right' : 'text-left'}`}
-                                    />
-                                </th>
-                            ))}
+                            {DETAIL_COLS.map(col => {
+                                const isFilterable = FILTERABLE_COLS.has(col);
+                                const disabled = isFilterable && hasFilter && activeFilterCol !== col;
+                                return (
+                                    <th key={col} style={{ padding: '4px 8px 10px', borderBottom: '1px solid #eee' }}>
+                                        {isFilterable ? (
+                                            <input
+                                                type="text"
+                                                value={filters[col] ?? ''}
+                                                onChange={e => updateFilter(col, e.target.value)}
+                                                placeholder={disabled ? '(filtra solo una columna)' : 'Filtrar...'}
+                                                disabled={disabled}
+                                                title={disabled ? `Limpia el filtro de ${activeFilterCol} para filtrar por esta columna` : undefined}
+                                                className={`filter-input ${col === 'SALDO' ? 'text-right' : 'text-left'}`}
+                                            />
+                                        ) : (
+                                            <span />
+                                        )}
+                                    </th>
+                                );
+                            })}
                         </tr>
                     </thead>
                     <tbody>
@@ -207,7 +228,7 @@ export default function DetailDataTable({ detailRows, filteredRows, filters, upd
                                 )}
                             </>
                         ) : (
-                            pageRows.map((row, idx) => renderDataRow(row, idx))
+                            detailRows.map((row, idx) => renderDataRow(row, idx))
                         )}
                     </tbody>
                 </table>
@@ -220,9 +241,10 @@ export default function DetailDataTable({ detailRows, filteredRows, filters, upd
                         {PAGE_SIZES.map(size => (
                             <button
                                 key={size}
-                                onClick={() => { setPageSize(size); setPage(() => 0); }}
+                                onClick={() => onLimitChange(size)}
+                                disabled={isLoading}
                                 className={`text-[13px] bg-transparent border-none cursor-pointer pb-0.5 transition-all
-                                    ${pageSize === size
+                                    ${limit === size
                                         ? 'text-txt font-semibold border-b-2 border-b-txt'
                                         : 'text-txt-muted font-normal border-b border-b-transparent hover:text-txt-secondary'
                                     }`}
@@ -233,22 +255,23 @@ export default function DetailDataTable({ detailRows, filteredRows, filters, upd
                     </div>
                     <div className="flex items-center gap-3 text-xs text-txt-muted">
                         <span className="font-medium">
-                            {filteredRows.length === 0 ? '0 registros' :
-                                `${start + 1}–${Math.min(start + pageSize, filteredRows.length)} de ${filteredRows.length}`}
-                            {hasFilters && ` (${detailRows.length} total)`}
+                            {total === 0
+                                ? '0 registros'
+                                : `${offset + 1}–${pageEnd} de ${total}`}
+                            {isLoading && ' · cargando...'}
                         </span>
                         <div className="flex gap-1">
                             <button
-                                onClick={() => setPage(p => p - 1)}
-                                disabled={page === 0}
+                                onClick={() => onOffsetChange(Math.max(0, offset - limit))}
+                                disabled={offset === 0 || isLoading}
                                 className="px-2.5 py-1 rounded-md border border-border hover:bg-surface-alt
                                            disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-txt-secondary"
                             >
                                 Anterior
                             </button>
                             <button
-                                onClick={() => setPage(p => p + 1)}
-                                disabled={page >= totalPages - 1}
+                                onClick={() => onOffsetChange(offset + limit)}
+                                disabled={pageEnd >= total || isLoading}
                                 className="px-2.5 py-1 rounded-md border border-border hover:bg-surface-alt
                                            disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-txt-secondary"
                             >
