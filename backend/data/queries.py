@@ -237,6 +237,34 @@ def fetch_bs_detalle_cuenta(conn: pyodbc.Connection, company: str, year: int,
     return result
 
 
+def fetch_bs_last_month(conn: pyodbc.Connection, company: str, year: int) -> int | None:
+    """Return the last month (1–12) with posted BS activity, or None if no rows.
+
+    Reads MAX(MES) from the row-level VISTA_BS_PREPARADO — rows exist iff there
+    was a journal entry that month, so this is "last month with data", not the
+    calendar month.  The cumsum views are densified to all 12 months and so
+    cannot supply this; the BS note builders need it to zero out future months
+    and to set TOTAL = the last-activity-month balance (parity with the
+    pre-Phase-F path, which read df[MES].max() on the raw frame).
+    """
+    query = (
+        "SELECT MAX(MES) "
+        f"FROM {SQL_SCHEMA}.{SQL_VIEW_BS_PREPARADO} "
+        "WHERE CIA = ? AND YEAR = ?"
+    )
+    params = [company, year]
+    logger.debug("BS last-month query: %s | params: %s", query, params)
+    try:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        row = cur.fetchone()
+    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
+        raise QueryError(f"Failed to fetch BS last month for {company}/{year}: {exc}") from exc
+    if row is None or row[0] is None:
+        return None
+    return int(row[0])
+
+
 def fetch_bs_detalle_nit(conn: pyodbc.Connection, company: str, year: int,
                          partidas: list[str]) -> pd.DataFrame:
     """Fetch NIT-grain cumulative BS balances from VISTA_BS_DETALLE_NIT_CUMSUM.

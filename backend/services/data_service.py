@@ -27,6 +27,7 @@ from data.fetcher import (
     fetch_pnl_summary_only, fetch_bs_summary_only,
     fetch_pnl_preagg_only,
     fetch_bs_detalle_cuenta_only, fetch_bs_detalle_nit_only,
+    fetch_bs_last_month_only,
     fetch_pnl_detail_only, fetch_pnl_detail_count_only,
     fetch_bs_detail_only, fetch_bs_detail_count_only,
 )
@@ -1112,19 +1113,15 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
                 load_pl_data(company, year)
                 pl_df = _caches["pl_df"].get(company, year)
 
-            raw_bs = fetch_bs_only(company, year)
-            logger.info("BS fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw_bs))
-
             t1 = time.perf_counter()
-            if not raw_bs.empty:
-                # df_bs (row-level) stays for the note tables + NIT rankings below
-                # and for the _caches["bs"] writer further down (still consumed by
-                # get_detail_records until Phase D ships paginated drill-down).
-                df_bs = prepare_bs_from_view(raw_bs)
+            # BS summary from VISTA_BS_SUMARIO (Phase C).  last_month = last
+            # posted BS month (MAX(MES) over the row-level view); None ⇒ no BS
+            # activity for the year ⇒ empty result, no notes.
+            last_month = fetch_bs_last_month_only(company, year)
+            if last_month is not None:
                 bs_long = fetch_bs_summary_only(company, year)
                 bs = bs_summary_from_view(bs_long, pl_summary_df=pl_df)
             else:
-                df_bs = None
                 bs = pd.DataFrame()
             logger.info("BS transforms: %.2fs", time.perf_counter() - t1)
 
@@ -1135,11 +1132,14 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
                 "months": MONTH_NAMES_LIST,
             }
 
-            # BS note detail tables (reuse the same aggregation functions as Excel/PDF)
-            if df_bs is not None:
+            # BS note detail tables — built from pre-aggregated cumsum views
+            # (Phase F).  No row-level df_bs; cumsum + densification done in SQL.
+            if last_month is not None:
                 for key, partidas, include_pf, exclude_pf in BS_DETAIL_ENTRIES:
+                    frame = fetch_bs_detalle_cuenta_only(company, year, partidas)
                     detail = bs_detail_by_cuenta(
-                        df_bs, partidas,
+                        frame,
+                        last_month=last_month,
                         cuenta_prefixes=include_pf,
                         exclude_cuenta_prefixes=exclude_pf,
                     )
@@ -1154,11 +1154,10 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
                     ("bs_cxp_otras_nit_top20",       ["Otras cuentas por pagar"]),
                 ]
                 for key, partidas in _BS_NIT_RANKINGS:
-                    result[key] = _df_to_records(bs_top20_by_nit(df_bs, partidas))
+                    frame = fetch_bs_detalle_nit_only(company, year, partidas)
+                    result[key] = _df_to_records(bs_top20_by_nit(frame, last_month=last_month))
 
             _caches["bs_result"].set(company, year, result)
-            if df_bs is not None:
-                _caches["bs"].set(company, year, df_bs)
             logger.info("Total load_bs_data: %.2fs", time.perf_counter() - t0)
 
             return result

@@ -219,123 +219,98 @@ def last_data_month(df: pd.DataFrame) -> int | None:
     return int(max_mes) if pd.notna(max_mes) else None
 
 
-def _apply_bs_cumsum(
-    pivot: pd.DataFrame,
-    keep_months: list[str] | None = None,
-    last_month: int | None = None,
-) -> tuple[pd.DataFrame, list[str], list[str]]:
-    """Ensure 12 month columns exist, reorder to calendar order, cumsum, filter.
+# Column name emitted by VISTA_BS_PREPARADO_CUMSUM / VISTA_BS_DETALLE_NIT_CUMSUM.
+# Not in config.fields because it is a view-output column, like the SALDO_* columns
+# that statements.py references directly.
+SALDO_CUMSUM = "SALDO_CUMSUM"
 
-    When *last_month* is given (1–12), month columns after that are zeroed out
-    AFTER cumsum so future months don't inherit the last closed balance.
 
-    Returns (pivot_with_cumsum_applied, all_month_cols, display_month_cols).
+def _pivot_cumsum(frame: pd.DataFrame, index_cols: list[str],
+                  last_month: int | None) -> pd.DataFrame:
+    """Pivot an already-cumulative cumsum-view frame into JAN..DEC columns.
+
+    *frame* has one row per (index_cols, MES) carrying SALDO_CUMSUM — the
+    running balance Jan→that month, ALREADY computed densified to 12 months by
+    the SQL view.  This does a PLAIN pivot (no second cumsum — re-summing would
+    double the balances) and zeroes months after *last_month* so future months
+    don't show the carried-forward balance, matching the pre-Phase-F builders.
+
+    Returns the wide pivot with all 12 month columns present in calendar order.
     """
+    pivot = pd.pivot_table(
+        frame, values=SALDO_CUMSUM, index=index_cols,
+        columns=MES, aggfunc="sum", fill_value=0, observed=True, sort=False,
+    )
+    pivot.columns = [MONTH_NAMES[int(c)] for c in pivot.columns]
+    pivot = pivot.reset_index()
     pivot = ensure_month_columns(pivot)
-    pivot[MONTH_NAMES_LIST] = pivot[MONTH_NAMES_LIST].cumsum(axis=1)
     if last_month is not None:
-        future_cols = MONTH_NAMES_LIST[last_month:]  # MONTH_NAMES_LIST is 0-indexed JAN..DEC
+        future_cols = MONTH_NAMES_LIST[last_month:]  # 0-indexed JAN..DEC
         if future_cols:
             pivot[future_cols] = 0
-    if keep_months is not None:
-        display_cols = [c for c in MONTH_NAMES_LIST if c in keep_months]
-    else:
-        display_cols = list(MONTH_NAMES_LIST)
-    return pivot, MONTH_NAMES_LIST, display_cols
+    return pivot
 
 
-def bs_detail_by_cuenta(df: pd.DataFrame, partidas: list[str], *,
+def bs_detail_by_cuenta(frame: pd.DataFrame, *,
+                        last_month: int | None,
                         add_total_col: bool = True,
-                        keep_months: list[str] | None = None,
                         cuenta_prefixes: tuple[str, ...] | None = None,
                         exclude_cuenta_prefixes: tuple[str, ...] | None = None) -> pd.DataFrame:
-    """Pivot BS data for the given PARTIDA_BS values by CUENTA_CONTABLE + DESCRIPCION.
+    """Build the cuenta-grain BS note table from a cumsum-view frame.
 
-    Filters on PARTIDA_BS (not PARTIDA_PL) and applies cumulative month logic.
-    When *add_total_col* is False the TOTAL column is omitted (detail sheets).
-    When *keep_months* is provided, only those month columns are kept in the
-    output (after cumsum so values are still cumulative).
-    When *cuenta_prefixes* is provided, only accounts starting with those prefixes are included.
-    When *exclude_cuenta_prefixes* is provided, accounts starting with those prefixes are excluded.
+    *frame* comes from VISTA_BS_PREPARADO_CUMSUM (already filtered to the note's
+    PARTIDA_BS list in SQL), with columns MES, CUENTA_CONTABLE, DESCRIPCION,
+    SALDO_CUMSUM.  The cumulative-sum + densification happened in SQL; here we
+    only apply the cuenta-prefix include/exclude, pivot to JAN..DEC, zero future
+    months, set TOTAL, and sort.
+
+    When *add_total_col* is False the TOTAL column is omitted.
+    *cuenta_prefixes* / *exclude_cuenta_prefixes* match on CUENTA_CONTABLE.
     """
-    filtered = df[df[PARTIDA_BS].isin(partidas)]
+    if frame.empty:
+        return pd.DataFrame()
+    filtered = frame
     if cuenta_prefixes is not None:
         filtered = filtered[filtered[CUENTA_CONTABLE].str.startswith(cuenta_prefixes)]
     if exclude_cuenta_prefixes is not None:
         filtered = filtered[~filtered[CUENTA_CONTABLE].str.startswith(exclude_cuenta_prefixes)]
-    pivot = pivot_by_month(filtered, [CUENTA_CONTABLE, DESCRIPCION], add_total=False)
-    last_month = last_data_month(df)
-    pivot, mes_cols, display_cols = _apply_bs_cumsum(
-        pivot, keep_months, last_month=last_month,
-    )
-    # Sort by last displayed month's cumulative value. When no keep_months
-    # filter is set, display_cols ends at DEC which would be zeroed for future
-    # months; fall back to the last month with actual data.
-    if keep_months is None and last_month is not None:
-        sort_col = MONTH_NAMES_LIST[last_month - 1]
-    else:
-        sort_col = display_cols[-1] if display_cols else CUENTA_CONTABLE
+    pivot = _pivot_cumsum(filtered, [CUENTA_CONTABLE, DESCRIPCION], last_month)
+    # Sort by last-activity month's cumulative value (Dec is zeroed for future
+    # months, so use last_month rather than the trailing display column).
+    sort_col = MONTH_NAMES_LIST[last_month - 1] if last_month else CUENTA_CONTABLE
     if add_total_col:
-        # TOTAL = cumulative as of the last month with actual data (not Dec,
-        # which would be 0 after future-month zeroing).
-        if mes_cols:
-            total_src_col = MONTH_NAMES_LIST[last_month - 1] if last_month else mes_cols[-1]
-            pivot[TOTAL_COL] = pivot[total_src_col]
+        if last_month:
+            pivot[TOTAL_COL] = pivot[MONTH_NAMES_LIST[last_month - 1]]
         else:
             pivot[TOTAL_COL] = 0
         sort_col = TOTAL_COL
-    pivot = pivot.sort_values(sort_col, ascending=False).reset_index(drop=True)
-    # Drop month columns outside the requested period
-    if keep_months is not None:
-        drop_cols = [c for c in mes_cols if c not in keep_months]
-        pivot = pivot.drop(columns=drop_cols)
-    return pivot
+    return pivot.sort_values(sort_col, ascending=False).reset_index(drop=True)
 
 
-def bs_top20_by_nit(df: pd.DataFrame, partidas: list[str], *,
-                    keep_months: list[str] | None = None,
+def bs_top20_by_nit(frame: pd.DataFrame, *,
+                    last_month: int | None,
                     top_n: int = 20) -> pd.DataFrame:
-    """Pivot BS data by NIT + RAZON_SOCIAL x month, cumulative, top N by last period.
+    """Build the NIT top-N BS note table from a cumsum-view frame.
 
-    Follows the same cumulative logic as bs_detail_by_cuenta():
-    filters by PARTIDA_BS, pivots by NIT + RAZON_SOCIAL, applies cumsum,
-    ranks by the last displayed month column (descending), takes top N,
-    and appends a TOTAL row.
+    *frame* comes from VISTA_BS_DETALLE_NIT_CUMSUM (already filtered to the
+    note's PARTIDA_BS list in SQL), with columns MES, NIT, RAZON_SOCIAL,
+    SALDO_CUMSUM.  Fills SIN NIT / SIN RAZON SOCIAL (the view leaves NULLs
+    unfilled by design), pivots, zeroes future months, ranks by the
+    last-activity month descending, takes top N, and appends a TOTAL row.
     """
-    filtered = df[df[PARTIDA_BS].isin(partidas)]
-    if filtered.empty:
+    if frame.empty:
         return pd.DataFrame()
 
-    filtered = filtered.copy()
-    filtered[NIT] = filtered[NIT].fillna("SIN NIT")
-    filtered[RAZON_SOCIAL] = filtered[RAZON_SOCIAL].fillna("SIN RAZON SOCIAL")
+    frame = frame.copy()
+    frame[NIT] = frame[NIT].fillna("SIN NIT")
+    frame[RAZON_SOCIAL] = frame[RAZON_SOCIAL].fillna("SIN RAZON SOCIAL")
 
-    pivot = pivot_by_month(filtered, [NIT, RAZON_SOCIAL], add_total=False)
-    last_month = last_data_month(df)
-    pivot, mes_cols, display_cols = _apply_bs_cumsum(
-        pivot, keep_months, last_month=last_month,
-    )
+    pivot = _pivot_cumsum(frame, [NIT, RAZON_SOCIAL], last_month)
 
-    # Sort by raw value of last displayed month (descending — largest positive first).
-    # When no keep_months filter is set, display_cols goes through DEC which would
-    # be zeroed for future months; fall back to the last month with actual data.
-    if keep_months is None and last_month is not None:
-        sort_col = MONTH_NAMES_LIST[last_month - 1]
-    else:
-        sort_col = display_cols[-1] if display_cols else NIT
+    sort_col = MONTH_NAMES_LIST[last_month - 1] if last_month else NIT
     pivot = pivot.sort_values(sort_col, ascending=False).reset_index(drop=True)
-
-    # Take top N
     pivot = pivot.head(top_n).reset_index(drop=True)
-
-    # Drop month columns outside the requested period
-    if keep_months is not None:
-        drop_cols = [c for c in mes_cols if c not in keep_months]
-        pivot = pivot.drop(columns=drop_cols)
-
-    # Append TOTAL row
     pivot = append_total_row(pivot, RAZON_SOCIAL)
-
     return pivot
 
 

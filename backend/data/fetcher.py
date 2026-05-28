@@ -11,6 +11,7 @@ from data.queries import (
     fetch_pnl_data, fetch_bs_data,
     fetch_pnl_summary, fetch_bs_summary,
     fetch_pnl_preagg, fetch_bs_detalle_cuenta, fetch_bs_detalle_nit,
+    fetch_bs_last_month,
     fetch_pnl_detail, fetch_pnl_detail_count,
     fetch_bs_detail, fetch_bs_detail_count,
 )
@@ -163,6 +164,16 @@ def fetch_bs_detalle_cuenta_only(company: str, year: int, partidas: list[str],
     df = _fetch_with_own_conn(fetch_bs_detalle_cuenta, conn_factory, company, year, partidas)
     logger.info("fetch_bs_detalle_cuenta_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
     return df
+
+
+def fetch_bs_last_month_only(company: str, year: int, conn_factory=None) -> int | None:
+    """Return the last month (1–12) with posted BS activity, or None.
+
+    See data.queries.fetch_bs_last_month.  Cheap single-aggregate roundtrip.
+    """
+    if conn_factory is None:
+        conn_factory = connect
+    return _fetch_with_own_conn(fetch_bs_last_month, conn_factory, company, year)
 
 
 def fetch_bs_detalle_nit_only(company: str, year: int, partidas: list[str],
