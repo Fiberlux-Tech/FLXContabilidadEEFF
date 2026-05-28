@@ -3,6 +3,7 @@
 import logging
 import os
 import sys
+import time
 
 # Ensure backend dir is on sys.path so bare `from config.…` imports work.
 _backend_dir = os.path.abspath(os.path.dirname(__file__))
@@ -16,12 +17,16 @@ from config.env_loader import load_env_config
 _app_env = load_env_config(_monorepo_root)
 
 import orjson
-from flask import Flask, request
+from flask import Flask, request, g
 from flask.json.provider import JSONProvider
 from flask_cors import CORS
 
 from auth import auth_bp, init_db
 from constants import DEFAULT_DB_PATH
+
+# Requests slower than this (seconds) get a WARNING in error.log — early-warning
+# canary on the memory-bound box. See docs/SQL_VIEWS_ROADMAP.md Phase C+1 item 2.
+_SLOW_REQUEST_SEC = 15.0
 
 
 class OrjsonProvider(JSONProvider):
@@ -112,6 +117,12 @@ def create_app():
 
     # Response size logging for API endpoints
     _api_logger = logging.getLogger('flxcontabilidad.response')
+    _slow_logger = logging.getLogger('flxcontabilidad.slow')
+
+    @app.before_request
+    def start_request_timer():
+        if request.path.startswith('/api/'):
+            g._req_start = time.perf_counter()
 
     @app.after_request
     def log_response_size(response):
@@ -121,6 +132,14 @@ def create_app():
                 "%s %s — %d bytes, status %d",
                 request.method, request.path, size, response.status_code,
             )
+            start = getattr(g, '_req_start', None)
+            if start is not None:
+                elapsed = time.perf_counter() - start
+                if elapsed > _SLOW_REQUEST_SEC:
+                    _slow_logger.warning(
+                        "SLOW REQUEST %s %s took %.1fs (status %d)",
+                        request.method, request.path, elapsed, response.status_code,
+                    )
         return response
 
     # Phase 0: per-worker memory log (see docs/SCALING_ROADMAP.md)
