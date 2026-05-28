@@ -1,7 +1,7 @@
 import os
 
 bind = os.environ.get("GUNICORN_BIND", "127.0.0.1:5000")
-workers = int(os.environ.get("GUNICORN_WORKERS", "3"))
+workers = int(os.environ.get("GUNICORN_WORKERS", "2"))
 worker_class = os.environ.get("GUNICORN_WORKER_CLASS", "sync")
 worker_connections = int(os.environ.get("GUNICORN_WORKER_CONNECTIONS", "1000"))
 max_requests = int(os.environ.get("GUNICORN_MAX_REQUESTS", "1000"))
