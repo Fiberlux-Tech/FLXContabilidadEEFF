@@ -1,26 +1,18 @@
 #!/usr/bin/env bash
-# Deploy the working tree this script lives in. Both prod and staging trees
-# track main; the only difference is which systemd service gets restarted.
+# Deploy the prod working tree this script lives in.
 # Usage: ./deploy.sh
 set -euo pipefail
 
 cd "$(dirname "$0")"
 DIR="$(basename "$PWD")"
 
-case "$DIR" in
-  FLXContabilidad)
-    SERVICE="flxcontabilidad"
-    URL="http://10.100.50.4"
-    ;;
-  FLXContabilidad-staging)
-    SERVICE="flxcontabilidad-staging"
-    URL="http://10.100.50.4:8081"
-    ;;
-  *)
-    echo "error: unknown working tree '$DIR' — deploy.sh only runs in FLXContabilidad or FLXContabilidad-staging" >&2
-    exit 1
-    ;;
-esac
+if [ "$DIR" != "FLXContabilidad" ]; then
+  echo "error: unknown working tree '$DIR' — deploy.sh only runs in FLXContabilidad" >&2
+  exit 1
+fi
+
+SERVICE="flxcontabilidad"
+URL="http://10.100.50.4"
 
 echo "==> Deploying $SERVICE from main"
 
