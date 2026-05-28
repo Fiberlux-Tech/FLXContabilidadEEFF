@@ -10,6 +10,7 @@ from data.db import connect
 from data.queries import (
     fetch_pnl_data, fetch_bs_data,
     fetch_pnl_summary, fetch_bs_summary,
+    fetch_pnl_preagg, fetch_bs_detalle_cuenta, fetch_bs_detalle_nit,
     fetch_pnl_detail, fetch_pnl_detail_count,
     fetch_bs_detail, fetch_bs_detail_count,
 )
@@ -130,6 +131,51 @@ def fetch_bs_summary_only(company: str, year: int, conn_factory=None) -> pd.Data
     t0 = time.perf_counter()
     df = _fetch_with_own_conn(fetch_bs_summary, conn_factory, company, year)
     logger.info("fetch_bs_summary_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
+    return df
+
+
+# ── Phase F detail-grain fetches (pre-aggregated section + note tables) ─
+
+def fetch_pnl_preagg_only(company: str, year: int, conn_factory=None) -> pd.DataFrame:
+    """Fetch the pre-aggregated P&L detail grain for a (company, year).
+
+    One row per (MES, PARTIDA_PL, CECO, CUENTA, NIT) with three SALDO columns.
+    Feeds every P&L section table + ex_ic/only_ic variants.
+    See data.queries.fetch_pnl_preagg.
+    """
+    if conn_factory is None:
+        conn_factory = connect
+    t0 = time.perf_counter()
+    df = _fetch_with_own_conn(fetch_pnl_preagg, conn_factory, company, year)
+    logger.info("fetch_pnl_preagg_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
+    return df
+
+
+def fetch_bs_detalle_cuenta_only(company: str, year: int, partidas: list[str],
+                                 conn_factory=None) -> pd.DataFrame:
+    """Fetch cuenta-grain cumulative BS balances for the given PARTIDA_BS list.
+
+    Backs bs_detail_by_cuenta. See data.queries.fetch_bs_detalle_cuenta.
+    """
+    if conn_factory is None:
+        conn_factory = connect
+    t0 = time.perf_counter()
+    df = _fetch_with_own_conn(fetch_bs_detalle_cuenta, conn_factory, company, year, partidas)
+    logger.info("fetch_bs_detalle_cuenta_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
+    return df
+
+
+def fetch_bs_detalle_nit_only(company: str, year: int, partidas: list[str],
+                              conn_factory=None) -> pd.DataFrame:
+    """Fetch NIT-grain cumulative BS balances for the given PARTIDA_BS list.
+
+    Backs bs_top20_by_nit. See data.queries.fetch_bs_detalle_nit.
+    """
+    if conn_factory is None:
+        conn_factory = connect
+    t0 = time.perf_counter()
+    df = _fetch_with_own_conn(fetch_bs_detalle_nit, conn_factory, company, year, partidas)
+    logger.info("fetch_bs_detalle_nit_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
     return df
 
 

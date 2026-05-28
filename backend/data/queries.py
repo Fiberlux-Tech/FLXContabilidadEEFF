@@ -17,12 +17,16 @@ SQL_VIEW_PNL_PREPARADO = "VISTA_PNL_PREPARADO"
 SQL_VIEW_BS_PREPARADO = "VISTA_BS_PREPARADO"
 SQL_VIEW_PNL_SUMARIO = "VISTA_PNL_SUMARIO"
 SQL_VIEW_BS_SUMARIO = "VISTA_BS_SUMARIO"
+SQL_VIEW_PNL_PREAGG = "VISTA_PNL_PREAGG"
+SQL_VIEW_BS_PREPARADO_CUMSUM = "VISTA_BS_PREPARADO_CUMSUM"
+SQL_VIEW_BS_DETALLE_NIT_CUMSUM = "VISTA_BS_DETALLE_NIT_CUMSUM"
 
 # Validate identifiers at import time to prevent any injection via constants.
 import re as _re
 _IDENT_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 for _ident in (SQL_SCHEMA, SQL_VIEW, SQL_VIEW_PNL_PREPARADO, SQL_VIEW_BS_PREPARADO,
-               SQL_VIEW_PNL_SUMARIO, SQL_VIEW_BS_SUMARIO):
+               SQL_VIEW_PNL_SUMARIO, SQL_VIEW_BS_SUMARIO, SQL_VIEW_PNL_PREAGG,
+               SQL_VIEW_BS_PREPARADO_CUMSUM, SQL_VIEW_BS_DETALLE_NIT_CUMSUM):
     if not _IDENT_RE.match(_ident):
         raise ValueError(f"Invalid SQL identifier: {_ident!r}")
 
@@ -162,6 +166,103 @@ def fetch_bs_summary(conn: pyodbc.Connection, company: str, year: int) -> pd.Dat
         raise QueryError(f"Failed to fetch BS summary for {company}/{year}: {exc}") from exc
 
     logger.info("Fetched %d BS summary rows for %s/%s", len(result), company, year)
+    return result
+
+
+# ── Phase F: pre-aggregated detail-grain fetches (section + note tables) ──
+#
+# These replace the in-Python preaggregate(df_stmt) / df_bs groupby that the
+# P&L section tables and BS note tables used to run on a cached row-level
+# DataFrame. The views do the GROUP BY; Python keeps only the cheap shaping
+# (pivot MES→columns, sort, TOTAL row, prefix split, top-N rank).
+
+
+def fetch_pnl_preagg(conn: pyodbc.Connection, company: str, year: int) -> pd.DataFrame:
+    """Fetch the pre-aggregated P&L detail grain from REPORTES.VISTA_PNL_PREAGG.
+
+    The view groups VISTA_PNL_PREPARADO (statement-eligible rows) by
+    (CIA, YEAR, MES, PARTIDA_PL, CENTRO_COSTO, DESC_CECO, CUENTA_CONTABLE,
+    DESCRIPCION, NIT, RAZON_SOCIAL) and returns three SALDO columns per row
+    (SALDO_TOTAL / SALDO_EX_IC / SALDO_ONLY_IC). One fetch feeds every P&L
+    section table and its ex_ic / only_ic variants — the caller derives the
+    three preagg frames by picking the matching SALDO_* column.
+
+    Returns ~10²–10³ rows per (company, year), not the 8.4M raw rows.
+    """
+    query = (
+        "SELECT MES, PARTIDA_PL, CENTRO_COSTO, DESC_CECO, "
+        "CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL, "
+        "SALDO_TOTAL, SALDO_EX_IC, SALDO_ONLY_IC "
+        f"FROM {SQL_SCHEMA}.{SQL_VIEW_PNL_PREAGG} "
+        "WHERE CIA = ? AND YEAR = ?"
+    )
+    params = [company, year]
+    logger.debug("PNL preagg query: %s | params: %s", query, params)
+    try:
+        result = pd.read_sql(query, conn, params=params)
+    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
+        raise QueryError(f"Failed to fetch P&L preagg for {company}/{year}: {exc}") from exc
+
+    logger.info("Fetched %d P&L preagg rows for %s/%s", len(result), company, year)
+    return result
+
+
+def fetch_bs_detalle_cuenta(conn: pyodbc.Connection, company: str, year: int,
+                            partidas: list[str]) -> pd.DataFrame:
+    """Fetch cuenta-grain cumulative BS balances from VISTA_BS_PREPARADO_CUMSUM.
+
+    Backs bs_detail_by_cuenta. The CUMSUM view (Phase E) is already at exactly
+    the cuenta grain this note builder needs, so no Phase F view is required —
+    we query it directly with a PARTIDA_BS IN (...) filter. The cuenta-prefix
+    include/exclude, future-month handling, and TOTAL stay in Python.
+
+    *partidas* must be non-empty; the IN-list is parameterized.
+    """
+    if not partidas:
+        raise QueryError("partidas must be non-empty")
+    placeholders = ", ".join(["?"] * len(partidas))
+    query = (
+        "SELECT MES, CUENTA_CONTABLE, DESCRIPCION, SALDO_CUMSUM "
+        f"FROM {SQL_SCHEMA}.{SQL_VIEW_BS_PREPARADO_CUMSUM} "
+        f"WHERE CIA = ? AND YEAR = ? AND PARTIDA_BS IN ({placeholders})"
+    )
+    params = [company, year, *partidas]
+    logger.debug("BS detalle cuenta query: %s | params: %s", query, params)
+    try:
+        result = pd.read_sql(query, conn, params=params)
+    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
+        raise QueryError(f"Failed to fetch BS cuenta detalle for {company}/{year}: {exc}") from exc
+
+    logger.info("Fetched %d BS cuenta detalle rows for %s/%s", len(result), company, year)
+    return result
+
+
+def fetch_bs_detalle_nit(conn: pyodbc.Connection, company: str, year: int,
+                         partidas: list[str]) -> pd.DataFrame:
+    """Fetch NIT-grain cumulative BS balances from VISTA_BS_DETALLE_NIT_CUMSUM.
+
+    Backs bs_top20_by_nit. The view applies the densified cumsum per
+    (partida, NIT); Python pivots, zeroes future months, ranks top-20,
+    fills SIN NIT / SIN RAZON SOCIAL, and appends the TOTAL row.
+
+    *partidas* must be non-empty; the IN-list is parameterized.
+    """
+    if not partidas:
+        raise QueryError("partidas must be non-empty")
+    placeholders = ", ".join(["?"] * len(partidas))
+    query = (
+        "SELECT MES, NIT, RAZON_SOCIAL, SALDO_CUMSUM "
+        f"FROM {SQL_SCHEMA}.{SQL_VIEW_BS_DETALLE_NIT_CUMSUM} "
+        f"WHERE CIA = ? AND YEAR = ? AND PARTIDA_BS IN ({placeholders})"
+    )
+    params = [company, year, *partidas]
+    logger.debug("BS detalle NIT query: %s | params: %s", query, params)
+    try:
+        result = pd.read_sql(query, conn, params=params)
+    except (pyodbc.Error, pd.errors.DatabaseError) as exc:
+        raise QueryError(f"Failed to fetch BS NIT detalle for {company}/{year}: {exc}") from exc
+
+    logger.info("Fetched %d BS NIT detalle rows for %s/%s", len(result), company, year)
     return result
 
 

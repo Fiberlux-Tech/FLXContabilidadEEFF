@@ -25,6 +25,8 @@ import psutil
 from data.fetcher import (
     fetch_all_data, fetch_pnl_only, fetch_bs_only,
     fetch_pnl_summary_only, fetch_bs_summary_only,
+    fetch_pnl_preagg_only,
+    fetch_bs_detalle_cuenta_only, fetch_bs_detalle_nit_only,
     fetch_pnl_detail_only, fetch_pnl_detail_count_only,
     fetch_bs_detail_only, fetch_bs_detail_count_only,
 )
@@ -202,6 +204,9 @@ _caches: dict[str, LRUTTLCache] = {
     "pl_preagg_ex_ic": LRUTTLCache("pl_preagg_ex_ic"),
     "pl_preagg_only_ic": LRUTTLCache("pl_preagg_only_ic"),
     "pl_sections": LRUTTLCache("pl_sections"),
+    # Phase F: the (preagg, ex_ic, only_ic) triple sliced from VISTA_PNL_PREAGG.
+    # ~10²–10³ rows per frame — small enough to keep the default max_entries.
+    "pl_preagg_triple": LRUTTLCache("pl_preagg_triple"),
 }
 
 
@@ -334,24 +339,23 @@ def _reindex_like(filtered: pd.DataFrame, reference: pd.DataFrame) -> pd.DataFra
 
 
 def _add_ic_variants(base: dict[str, pd.DataFrame],
-                     df_stmt: pd.DataFrame,
                      preagg_ex_ic: pd.DataFrame,
                      preagg_only_ic: pd.DataFrame,
                      compute_fn) -> dict[str, pd.DataFrame]:
-    """Run *compute_fn* on IC-filtered subsets and merge results with *base*.
+    """Run *compute_fn* on the IC-filtered preaggs and merge results with *base*.
 
     For each key in *base*, adds key_ex_ic and key_only_ic variants
     reindexed to match the original row structure.
 
-    The IC-filtered preaggs are passed in (cached at the _ensure_pl_stmt_cached
-    layer) rather than recomputed here — they're pure functions of df_stmt and
-    were redundantly rebuilt 11× per report load before.
+    Phase F: the three preagg frames come pre-split from VISTA_PNL_PREAGG (each
+    carries the matching SALDO_* column as SALDO and the full label grain
+    including NIT/RAZON_SOCIAL), so each frame serves as both the `df` and the
+    `preagg` argument to *compute_fn* — the NIT-grain functions read `df`, the
+    rest read `preagg`, and both see the same correctly-summed rows.  There is
+    no longer a row-level df_stmt to re-filter by IS_INTERCOMPANY.
     """
-    df_ex_ic = df_stmt[~df_stmt[IS_INTERCOMPANY]]
-    df_only_ic = df_stmt[df_stmt[IS_INTERCOMPANY]]
-
-    ex_ic_dfs = compute_fn(df_ex_ic, preagg_ex_ic)
-    only_ic_dfs = compute_fn(df_only_ic, preagg_only_ic)
+    ex_ic_dfs = compute_fn(preagg_ex_ic, preagg_ex_ic)
+    only_ic_dfs = compute_fn(preagg_only_ic, preagg_only_ic)
 
     result = dict(base)
     for key, ref_df in base.items():
@@ -377,7 +381,7 @@ def _compute_ingresos_base(df_stmt, preagg):
 
 def _compute_ingresos(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_ingresos_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_ingresos_base)
 
 
@@ -390,7 +394,7 @@ def _compute_costo_base(df_stmt, preagg):
 
 def _compute_costo(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_costo_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_costo_base)
 
 
@@ -403,7 +407,7 @@ def _compute_gasto_venta_base(df_stmt, preagg):
 
 def _compute_gasto_venta(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_gasto_venta_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_gasto_venta_base)
 
 
@@ -416,7 +420,7 @@ def _compute_gasto_admin_base(df_stmt, preagg):
 
 def _compute_gasto_admin(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_gasto_admin_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_gasto_admin_base)
 
 
@@ -433,7 +437,7 @@ def _compute_otros_egresos_base(df_stmt, preagg):
 
 def _compute_otros_egresos(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_otros_egresos_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_otros_egresos_base)
 
 
@@ -448,7 +452,7 @@ def _compute_dya_base(df_stmt, preagg):
 
 def _compute_dya(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_dya_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_dya_base)
 
 
@@ -462,7 +466,7 @@ def _compute_resultado_financiero_base(df_stmt, preagg):
 
 def _compute_resultado_financiero(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_resultado_financiero_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_resultado_financiero_base)
 
 
@@ -476,7 +480,7 @@ def _compute_diferencia_cambio_base(df_stmt, preagg):
 
 def _compute_diferencia_cambio(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_diferencia_cambio_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_diferencia_cambio_base)
 
 
@@ -496,7 +500,7 @@ def _compute_analysis_pl_finanzas_base(df_stmt, preagg):
 
 def _compute_analysis_pl_finanzas(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_analysis_pl_finanzas_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_analysis_pl_finanzas_base)
 
 
@@ -509,7 +513,7 @@ def _compute_analysis_planilla_base(df_stmt, preagg):
 
 def _compute_analysis_planilla(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_analysis_planilla_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_analysis_planilla_base)
 
 
@@ -545,7 +549,7 @@ def _compute_analysis_flujo_caja_base(df_stmt, preagg):
 
 def _compute_analysis_flujo_caja(df_stmt, preagg, preagg_ex_ic, preagg_only_ic):
     base = _compute_analysis_flujo_caja_base(df_stmt, preagg)
-    return _add_ic_variants(base, df_stmt, preagg_ex_ic, preagg_only_ic,
+    return _add_ic_variants(base, preagg_ex_ic, preagg_only_ic,
                             _compute_analysis_flujo_caja_base)
 
 
@@ -611,6 +615,61 @@ def _df_to_records(df: pd.DataFrame) -> list[dict]:
     ]
 
 
+# ── Phase F: VISTA_PNL_PREAGG → (preagg, ex_ic, only_ic) triple ───────────
+#
+# The view returns one long row per (MES, PARTIDA_PL, CECO, CUENTA, NIT) with
+# three SALDO columns.  Each detail-section variant is the SAME label grain
+# with SALDO drawn from the matching SALDO_* column, so we slice the fetched
+# frame into three frames that are drop-in replacements for the old
+# preaggregate(df_stmt) / preaggregate(df_stmt[ic]) frames.
+#
+# Column contract must match accounting.aggregation.preaggregate exactly:
+#   [PARTIDA_PL, CENTRO_COSTO, DESC_CECO, CUENTA_CONTABLE, DESCRIPCION, MES, SALDO]
+# plus NIT / RAZON_SOCIAL (carried so proyectos_especiales /
+# detail_proveedores_by_ceco, which read the frame as their `df` arg, find
+# the columns they need).  PARTIDA_PL / CENTRO_COSTO are cast to category to
+# match prepare_pnl_from_view's dtypes, so observed=True grouping and sort
+# order are identical to the pre-Phase-F path.
+
+_PREAGG_LABEL_COLS = [
+    PARTIDA_PL, CENTRO_COSTO, DESC_CECO, CUENTA_CONTABLE, DESCRIPCION,
+    NIT, RAZON_SOCIAL, MES,
+]
+_PREAGG_SALDO_SOURCE = {
+    "total": "SALDO_TOTAL",
+    "ex_ic": "SALDO_EX_IC",
+    "only_ic": "SALDO_ONLY_IC",
+}
+
+
+def _preagg_variant(raw: pd.DataFrame, saldo_col: str) -> pd.DataFrame:
+    """Slice the fetched VISTA_PNL_PREAGG frame to one IC variant.
+
+    Takes *saldo_col* (SALDO_TOTAL / SALDO_EX_IC / SALDO_ONLY_IC) as SALDO and
+    drops rows that are NULL for that variant (the view emits NULL when a
+    (grain, variant) had no contributing rows — e.g. an ex_ic SUM over a row
+    set that was entirely intercompany).  Dropping them matches the old path,
+    where preaggregate(df_stmt[~ic]) simply had no such rows.
+    """
+    if raw.empty:
+        return pd.DataFrame(columns=[*_PREAGG_LABEL_COLS, SALDO])
+    out = raw[[*_PREAGG_LABEL_COLS, saldo_col]].copy()
+    out = out[out[saldo_col].notna()]
+    out = out.rename(columns={saldo_col: SALDO})
+    out[PARTIDA_PL] = out[PARTIDA_PL].astype("category")
+    out[CENTRO_COSTO] = out[CENTRO_COSTO].astype("category")
+    return out.reset_index(drop=True)
+
+
+def _split_pnl_preagg(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Build the (preagg, preagg_ex_ic, preagg_only_ic) triple from one fetch."""
+    return (
+        _preagg_variant(raw, _PREAGG_SALDO_SOURCE["total"]),
+        _preagg_variant(raw, _PREAGG_SALDO_SOURCE["ex_ic"]),
+        _preagg_variant(raw, _PREAGG_SALDO_SOURCE["only_ic"]),
+    )
+
+
 # ── Main entry point ────────────────────────────────────────────────────
 
 def load_report_data(company: str, year: int, *, force_refresh: bool = False) -> dict:
@@ -634,28 +693,20 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
 
     t0 = time.perf_counter()
 
-    # Single fetch — gets P&L + BS for the current year
-    raw_current_full, raw_bs = fetch_all_data(company, year, None)
+    # P&L transforms — summaries + all detail sections, all from SQL views
+    # (VISTA_PNL_SUMARIO + VISTA_PNL_PREAGG).  No row-level df_stmt.
+    pl, pl_records = _run_pl_transforms(company, year)
 
-    logger.info("Data fetch: %.2fs (%d PnL rows, %d BS rows)", time.perf_counter() - t0, len(raw_current_full), len(raw_bs))
-
-    t1 = time.perf_counter()
-
-    # P&L transforms — reuse _run_pl_transforms (shared with load_pl_data)
-    df_stmt, pl, pl_records = _run_pl_transforms(raw_current_full, company, year)
-
-    # BS transforms — no month filtering; cumsum carries balances forward naturally.
-    # df_bs is still derived from the row-level fetch (raw_bs) because the BS
-    # note tables in load_bs_data and the row-level cache at _caches["bs"] rely
-    # on it.  The summary itself comes from VISTA_BS_SUMARIO (Phase C).
-    df_bs = prepare_bs_from_view(raw_bs) if not raw_bs.empty else None
-    if df_bs is not None:
-        bs_long = fetch_bs_summary_only(company, year)
+    # BS summary from VISTA_BS_SUMARIO (Phase C).  Empty-check via a cheap
+    # summary fetch — the row-level df_bs is no longer built here.  BS note
+    # tables are produced by load_bs_data, not this path.
+    bs_long = fetch_bs_summary_only(company, year)
+    if not bs_long.empty:
         bs = bs_summary_from_view(bs_long, pl_summary_df=pl)
     else:
         bs = pd.DataFrame()
 
-    logger.info("Transforms: %.2fs", time.perf_counter() - t1)
+    logger.info("Transforms: %.2fs", time.perf_counter() - t0)
 
     result = {
         **pl_records,
@@ -666,11 +717,6 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
     }
 
     _caches["result"].set(company, year, result)
-    _caches["df"].set(company, year, df_stmt)
-    _caches["pl_stmt"].set(company, year, df_stmt)
-    _caches["pl_preagg"].set(company, year, preaggregate(df_stmt))
-    if df_bs is not None:
-        _caches["bs"].set(company, year, df_bs)
     # Cross-populate split caches so split endpoints get instant hits
     _caches["pl_df"].set(company, year, pl)
     # pl_result for the summary-only fast path
@@ -719,29 +765,38 @@ def _run_pl_summary_only(raw_current_full: pd.DataFrame, company: str, year: int
     return df_stmt, preagg, pl, records
 
 
-def _run_pl_transforms(raw_current_full: pd.DataFrame, company: str, year: int) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+def _run_pl_transforms(company: str, year: int) -> tuple[pd.DataFrame, dict]:
     """Full P&L transform pipeline: summaries + all detail sections.
 
-    Returns (df_stmt, pl_df, all_records_dict).
-    Used by load_report_data (exports / full-load path).
+    Returns (pl_df, all_records_dict).
+    Used by load_report_data (the /api/data/load "everything at once" path).
+
+    Phase F: summaries come from VISTA_PNL_SUMARIO and detail sections from
+    VISTA_PNL_PREAGG — no row-level df_stmt is built or grouped.
     """
-    df_stmt, preagg, pl, records = _run_pl_summary_only(raw_current_full, company, year)
+    summaries = pl_summary_from_view(fetch_pnl_summary_only(company, year))
+    pl         = ensure_month_columns(summaries["total"])
+    pl_ex_ic   = ensure_month_columns(summaries["ex_ic"])
+    pl_only_ic = ensure_month_columns(summaries["only_ic"])
+    records = {
+        "pl_summary": _df_to_records(pl),
+        "pl_summary_ex_ic": _df_to_records(pl_ex_ic),
+        "pl_summary_only_ic": _df_to_records(pl_only_ic),
+    }
 
-    # Compute IC preaggs once for the whole loop (this is the cold "everything
-    # at once" path — no in-memory cache to populate).
-    preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
-    preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
+    preagg, preagg_ex_ic, preagg_only_ic = _ensure_pl_preagg_cached(company, year)
 
-    # Compute all detail sections
+    # Compute all detail sections.  The base preagg doubles as the `df` arg
+    # (carries NIT/RAZON_SOCIAL for the NIT-grain sections).
     for section_name in SECTION_REGISTRY:
-        section_dfs = compute_pl_section(df_stmt, preagg,
+        section_dfs = compute_pl_section(preagg, preagg,
                                          preagg_ex_ic, preagg_only_ic,
                                          section_name)
         for key, df in section_dfs.items():
             if key not in records:  # avoid duplicating keys across sections
                 records[key] = _df_to_records(df)
 
-    return df_stmt, pl, records
+    return pl, records
 
 
 def _try_pl_stmt_from_cache(company: str, year: int):
@@ -857,6 +912,41 @@ def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = Fal
             return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
 
 
+def _ensure_pl_preagg_cached(company: str, year: int, *, force_refresh: bool = False
+                             ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Return (preagg, preagg_ex_ic, preagg_only_ic) for a company/year.
+
+    Phase F replacement for the preagg portion of _ensure_pl_stmt_cached: the
+    three frames are sliced from a single VISTA_PNL_PREAGG fetch instead of
+    grouped from a cached ~400 MB row-level df_stmt.  No disk pickle, no
+    df_stmt — just a small SQL result cached in-memory.
+
+    Concurrent calls for the same (company, year) coalesce on the in-process
+    single-flight lock (same ("pl") key used by the summary path); force_refresh
+    callers bypass coalescing.
+    """
+    if not force_refresh:
+        hit = _caches["pl_preagg_triple"].get(company, year)
+        if hit is not None:
+            return hit
+
+    lock = _get_inflight_lock(company, year, "pl")
+    with lock:
+        if not force_refresh:
+            hit = _caches["pl_preagg_triple"].get(company, year)
+            if hit is not None:
+                logger.info("P&L preagg %s/%d: served from cache after lock wait", company, year)
+                return hit
+
+        t0 = time.perf_counter()
+        raw = fetch_pnl_preagg_only(company, year)
+        logger.info("P&L preagg fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
+
+        triple = _split_pnl_preagg(raw)
+        _caches["pl_preagg_triple"].set(company, year, triple)
+        return triple
+
+
 def load_pl_data(company: str, year: int, *, force_refresh: bool = False) -> dict:
     """Fetch and transform P&L summary only (fast dashboard path).
 
@@ -877,11 +967,12 @@ def load_pl_data(company: str, year: int, *, force_refresh: bool = False) -> dic
     if force_refresh:
         _delete_disk_cache(company, year)
         _caches["pl_sections"].pop(company, year)
-
-    df_stmt, _, _, _ = _ensure_pl_stmt_cached(company, year, force_refresh=force_refresh)
+        _caches["pl_preagg_triple"].pop(company, year)
 
     # Compute summaries from VISTA_PNL_SUMARIO — one SQL roundtrip returns all
-    # three IC variants.  df_stmt stays cached for the detail/drill-down path.
+    # three IC variants.  Detail sections fetch VISTA_PNL_PREAGG lazily via
+    # load_pl_section → _ensure_pl_preagg_cached; the summary path no longer
+    # needs to build or cache a row-level df_stmt.
     summaries = pl_summary_from_view(fetch_pnl_summary_only(company, year))
     pl         = ensure_month_columns(summaries["total"])
     pl_ex_ic   = ensure_month_columns(summaries["ex_ic"])
@@ -934,13 +1025,15 @@ def load_pl_section(company: str, year: int, section: str,
 
     t0 = time.perf_counter()
 
-    # Get df_stmt + preaggs (from memory, disk, or SQL)
-    df_stmt, preagg, preagg_ex_ic, preagg_only_ic = _ensure_pl_stmt_cached(
+    # Get the preagg triple (sliced from one VISTA_PNL_PREAGG fetch, cached).
+    preagg, preagg_ex_ic, preagg_only_ic = _ensure_pl_preagg_cached(
         company, year, force_refresh=force_refresh)
 
-    # Compute the section
+    # Compute the section.  The base preagg frame doubles as the `df` argument:
+    # it carries NIT/RAZON_SOCIAL for the NIT-grain sections and is the same
+    # grain the preagg-reading sections expect.
     section_dfs = compute_pl_section(
-        df_stmt, preagg, preagg_ex_ic, preagg_only_ic, section, **kwargs)
+        preagg, preagg, preagg_ex_ic, preagg_only_ic, section, **kwargs)
     section_records = {key: _df_to_records(df) for key, df in section_dfs.items()}
 
     # Cache the section result (accumulate into existing dict)
@@ -1135,9 +1228,11 @@ def _prefetch_bs_background(company: str, year: int) -> None:
 
 
 def _prefetch_prev_year_background(company: str, year: int) -> None:
-    """Pre-fetch previous-year P&L df_stmt so trailing 12M is fast.
+    """Pre-fetch previous-year P&L preagg so trailing-12M section nav is fast.
 
-    Checks disk cache first (sub-second), falls back to SQL if needed.
+    Warms the prev-year VISTA_PNL_PREAGG triple — a small SQL result, not a
+    row-level df_stmt.  Trailing-12M summary rows come from VISTA_PNL_SUMARIO
+    on demand; drill-down crosses the year boundary via the Phase D path.
     """
     if not _memory_ok_for_prefetch("prev-year prefetch"):
         return
@@ -1146,7 +1241,7 @@ def _prefetch_prev_year_background(company: str, year: int) -> None:
         return
     key = ("prev_pl", company, prev_year)
     with _bg_lock:
-        if _caches["pl_stmt"].get(company, prev_year) is not None:
+        if _caches["pl_preagg_triple"].get(company, prev_year) is not None:
             return
         existing = _bg_tasks.get(key)
         if existing is not None and existing.is_alive():
@@ -1154,7 +1249,7 @@ def _prefetch_prev_year_background(company: str, year: int) -> None:
 
         def worker():
             try:
-                _ensure_pl_stmt_cached(company, prev_year)
+                _ensure_pl_preagg_cached(company, prev_year)
                 logger.info("Background prev-year pre-fetch done for %s/%d", company, prev_year)
             except Exception:
                 logger.exception("Background prev-year pre-fetch failed for %s/%d", company, prev_year)

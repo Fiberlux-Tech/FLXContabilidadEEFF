@@ -187,13 +187,46 @@ While these read row-level caches, `load_pl_data` / `load_bs_data` must keep *wr
 
 **Approach (decided 2026-05-28): pre-aggregated SQL views, extending the Phase C pattern.** These tables are grouped aggregates (by CECO, by cuenta, top-N by NIT), not deep journal-entry scrolls, so summary views fit better than Phase-D-style pagination. Build `VISTA_*` views (per-CIA + REPORTES umbrella, same topology) for each section/note grouping; Python fetches the small pre-grouped result instead of grouping a cached DataFrame. Drill-INTO a section cell still uses Phase D's `/api/data/detail` paginated path.
 
-**Steps (sketch — full plan when Phase F is scheduled).**
-1. Inventory every grouping `compute_pl_section` and the BS note tables produce; design the minimal set of summary views to cover them (some may share a view with a `GROUP BY` grain parameter).
-2. DBA deploys the new views.
-3. Wire `compute_pl_section` + the BS note-table builders to fetch from the views; delete the pandas groupby paths once parity is confirmed.
-4. Once **no caller reads** `df` / `pl_stmt` / `pl_preagg*` / `bs`, stop writing them. That is the hand-off to Phase C+1.
+#### Inventory (done 2026-05-28)
+
+**P&L side — every section table reduces to one of seven aggregation calls, and all seven are pure functions of `preaggregate(df_stmt)`.** Walking `SECTION_REGISTRY` (12 sections in [data_service.py](../backend/services/data_service.py)), the distinct grains produced are:
+
+| Aggregation fn | Grain (GROUP BY) | Partida / account filter | Reads |
+| --- | --- | --- | --- |
+| `sales_details` | `CUENTA_CONTABLE, DESCRIPCION` | `PARTIDA_PL = 'INGRESOS ORDINARIOS'` | preagg |
+| `detail_by_ceco` | `CENTRO_COSTO, DESC_CECO` | partida list (COSTO, GASTO VENTA, GASTO ADMIN, D&A-*) | preagg |
+| `detail_by_cuenta` | `CUENTA_CONTABLE, DESCRIPCION` | partida list (OTROS INGRESOS/EGRESOS, RESULTADO FINANCIERO, DIFERENCIA DE CAMBIO, flujo partidas) | preagg |
+| `detail_ceco_by_cuenta` | `CENTRO_COSTO, DESC_CECO, CUENTA_CONTABLE, DESCRIPCION` | partida list | preagg |
+| `detail_planilla` | `PARTIDA_PL, CENTRO_COSTO, DESC_CECO, CUENTA_CONTABLE, DESCRIPCION` | `CUENTA_CONTABLE LIKE '62%'` (all partidas) | preagg |
+| `proyectos_especiales` | `NIT, RAZON_SOCIAL` | `PARTIDA_PL = 'INGRESOS PROYECTOS'` | **raw `df_stmt`** (needs NIT) |
+| `detail_proveedores_by_ceco` | `NIT, RAZON_SOCIAL` | `CENTRO_COSTO = <ceco>` (7-CECO allowlist) | **raw `df_stmt`** (needs NIT) |
+
+`detail_resultado_financiero` / `detail_diferencia_cambio` are just `detail_by_cuenta` + a Python prefix split (`'77'` / `'77.6'`); the split stays in Python, fed by the view. The `_ex_ic` / `_only_ic` variants are the same seven calls run on `df_stmt` filtered by `IS_INTERCOMPANY` — i.e. the *same grains* with an extra filter, not new grains.
+
+**Key consequence:** the only thing the seven functions need from the row-level frame is `preagg`'s grain *plus* `NIT` / `RAZON_SOCIAL` (for the two raw-reading functions) *plus* `IS_INTERCOMPANY` (for the variants). So **one preagg view replaces `df_stmt` + all three cached preagg frames** for the entire P&L section path.
+
+**BS side — two grains, both already cumulative-capable off Phase E.** `bs_detail_by_cuenta` groups by `CUENTA_CONTABLE, DESCRIPCION` with optional cuenta-prefix include/exclude (the `('39',)` PPE/intangible splits) over a `PARTIDA_BS` list; `bs_top20_by_nit` groups by `NIT, RAZON_SOCIAL`, ranks by the last data month's cumulative value, takes top-20. Both apply `_apply_bs_cumsum`. `VISTA_BS_PREPARADO_CUMSUM` (Phase E) already produces cuenta-grain cumulative balances; the NIT ranking needs a NIT-grain cumulative sibling.
+
+#### View set (minimal — 3 new views + 1 existing)
+
+1. **`VISTA_PNL_PREAGG`** — grain `CIA, YEAR, MES, PARTIDA_PL, CENTRO_COSTO, DESC_CECO, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL`, columns `SALDO_TOTAL / SALDO_EX_IC / SALDO_ONLY_IC` (the Phase-C three-column IC pattern, so the variants don't need separate views). `WHERE IS_STATEMENT_ELIGIBLE = 1`. This single view feeds all seven P&L aggregation functions; Python keeps the lightweight pivot/sort/total-row/prefix-split logic but groups the small pre-aggregated result instead of an 8.4M-row frame. NIT/RAZON_SOCIAL in the grain make it wider than the Python `preagg` (which drops them), but it's still ~10²–10³ rows per `(CIA, YEAR)`, not 8.4M.
+2. **`VISTA_BS_DETALLE_CUENTA`** — reuse / thin wrapper over `VISTA_BS_PREPARADO_CUMSUM` (cuenta-grain cumulative). Python applies the partida + cuenta-prefix filters and the future-month zeroing (already in SQL via the densified cumsum) and the TOTAL column.
+3. **`VISTA_BS_DETALLE_NIT_CUMSUM`** — NIT-grain sibling of the Phase E cumsum view: grain `CIA, YEAR, MES, PARTIDA_BS, NIT, RAZON_SOCIAL`, `SALDO_CUMSUM` via the same densified window function. Python does the top-20 rank + TOTAL row.
+
+All three follow the per-CIA + `REPORTES` umbrella topology (UNION ALL across the four company schemas) so `CIA = ?` predicates push down — same as every existing view.
+
+**Open question for the DBA pass:** whether `proyectos_especiales` / `detail_proveedores_by_ceco` (NIT-grain P&L) justify their own narrower view or just ride `VISTA_PNL_PREAGG` with the NIT columns already in its grain. Leaning ride-along — one fewer view, and the grain is already there. Confirm row counts aren't pathological for the high-NIT companies before committing.
+
+#### Steps
+1. ✅ Inventory + view design (above).
+2. DBA deploys `VISTA_PNL_PREAGG`, `VISTA_BS_DETALLE_NIT_CUMSUM`, and the `VISTA_BS_DETALLE_CUENTA` wrapper (per-CIA + umbrella). Add parity SQL to `sql/PARITY_CHECKS.sql`.
+3. Add fetchers (`fetch_pnl_preagg_only`, `fetch_bs_detalle_*`) and rewire the seven P&L aggregation functions + the two BS note builders to group the view result. Keep the Python pivot/split/rank/total logic — only the source frame changes from cached row-level to fetched pre-aggregated.
+4. Per-table parity gate (centavo-exact vs the pandas output, every section + note table, all three IC variants) before deleting each pandas groupby path.
+5. Once **no caller reads** `df` / `pl_stmt` / `pl_preagg*` / `bs`, stop writing them in `load_pl_data` / `load_bs_data` / `_ensure_pl_stmt_cached`. That is the hand-off to Phase C+1 items 4–6.
 
 **Gate.** Per-table parity (the section/note table from SQL must match the pandas output to the centavo) before each deletion, same posture as Phases A–C.
+
+**Watch items.** (a) `proyectos_especiales` takes a caller-supplied `mes_cols` (dynamic month set, e.g. trailing-12M) — the view must carry all 12 months as rows and let Python select; don't bake a fixed month window into the view. (b) BS cumsum future-month zeroing and the "TOTAL = last data month, not Dec" rule live in `_apply_bs_cumsum` — `VISTA_BS_PREPARADO_CUMSUM` zeroes via densification, so confirm parity on a partial-year company (data only through e.g. May) where Dec cumulative ≠ TOTAL. (c) `_reindex_like` exists to keep `_ex_ic`/`_only_ic` tables row-aligned with the "all" table — once the three IC columns come from one view row, that reindex may be simplifiable, but treat that as a follow-up, not part of the parity-gated migration.
 
 ### Phase C+1 — Simplification pass  (depends on Phase F, not just Phase C)
 
