@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import psutil
 
 from data.fetcher import (
     fetch_all_data, fetch_pnl_only, fetch_bs_only,
@@ -1075,9 +1076,40 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
 _bg_lock = threading.Lock()
 _bg_tasks: dict[tuple[str, int], threading.Thread] = {}
 
+# OOM safety valve: skip speculative prefetches when free RAM is below this.
+# The box is memory-bound (5.8 GB, row-level caches still resident pre-Phase F);
+# a cold click that fans out three prefetches once SIGKILLed a worker.
+_PREFETCH_MIN_AVAILABLE_BYTES = 800 * 1024 * 1024
+
+
+def _memory_ok_for_prefetch(prefetch_name: str) -> bool:
+    """Return True if there's enough free RAM to safely spawn a prefetch.
+
+    Cheap synchronous read of system available memory. mem_monitor only logs
+    this periodically; it does not expose a live value, so we sample psutil
+    directly at gate time. Fails open — a sampling error must not silently
+    disable the warm-cache behavior the dashboard relies on.
+    """
+    try:
+        available = psutil.virtual_memory().available
+    except Exception:
+        logger.exception("memory gate sample failed; allowing %s", prefetch_name)
+        return True
+    if available < _PREFETCH_MIN_AVAILABLE_BYTES:
+        logger.warning(
+            "Skipping %s: available memory %.0f MB below %.0f MB threshold",
+            prefetch_name,
+            available / (1024 * 1024),
+            _PREFETCH_MIN_AVAILABLE_BYTES / (1024 * 1024),
+        )
+        return False
+    return True
+
 
 def _prefetch_bs_background(company: str, year: int) -> None:
     """Spawn a daemon thread to pre-fetch BS data so it's cached when needed."""
+    if not _memory_ok_for_prefetch("BS prefetch"):
+        return
     key = (company, year)
     with _bg_lock:
         # Already cached or already in flight — skip
@@ -1107,6 +1139,8 @@ def _prefetch_prev_year_background(company: str, year: int) -> None:
 
     Checks disk cache first (sub-second), falls back to SQL if needed.
     """
+    if not _memory_ok_for_prefetch("prev-year prefetch"):
+        return
     prev_year = year - 1
     if prev_year < MIN_YEAR:
         return
@@ -1144,6 +1178,8 @@ _bg_pl_section_tasks: dict[tuple[str, int], threading.Thread] = {}
 
 def _prefetch_pl_sections_background(company: str, year: int) -> None:
     """Pre-compute the most-clicked P&L sections in one daemon thread."""
+    if not _memory_ok_for_prefetch("P&L section prefetch"):
+        return
     key = (company, year)
     with _bg_lock:
         cached = _caches["pl_sections"].get(company, year) or {}
