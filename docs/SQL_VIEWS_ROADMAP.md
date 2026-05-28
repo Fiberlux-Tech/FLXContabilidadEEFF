@@ -201,7 +201,9 @@ While these read row-level caches, `load_pl_data` / `load_bs_data` must keep *wr
 
 **⚠️ 2026-05-28 co-tenancy finding.** `ps` showed **6 worker processes** on the box: prod master (up 2d 18h) with 3 workers ≈ 1.0 GB RSS, and staging master (up 19h) with 3 workers ≈ 2.4 GB RSS (staging higher because tonight's benchmark + smoke testing filled its caches). Combined ≈ 3.5 GB of 5.8 GB before the OS, SQL ODBC buffers, and headroom. Two independent findings compound here:
 - **Each stack over-provisions workers** for ~10–25 internal users (the `workers=3` item below).
-- **Running a full second 3-worker stack (staging) on the prod box** roughly doubles the floor. Options to weigh during C+1: drop staging to 1 worker; gate staging behind an env flag so it's only up during active testing; or move staging to a separate small box. This wasn't in the original roadmap — staging was assumed negligible. It is not.
+- **Running a full second 3-worker stack (staging) on the prod box** roughly doubles the floor. This wasn't in the original roadmap — staging was assumed negligible. It is not.
+
+**✅ Decision 2026-05-28 — go single-site, test on a laptop clone.** Rather than keep a server-side staging stack, the team is decommissioning it and moving pre-prod validation to a **local laptop clone** (the laptop reaches the SQL Server over VPN/LAN — confirmed by the user). This frees the entire staging stack (~2.4 GB) permanently and removes a whole Python runtime from the box — the single biggest immediate headroom win available, larger than any other C+1 item. It reverses the 2026-05-24 "no laptop clone" call; the justification changed because the box is now demonstrably memory-bound (Incident 3 OOM). The deploy flow becomes: **edit + test locally on the laptop → push to `main` → `cd ~/FLXContabilidad && ./deploy.sh` on the prod box.** No more `cd ~/FLXContabilidad-staging && ./deploy.sh`. Recorded in the [edit-on-server workflow memory](../../.claude/projects/-home-administrator-FLXContabilidad/memory/feedback_server_edit_workflow.md).
 
 **Conversation trigger (2026-05-22).** While reviewing the post–Phase-A.5 architecture, two architectural questions surfaced that change the picture:
 
@@ -209,17 +211,21 @@ While these read row-level caches, `load_pl_data` / `load_bs_data` must keep *wr
 
 2. *"Can we have task-typed workers — one for browsing, one for Excel, one for PDF?"* — Moot as of the server-side export removal: all requests are equivalent dashboard JSON loads, so task-typing no longer has a meaningful axis to split on. Generic workers remain the right call.
 
-**What ships in Phase C+1.** Each item is independent; ship in order of confidence:
+**What ships in Phase C+1.** Items 0–2 are independent of Phase F and can ship now; items 4–5 require Phase F first (the caches must have no readers before they can be deleted). Ship in order of confidence:
 
-1. **Add a request-timeout middleware** that logs (and optionally pages) when any request exceeds ~15 s. Cheap, surfaces problems early, useful regardless of other changes.
+0. **Decommission the server-side staging stack (ship now).** Stop + disable `flxcontabilidad-staging`; pre-prod validation moves to a laptop clone (see the 2026-05-28 decision above). Frees ~2.4 GB permanently — the biggest single headroom win and the one that doesn't depend on any code change. Commands: `sudo systemctl stop flxcontabilidad-staging && sudo systemctl disable flxcontabilidad-staging`. The `~/FLXContabilidad-staging` tree can then be archived/removed. After this, `deploy.sh`'s `FLXContabilidad-staging` branch is dead code — leave it or trim it.
 
-2. **Drop `workers = 3` to `workers = 2`** in `backend/gunicorn.conf.py`. Validate the smaller worker count under realistic load (or just in prod with the timeout middleware as the safety net). Memory floor drops by ~400 MB; one worker is still free during any slow request (exports, drill-down). Easy to roll back.
+1. **Gate background prefetch on available memory (ship now — cheap OOM valve).** `_prefetch_bs_background` / `_prefetch_prev_year_background` / `_prefetch_pl_sections_background` are what turned a single cold FIBERLINE click into a two-year row-level load that OOM-killed a worker (Incident 3). Skip prefetch when `sys_available` is below a threshold (e.g. 800 MB) — the `mem_monitor` already samples this. Independent of Phase F; prevents the exact failure observed 2026-05-28.
 
-3. **Optional: preload at startup.** Add a small loop at `create_app()` that walks 4 companies × 2 years and calls `load_pl_data` + `load_bs_data` to fill the in-memory cache. Total cached payload post-Phase-C is ~80 KB across all cells, so it can't OOM (unlike `warmup.py` in May which OOMed because the data was 3+ GB). Eliminates the "first user pays" moment entirely. Add only if the natural lazy-fill leaves a real-user-visible cold-cache window.
+2. **Add a request-timeout middleware** that logs (and optionally pages) when any request exceeds ~15 s. Cheap, surfaces problems early, useful regardless of other changes.
 
-4. **Remove the disk pickle layer.** Post-Phase-C, summary rows from SQL take <1 s; loading a 10 KB pickle from disk takes microseconds. The disk layer was there as a cold-start optimization for 157 MB pickles — at 10 KB it's pointless. Delete `_save_to_disk`, `_try_pl_stmt_from_disk`, the `.stmt_cache/` directory wiring. Reduces code surface and ops worries (disk-fill, stale pickles).
+3. **Drop `workers = 3` to `workers = 2`** in `backend/gunicorn.conf.py`. Memory floor drops by ~400 MB/worker; one worker is still free during any slow request. Easy to roll back. (Bigger drops wait on Phase F — until the row-level caches are gone, even 2 workers can OOM at 4 companies × 2 years per Incident 3.)
 
-5. **Remove the single-flight flock.** `_CrossProcLock` was load-bearing when concurrent cold-cache fetches could pull 1.2 GB of duplicate pandas into RAM. Post-Phase-C, concurrent cold-cache fetches each pull ~10 KB; deduplicating sub-second SQL queries isn't worth the fcntl machinery. Keep the in-process `threading.Lock` for the drill-down path. (`_CrossProcLock` and `/tmp/flx_inflight_*.lock` files go away.)
+4. **Remove the disk pickle layer.** *Depends on Phase F.* Once summaries + section/note tables all come from SQL, the disk pickle (a cold-start optimization for 157 MB row-level pickles) is pointless. Delete `_save_to_disk`, `_try_pl_stmt_from_disk`, the `.stmt_cache/` wiring.
+
+5. **Remove the single-flight flock.** *Depends on Phase F.* `_CrossProcLock` was load-bearing when concurrent cold-cache fetches could pull 1.2 GB of duplicate pandas into RAM. Once fetches pull small SQL results, deduplicating them isn't worth the fcntl machinery. Keep the in-process `threading.Lock` for the drill-down path.
+
+6. **Delete the row-level caches.** *The payoff of Phase F.* Once `compute_pl_section` + BS note tables read from SQL, stop writing `_caches["df"]` / `pl_stmt` / `pl_preagg` / `pl_preagg_ex_ic` / `pl_preagg_only_ic` / `bs`. This is what finally drops resident memory under the 5.8 GB ceiling.
 
 **What stays.**
 - **In-memory LRU+TTL cache** in `data_service.py`. Still useful — avoids re-querying SQL for every dashboard click within the 30-min TTL.
