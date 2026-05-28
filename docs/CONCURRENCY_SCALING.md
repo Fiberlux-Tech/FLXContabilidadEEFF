@@ -1,12 +1,12 @@
 # Concurrency & Scaling — Historical Postmortems
 
-> **Status**: This document is a frozen record of two May 2026 incidents. The active scaling roadmap lives in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) — start there for any new performance work. Tier 1 fixes described below shipped 2026-05-12; Tier 2/3 plans that previously lived here are **superseded** by SCALING_ROADMAP.md and have been removed.
+> **Status**: This document is a frozen record of three 2026 incidents. The active scaling roadmap lives in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) and the SQL-views capacity plan in [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md) — start there for any new performance work. Tier 1 fixes described below shipped 2026-05-12; Tier 2/3 plans that previously lived here are **superseded** by SCALING_ROADMAP.md and have been removed.
 >
-> **Last updated**: 2026-05-14.
+> **Last updated**: 2026-05-28.
 
 ## Why this document exists
 
-Two incidents within a week exposed concurrency limits in the original architecture. Both fixes shipped, but the failure modes and OOM analysis are worth keeping for future capacity planning.
+Three incidents exposed concurrency and memory limits in the architecture. The first two (May 2026) shipped fixes; the third (2026-05-28) is an open finding whose real fix is Phase F in [SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md). The failure modes and OOM analysis are worth keeping for future capacity planning.
 
 ---
 
@@ -154,3 +154,49 @@ With 3 gunicorn workers (only 1 warms, but the other 2 still consume RAM), nginx
 ### Constraint that fell out of this incident
 
 The 5.8 GB RAM ceiling is now a first-class design constraint. Any future change that loads multiple companies' DataFrames into memory simultaneously must be evaluated against it. See [SCALING_ROADMAP.md](SCALING_ROADMAP.md) for the active capacity plan that governs this.
+
+---
+
+## Incident 3 — 2026-05-28: Worker OOM-kill + swap-thrash, post-Phase-C/D
+
+While benchmarking after Phases C (summary views) and D (paginated drill-down) shipped, two memory failure modes surfaced that the SQL-views roadmap had assumed were already solved.
+
+### What the benchmark showed
+
+A staging-vs-prod latency run found **both gunicorn stacks co-tenant on the one 5.8 GB box**: prod (3 workers ≈ 1.0 GB) + staging (3 workers ≈ 2.4 GB, caches filled by the test session) ≈ 3.5 GB before OS + ODBC buffers. The box sat at **98% RAM, 0.1 GB free**, swap-thrashing:
+
+- Identical row-level fetches ranged **0.4 s → 285 s** depending on whether the working set was resident or swapped out.
+- "Warm" cache hits took **65 s** because the cached DataFrame had been swapped to disk — a cache hit that pages back in from swap is as slow as a cold fetch. **This is the new failure mode: a warm cache under memory pressure is not a fast cache.**
+
+Stopping staging + restarting prod returned the box to ~4 GB free. But a follow-up prod-only cold-load benchmark across all 4 companies drove it straight back down:
+
+| Company | load-pl cold | load-bs cold | avail after |
+|---|---:|---:|---|
+| NEXTNET | 16.2 s | 56.8 s | 1.5 GB |
+| FIBERLUX | 15.5 s | 60.5 s | 1.2 GB |
+| FIBERTECH | 18.0 s | 150.2 s | 368 MB |
+| FIBERLINE | 8.7 s | **failed (nan)** | 231 MB |
+
+The FIBERLINE failure was a **worker OOM-kill**:
+
+```
+[2026-05-28 19:20:26] [ERROR] Worker (pid:1216965) was sent SIGKILL! Perhaps out of memory?
+```
+
+Triggered by the background prefetch eagerly loading FIBERLINE/**2026** row-level data (a `fetch_bs_only` of **547,015 rows** taking 232 s, plus a 152 s `ingresos` section compute) on top of the 2025 caches the benchmark was filling. Two years × FIBERLINE row-level was enough to OOM a worker — **even with staging already stopped.**
+
+### What this proved (and corrected)
+
+1. **Co-tenant staging was an aggravator, not the root cause.** Single-site prod alone still cannot hold all 4 companies × (PL + BS) row-level caches in 5.8 GB.
+2. **Phases C and D did not reduce resident memory.** The ~400 MB row-level caches (`_caches["df"]` / `pl_stmt` / `pl_preagg*` / `bs`) are still *written* on every `load_*_data` because `compute_pl_section` (P&L section tables) and the BS note tables (`bs_detail_by_cuenta`, `bs_top20_by_nit`) still read them. Phase C shrank the summary payload; the resident cost is the row-level cache backing everything else, and that was untouched.
+3. **`load_bs_data` is the heavier consumer** — 56–150 s cold vs 8–18 s for `load_pl_data` — because it fetches 75k–547k rows for the note tables and runs them through pandas.
+
+### What actually fixes it
+
+- **Real fix: Phase F** ([SQL_VIEWS_ROADMAP.md](SQL_VIEWS_ROADMAP.md)) — migrate `compute_pl_section` + the BS note tables to pre-aggregated SQL views so the row-level caches can stop being written, then Phase C+1 deletes them. Nothing else gets under the ceiling with 4 companies × 2 years.
+- **Workarounds that buy headroom but do not fix it:** stop/shrink the staging stack (single-site or laptop-based testing); drop `workers = 3 → 2`; restart prod to clear swapped caches. All legitimate stopgaps while Phase F is built; none change that the row-level caches should not be resident.
+- **The background prefetch is a multiplier under pressure** — eagerly warming BS + prev-year + sections for a company means a single cold click can pull *two years* of row-level data. Worth gating prefetch on available memory (skip prefetch when `sys_available` is low) as a cheap safety valve independent of Phase F.
+
+### Constraint reinforced
+
+The 5.8 GB ceiling holds and is now demonstrated to bite at **4 companies × 2 years of row-level caches**, regardless of the staging/prod split. Memory acceptance criteria (expected RSS delta, an alert threshold like `sys_available < 500 MB`) should gate any phase that touches caching — the roadmap previously tracked only latency.

@@ -1,8 +1,10 @@
 # SQL Views Roadmap — push transforms into the database
 
-> **Status**: This is the **active capacity plan** as of 2026-05-27. **Phases A, B, C, and E are fully shipped — DDL deployed in prod and Python wiring landed.** The dashboard now fetches summary rows from `VISTA_PNL_SUMARIO` / `VISTA_BS_SUMARIO` instead of grouping 8.4M-row pandas DataFrames per request. The old `pl_summary` / `bs_summary` Python builders and the `BS_RECLASSIFICATION_RULES` constant are deleted. Row-level `df` / `pl_stmt` / `bs` caches stay in place for drill-down until Phase D ships paginated SQL. Next up: Phase D (drill-down via paginated SQL), then Phase C+1 (simplification pass — disk pickle layer, flock, workers=3→2).
+> **Status**: This is the **active capacity plan** as of 2026-05-28. **Phases A, B, C, D, and E are shipped.** Summaries read from `VISTA_PNL_SUMARIO` / `VISTA_BS_SUMARIO`; journal-entry drill-down reads from `VISTA_*_PREPARADO` via paginated SQL (Phase D). **The memory ceiling is NOT yet relieved** — see the 2026-05-28 finding below. Next up: **Phase F** (migrate P&L section detail + BS note tables off the row-level caches), which is the prerequisite that finally lets **Phase C+1** delete those caches and reclaim RAM.
 > **Owner**: Backend team. DDL deploys require DBA (current `STERNERO` login is SELECT-only on the new views).
-> **Last updated**: 2026-05-27.
+> **Last updated**: 2026-05-28.
+>
+> **⚠️ 2026-05-28 finding — the memory win has NOT landed yet.** A staging-vs-prod benchmark found prod at **98% RAM (0.1 GB free), swap-thrashing**: identical row-level fetches ranged 0.4 s → 285 s depending on whether the working set was resident or swapped out, and "warm" cache hits took 65 s because the cached DataFrame had been swapped to disk. Root cause: **Phases C and D shrank the *summary* and *drill-down* payloads, but every `load_pl_data` / `load_bs_data` still builds and caches the full ~400 MB row-level DataFrame** (`_caches["df"]` / `pl_stmt` / `pl_preagg` / `pl_preagg_ex_ic` / `pl_preagg_only_ic` / `bs`). Those caches survive because **`compute_pl_section` (P&L section detail tables) and the BS note tables (`bs_detail_by_cuenta`, `bs_top20_by_nit`) still read them.** Until those two consumers move to SQL (Phase F), the caches can't be deleted and the box stays memory-bound. This corrects the earlier Phase C claim that "the worker holds ~10 KB after Phase C" — true for the summary, false for resident memory.
 > **Supersedes**: The Python-side Phase 2 (monthly fact pickles) plan that previously lived in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) and `docs/FACT_TABLE.md` (deleted 2026-05-22). The SQL views path delivers the same aggregated artifact in the database engine, shared across all workers, with no per-worker pickle-load tax.
 > **Related**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) (memory budget — Phase C of this doc is where the budget gets structurally easier).
 
@@ -147,7 +149,11 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **Performance expectation.** A cell that returns 30,000 rows today builds the full 30,000-row JSON list server-side and ships it. Post-Phase-D the first page is 500 rows + a count; ~10× faster on the heavy cells, and the user starts seeing data immediately.
 
-**Order vs Phase C+1.** Phase D should land **before** the Phase C+1 step that deletes the row-level df cache. Otherwise drill-down breaks. Suggested order: Phase C → Phase D → Phase C+1.
+**Order vs Phase C+1.** Phase D lands **before** the Phase C+1 step that deletes the row-level df cache. Otherwise drill-down breaks. Revised order after the 2026-05-28 finding: Phase C ✅ → Phase D ✅ → **Phase F** (migrate section + note tables off the caches) → Phase C+1 (delete the caches).
+
+**Shipped 2026-05-27** (commits `db1bba6` backend + `b07ecae` frontend). `fetch_pnl_detail` / `fetch_bs_detail` + `_count` companions live in `queries.py`; `get_detail_records` is a thin orchestrator routing on `statement_for_view(view_id)`; the route accepts `periods: [{year, month}, ...]` (multi-month / trailing-12M in one query) + `offset`/`limit`. `PLNoteView` + `DetailDataTable` do server-side pagination, single-filter-at-a-time with 300 ms debounce, and an "export all matching rows" path capped at 50 000. **Implementation note:** SQL Server 2017 rejects the `(YEAR, MES) IN ((?,?),...)` row-constructor (error 4145) — the WHERE uses an `(YEAR=? AND MES=?) OR ...` chain instead.
+
+**What Phase D did NOT do (corrected mental model).** Drill-down no longer reads the row-level caches, but the caches are still *written* on every `load_pl_data` / `load_bs_data` because `compute_pl_section` and the BS note tables still read them. So Phase D removed one consumer, not the memory cost. Resident memory is unchanged until Phase F.
 
 ### Phase E — BS cumsum view  (DDL shipped 2026-05-25, patched 2026-05-26)
 
@@ -170,13 +176,36 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **Reclassification timing semantics — resolved 2026-05-27.** Original DDL evaluated the "balance is negative" predicate at the year's last available month via `FIRST_VALUE(SALDO_CUMSUM) OVER (... ORDER BY MES DESC)`. Old Python `_reclassify_bs_cuentas` evaluated it at the displayed month (`vals[-1]` of the displayed value array — effectively DEC for full-year, MAY for partial). The two paths disagreed by S/. 39,863.69 net across TOTAL ACTIVO for FIBERLINE 2025/5 (two pairs that sum to zero within their sections). Resolution: the SQL view was rewritten to displayed-month semantics (the `last_month_balance` CTE + `FIRST_VALUE` window were deleted; the `reclassified` CTE now uses `c.SALDO_CUMSUM` directly). For cuentas crossing zero mid-year the new SQL and old Python disagree by a few thousand PEN that nets to zero within each section — accepted because BS is pre-production at FLX and the section-balance invariant still holds.
 
-### Phase C+1 — Simplification pass  (queued, depends on Phase C in prod)
+### Phase F — migrate P&L section detail + BS note tables to SQL  (the keystone the roadmap was missing)
 
-**Why this section exists.** The current architecture — 3 sync gunicorn workers, in-memory + disk pickle + single-flight flock, scheduled-refresh-then-on-demand-fill — is a multi-layer compromise built around row-level DataFrames being too big to handle naively. Phase C removes the size problem at its source: the cached payload becomes ~10 KB per `(company, year)` instead of ~400 MB. **Most of the surrounding complexity exists to compensate for a problem Phase C deletes.** Once Phase C is in prod and stable, the system can shed several layers without losing anything.
+**Why this phase exists.** Discovered 2026-05-28: the row-level caches (`_caches["df"]` / `pl_stmt` / `pl_preagg` / `pl_preagg_ex_ic` / `pl_preagg_only_ic` / `bs`, ~400 MB per `(company, year)`) are the actual resident-memory cost on the box, and **nothing deletes them yet.** Phase C moved the *summary* off them; Phase D moved *journal-entry drill-down* off them; but two consumers remain:
+
+1. **P&L section detail tables** — `compute_pl_section` ([data_service.py](../backend/services/data_service.py)) builds sales_details / detail_by_ceco / detail_by_cuenta / resultado_financiero splits / etc. from the cached `df_stmt` + three `preagg` frames.
+2. **BS note tables** — `bs_detail_by_cuenta` and `bs_top20_by_nit` build the cuenta-grain note tables and NIT top-20 rankings from the cached `df_bs`.
+
+While these read row-level caches, `load_pl_data` / `load_bs_data` must keep *writing* those caches, so the 400 MB stays resident. **Phase C+1 cannot reclaim memory until Phase F moves these two consumers to SQL.**
+
+**Approach (decided 2026-05-28): pre-aggregated SQL views, extending the Phase C pattern.** These tables are grouped aggregates (by CECO, by cuenta, top-N by NIT), not deep journal-entry scrolls, so summary views fit better than Phase-D-style pagination. Build `VISTA_*` views (per-CIA + REPORTES umbrella, same topology) for each section/note grouping; Python fetches the small pre-grouped result instead of grouping a cached DataFrame. Drill-INTO a section cell still uses Phase D's `/api/data/detail` paginated path.
+
+**Steps (sketch — full plan when Phase F is scheduled).**
+1. Inventory every grouping `compute_pl_section` and the BS note tables produce; design the minimal set of summary views to cover them (some may share a view with a `GROUP BY` grain parameter).
+2. DBA deploys the new views.
+3. Wire `compute_pl_section` + the BS note-table builders to fetch from the views; delete the pandas groupby paths once parity is confirmed.
+4. Once **no caller reads** `df` / `pl_stmt` / `pl_preagg*` / `bs`, stop writing them. That is the hand-off to Phase C+1.
+
+**Gate.** Per-table parity (the section/note table from SQL must match the pandas output to the centavo) before each deletion, same posture as Phases A–C.
+
+### Phase C+1 — Simplification pass  (depends on Phase F, not just Phase C)
+
+**Why this section exists.** The current architecture — **two co-tenant 3-worker gunicorn stacks (prod + staging) on one 5.8 GB box**, in-memory + disk pickle + single-flight flock — is a multi-layer compromise built around row-level DataFrames being too big to handle naively. The original plan assumed Phase C alone shrank the cached payload to ~10 KB; the 2026-05-28 finding corrected that — **the payload only shrinks once Phase F removes the last row-level consumers.** Phase C+1 is the cleanup that becomes possible *after Phase F*, not after Phase C.
+
+**⚠️ 2026-05-28 co-tenancy finding.** `ps` showed **6 worker processes** on the box: prod master (up 2d 18h) with 3 workers ≈ 1.0 GB RSS, and staging master (up 19h) with 3 workers ≈ 2.4 GB RSS (staging higher because tonight's benchmark + smoke testing filled its caches). Combined ≈ 3.5 GB of 5.8 GB before the OS, SQL ODBC buffers, and headroom. Two independent findings compound here:
+- **Each stack over-provisions workers** for ~10–25 internal users (the `workers=3` item below).
+- **Running a full second 3-worker stack (staging) on the prod box** roughly doubles the floor. Options to weigh during C+1: drop staging to 1 worker; gate staging behind an env flag so it's only up during active testing; or move staging to a separate small box. This wasn't in the original roadmap — staging was assumed negligible. It is not.
 
 **Conversation trigger (2026-05-22).** While reviewing the post–Phase-A.5 architecture, two architectural questions surfaced that change the picture:
 
-1. *"Why do we have multiple workers if we're going to cache everything?"* — The 3-worker design exists primarily because of memory pressure under the current Python pipeline (each worker independently caches ~400 MB DataFrames). The "smooth out concurrent slow requests" justification is real but quantitatively small for ~10–25 internal finance users. Phase C eliminates the memory pressure, which removes the dominant reason for 3 workers.
+1. *"Why do we have multiple workers if we're going to cache everything?"* — The 3-worker design exists primarily because of memory pressure under the current Python pipeline (each worker independently caches ~400 MB DataFrames). The "smooth out concurrent slow requests" justification is real but quantitatively small for ~10–25 internal finance users. **Phase F** (not Phase C, as originally written) is what eliminates the memory pressure that justifies 3 workers.
 
 2. *"Can we have task-typed workers — one for browsing, one for Excel, one for PDF?"* — Moot as of the server-side export removal: all requests are equivalent dashboard JSON loads, so task-typing no longer has a meaningful axis to split on. Generic workers remain the right call.
 
