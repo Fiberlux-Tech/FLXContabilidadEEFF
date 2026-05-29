@@ -117,7 +117,7 @@ def _handle_data_errors(label: str):
 def _timed_load(service_fn, body, company, year):
     """Call a data-loading service function with timing.
 
-    Data is loaded on demand and served from the in-memory + disk cache.
+    Data is loaded on demand and served from the in-memory LRU+TTL cache.
     The legacy `force_refresh` request field is silently ignored if any
     old client still sends it.
     """

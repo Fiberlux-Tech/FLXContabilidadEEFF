@@ -76,10 +76,4 @@ def prepare_bs_from_view(raw_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def get_excluded_cuentas(df: pd.DataFrame, df_stmt: pd.DataFrame) -> set[str]:
-    """Return the set of CUENTA_CONTABLE values present in *df* but not in *df_stmt*."""
-    all_cuentas = set(df[CUENTA_CONTABLE].unique())
-    kept = set(df_stmt[CUENTA_CONTABLE].unique())
-    return all_cuentas - kept
-
 
