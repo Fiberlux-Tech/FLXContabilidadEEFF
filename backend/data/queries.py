@@ -207,25 +207,65 @@ def fetch_pnl_preagg(conn: pyodbc.Connection, company: str, year: int) -> pd.Dat
     return result
 
 
+# Cuenta-grain cumsum, computed inline (filter-partida-first).
+#
+# The Phase E VISTA_BS_PREPARADO_CUMSUM is at the right grain, but querying it
+# with an outer PARTIDA_BS filter took ~18s/partida — the view densifies every
+# cuenta in the company before the filter prunes (same predicate-pushdown
+# failure as the NIT path).  Computing it inline filters the partida in the
+# source CTE first, so densify only touches that partida's cuentas: ~3s.
+#
+# Parity: each CUENTA_CONTABLE maps to exactly one PARTIDA_BS (verified — zero
+# cuentas span partidas), so filtering the partida before the per-cuenta cumsum
+# yields the same balances as the view's cumsum-over-all-then-filter.  The Phase
+# E view is left untouched — the BS *summary* path (VISTA_BS_SUMARIO) still
+# depends on it; only this detail fetcher changes.
+_BS_CUENTA_CUMSUM_SQL = """
+WITH months(MES) AS (
+    SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+    UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8
+    UNION ALL SELECT 9 UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
+),
+src AS (
+    SELECT CUENTA_CONTABLE, DESCRIPCION, MES, SALDO
+    FROM {schema}.{view}
+    WHERE CIA = ? AND YEAR = ? AND PARTIDA_BS IN ({placeholders})
+),
+cuentas AS (SELECT CUENTA_CONTABLE, MAX(DESCRIPCION) AS DSC FROM src GROUP BY CUENTA_CONTABLE),
+monthly AS (
+    SELECT CUENTA_CONTABLE, MES, CAST(SUM(SALDO) AS DECIMAL(28,8)) AS sm
+    FROM src GROUP BY CUENTA_CONTABLE, MES
+),
+dense AS (
+    SELECT cu.CUENTA_CONTABLE, cu.DSC, m.MES, COALESCE(mo.sm, 0) AS sm
+    FROM cuentas cu CROSS JOIN months m
+    LEFT JOIN monthly mo ON mo.CUENTA_CONTABLE = cu.CUENTA_CONTABLE AND mo.MES = m.MES
+)
+SELECT
+    CUENTA_CONTABLE, DSC AS DESCRIPCION, MES,
+    CAST(SUM(sm) OVER (PARTITION BY CUENTA_CONTABLE ORDER BY MES
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS DECIMAL(28,8)) AS SALDO_CUMSUM
+FROM dense
+"""
+
+
 def fetch_bs_detalle_cuenta(conn: pyodbc.Connection, company: str, year: int,
                             partidas: list[str]) -> pd.DataFrame:
-    """Fetch cuenta-grain cumulative BS balances from VISTA_BS_PREPARADO_CUMSUM.
+    """Fetch cuenta-grain cumulative BS balances for the given PARTIDA_BS list.
 
-    Backs bs_detail_by_cuenta. The CUMSUM view (Phase E) is already at exactly
-    the cuenta grain this note builder needs, so no Phase F view is required —
-    we query it directly with a PARTIDA_BS IN (...) filter. The cuenta-prefix
+    Backs bs_detail_by_cuenta.  Computes the densified per-cuenta cumsum inline
+    (see _BS_CUENTA_CUMSUM_SQL), filtering the partida(s) in the source CTE so
+    densify only touches the requested partidas' cuentas.  The cuenta-prefix
     include/exclude, future-month handling, and TOTAL stay in Python.
 
+    Returns columns MES, CUENTA_CONTABLE, DESCRIPCION, SALDO_CUMSUM.
     *partidas* must be non-empty; the IN-list is parameterized.
     """
     if not partidas:
         raise QueryError("partidas must be non-empty")
     placeholders = ", ".join(["?"] * len(partidas))
-    query = (
-        "SELECT MES, CUENTA_CONTABLE, DESCRIPCION, SALDO_CUMSUM "
-        f"FROM {SQL_SCHEMA}.{SQL_VIEW_BS_PREPARADO_CUMSUM} "
-        f"WHERE CIA = ? AND YEAR = ? AND PARTIDA_BS IN ({placeholders})"
-    )
+    query = _BS_CUENTA_CUMSUM_SQL.format(
+        schema=SQL_SCHEMA, view=SQL_VIEW_BS_PREPARADO, placeholders=placeholders)
     params = [company, year, *partidas]
     logger.debug("BS detalle cuenta query: %s | params: %s", query, params)
     try:
@@ -265,32 +305,82 @@ def fetch_bs_last_month(conn: pyodbc.Connection, company: str, year: int) -> int
     return int(row[0])
 
 
+# NIT top-50 cumsum, computed inline (no dedicated view).
+#
+# A monolithic densify-all-NITs view took ~100s/partida because the caller's
+# PARTIDA_BS filter could not push through the CROSS JOIN + window chain — the
+# view densified every NIT in the company (51K+ for FIBERLINE commercial
+# receivables) before the outer WHERE pruned to one partida.  Sending the query
+# inline lets the PARTIDA_BS filter apply in the SOURCE cte, and ranks NITs on
+# the cheap monthly sums BEFORE densifying, so we only densify the ~50 survivors.
+# ~9s/partida vs ~100s.  Ranking matches the (old) Python path: by cumulative
+# balance at the last posted month, descending, NIT ascending as a tiebreak.
+# Returns the top 50 (Python takes the final top 20) × 12 densified months.
+_BS_NIT_TOP50_SQL = """
+WITH months(MES) AS (
+    SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
+    UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8
+    UNION ALL SELECT 9 UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12
+),
+src AS (
+    SELECT NIT, RAZON_SOCIAL, MES, SALDO
+    FROM {schema}.{view}
+    WHERE CIA = ? AND YEAR = ? AND PARTIDA_BS = ?
+),
+lm AS (SELECT MAX(MES) AS lmes FROM src),
+monthly AS (
+    SELECT NIT, MAX(RAZON_SOCIAL) AS RZ, MES, CAST(SUM(SALDO) AS DECIMAL(28,8)) AS sm
+    FROM src GROUP BY NIT, MES
+),
+bal AS (
+    SELECT m.NIT, MAX(m.RZ) AS RZ, SUM(m.sm) AS cs_last
+    FROM monthly m CROSS JOIN lm
+    WHERE m.MES <= lm.lmes
+    GROUP BY m.NIT
+),
+top50 AS (
+    SELECT NIT, RZ, ROW_NUMBER() OVER (ORDER BY cs_last DESC, NIT ASC) AS rn FROM bal
+),
+keep AS (SELECT NIT, RZ FROM top50 WHERE rn <= 50),
+dense AS (
+    SELECT k.NIT, k.RZ, m.MES, COALESCE(mo.sm, 0) AS sm
+    FROM keep k CROSS JOIN months m
+    LEFT JOIN monthly mo ON mo.NIT = k.NIT AND mo.MES = m.MES
+)
+SELECT
+    NIT, RZ AS RAZON_SOCIAL, MES,
+    CAST(SUM(sm) OVER (PARTITION BY NIT ORDER BY MES
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS DECIMAL(28,8)) AS SALDO_CUMSUM
+FROM dense
+"""
+
+
 def fetch_bs_detalle_nit(conn: pyodbc.Connection, company: str, year: int,
                          partidas: list[str]) -> pd.DataFrame:
-    """Fetch NIT-grain cumulative BS balances from VISTA_BS_DETALLE_NIT_CUMSUM.
+    """Fetch the top-50-NIT cumulative BS balances for the given PARTIDA_BS list.
 
-    Backs bs_top20_by_nit. The view applies the densified cumsum per
-    (partida, NIT); Python pivots, zeroes future months, ranks top-20,
-    fills SIN NIT / SIN RAZON SOCIAL, and appends the TOTAL row.
+    Backs bs_top20_by_nit.  Computes the densified cumsum inline (see
+    _BS_NIT_TOP50_SQL) instead of via a view, ranking NITs before densifying so
+    only the ~50 survivors per partida are densified.  Runs one query per
+    partida (ranking is per-partida) and concatenates.  Python fills SIN NIT /
+    SIN RAZON SOCIAL, pivots, zeroes future months, takes the final top 20, and
+    appends the TOTAL row.
 
-    *partidas* must be non-empty; the IN-list is parameterized.
+    Returns columns MES, NIT, RAZON_SOCIAL, SALDO_CUMSUM (≤ 50 NITs × 12 months
+    per partida).  *partidas* must be non-empty.
     """
     if not partidas:
         raise QueryError("partidas must be non-empty")
-    placeholders = ", ".join(["?"] * len(partidas))
-    query = (
-        "SELECT MES, NIT, RAZON_SOCIAL, SALDO_CUMSUM "
-        f"FROM {SQL_SCHEMA}.{SQL_VIEW_BS_DETALLE_NIT_CUMSUM} "
-        f"WHERE CIA = ? AND YEAR = ? AND PARTIDA_BS IN ({placeholders})"
-    )
-    params = [company, year, *partidas]
-    logger.debug("BS detalle NIT query: %s | params: %s", query, params)
+    query = _BS_NIT_TOP50_SQL.format(schema=SQL_SCHEMA, view=SQL_VIEW_BS_PREPARADO)
+    frames = []
     try:
-        result = pd.read_sql(query, conn, params=params)
+        for partida in partidas:
+            frames.append(pd.read_sql(query, conn, params=[company, year, partida]))
     except (pyodbc.Error, pd.errors.DatabaseError) as exc:
         raise QueryError(f"Failed to fetch BS NIT detalle for {company}/{year}: {exc}") from exc
-
-    logger.info("Fetched %d BS NIT detalle rows for %s/%s", len(result), company, year)
+    result = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    logger.info("Fetched %d BS NIT detalle rows for %s/%s (%d partidas)",
+                len(result), company, year, len(partidas))
     return result
 
 

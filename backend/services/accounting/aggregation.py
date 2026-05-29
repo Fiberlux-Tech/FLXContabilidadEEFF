@@ -237,6 +237,15 @@ def _pivot_cumsum(frame: pd.DataFrame, index_cols: list[str],
 
     Returns the wide pivot with all 12 month columns present in calendar order.
     """
+    if frame.empty:
+        # No rows (empty partida, or all rows excluded by a cuenta-prefix
+        # filter).  pd.pivot_table can't pivot an empty frame, so build the
+        # correctly-shaped empty pivot directly: label columns + all 12 months.
+        # Month columns must be float dtype (not object) so a downstream
+        # append_total_row sums them to 0.0, not None — matching the pre-Phase-F
+        # path where the empty pivot's months came from pivot_table fill_value=0.
+        empty = pd.DataFrame(columns=[*index_cols, *MONTH_NAMES_LIST])
+        return empty.astype({m: "float64" for m in MONTH_NAMES_LIST})
     pivot = pd.pivot_table(
         frame, values=SALDO_CUMSUM, index=index_cols,
         columns=MES, aggfunc="sum", fill_value=0, observed=True, sort=False,
@@ -267,13 +276,14 @@ def bs_detail_by_cuenta(frame: pd.DataFrame, *,
     When *add_total_col* is False the TOTAL column is omitted.
     *cuenta_prefixes* / *exclude_cuenta_prefixes* match on CUENTA_CONTABLE.
     """
-    if frame.empty:
-        return pd.DataFrame()
     filtered = frame
     if cuenta_prefixes is not None:
         filtered = filtered[filtered[CUENTA_CONTABLE].str.startswith(cuenta_prefixes)]
     if exclude_cuenta_prefixes is not None:
         filtered = filtered[~filtered[CUENTA_CONTABLE].str.startswith(exclude_cuenta_prefixes)]
+    # Empty input (or everything excluded) flows through too: _pivot_cumsum
+    # returns a correctly-columned empty pivot so the TOTAL column/row stay
+    # zero-filled across JAN..DEC, matching the pre-Phase-F shape.
     pivot = _pivot_cumsum(filtered, [CUENTA_CONTABLE, DESCRIPCION], last_month)
     # Sort by last-activity month's cumulative value (Dec is zeroed for future
     # months, so use last_month rather than the trailing display column).
@@ -307,8 +317,16 @@ def bs_top20_by_nit(frame: pd.DataFrame, *,
 
     pivot = _pivot_cumsum(frame, [NIT, RAZON_SOCIAL], last_month)
 
-    sort_col = MONTH_NAMES_LIST[last_month - 1] if last_month else NIT
-    pivot = pivot.sort_values(sort_col, ascending=False).reset_index(drop=True)
+    # Rank by last-activity-month cumulative desc, NIT asc as a deterministic
+    # tiebreak — matching VISTA_BS_DETALLE_NIT_CUMSUM's server-side ROW_NUMBER
+    # ordering, so the final top-N cut is reproducible regardless of the order
+    # the umbrella UNION ALL delivers rows in.
+    if last_month:
+        pivot = pivot.sort_values(
+            [MONTH_NAMES_LIST[last_month - 1], NIT], ascending=[False, True]
+        ).reset_index(drop=True)
+    else:
+        pivot = pivot.sort_values(NIT).reset_index(drop=True)
     pivot = pivot.head(top_n).reset_index(drop=True)
     pivot = append_total_row(pivot, RAZON_SOCIAL)
     return pivot
