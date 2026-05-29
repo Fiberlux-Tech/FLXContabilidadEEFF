@@ -12,7 +12,7 @@ FLXContabilidad/
 │   ├── gunicorn.conf.py  # Production WSGI server config
 │   ├── logs/             # Access/error logs
 │   ├── services/         # Python data pipeline
-│   │   ├── data_service.py   # Single-fetch service with in-memory cache (30-min TTL)
+│   │   ├── data_service.py   # Single-fetch service with in-memory cache (3-hour TTL)
 │   │   └── accounting/       # Transforms, aggregation, P&L/BS statement builders, rules
 │   ├── config/           # Shared config (settings, calendar, fields, company, exceptions)
 │   └── data/             # Data layer (db pool, SQL queries, fetcher)
@@ -90,7 +90,7 @@ POST /api/data/load { company: "FIBERLUX", year: 2026 }
     │
     ▼
 data_service.load_report_data()
-    ├── Check in-memory `result` cache (30-min TTL) → return if fresh
+    ├── Check in-memory `result` cache (3-hour TTL) → return if fresh
     │
     ├── P&L summaries (Phase C): fetch_pnl_summary_only → pl_summary_from_view
     │       (~100 rows from VISTA_PNL_SUMARIO; total / ex_ic / only_ic variants)
@@ -132,7 +132,7 @@ exists — the backend is a pure JSON API.
 
 In-memory LRU+TTL only — the disk-pickle layer and the cross-worker `fcntl` flock were deleted in SQL Views Phase C+1 (2026-05-29) once Phase F shrank the cached payloads to small SQL-view results.
 
-`data_service.py` keeps six LRU+TTL buckets, each keyed by `(company, year)`, 30-min TTL, default `max_entries=20`:
+`data_service.py` keeps six LRU+TTL buckets, each keyed by `(company, year)`, 3-hour TTL, default `max_entries=20`:
 
 | Bucket | Holds |
 |--------|-------|

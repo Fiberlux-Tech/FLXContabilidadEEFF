@@ -45,7 +45,7 @@ Three cache layers, each with a specific role:
 
 **In-memory cache** (`data_service.py`):
 - Keyed by `(company, year)` tuples
-- 30-minute TTL (`MEMORY_CACHE_TTL = 1800`), bounded to 20 entries per store (LRU eviction)
+- 3-hour TTL (`ttl=10800` seconds, default in `LRUTTLCache.__init__`), bounded to 20 entries per store (LRU eviction)
 - Thread-safe via `threading.Lock`
 - Four separate stores (OrderedDict): result dict, raw DataFrames, prepared BS, statement DataFrame
 - `force_refresh=True` bypasses the cache

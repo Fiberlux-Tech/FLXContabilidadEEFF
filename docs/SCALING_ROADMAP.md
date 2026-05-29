@@ -99,7 +99,7 @@ The "never again" list from the 2026-05-12 post-mortem. These apply to every pha
    - `pl_stmt`, `df`, `bs`, `raw` → `max_entries=6` (these hold full DataFrames)
    - Leave `pl_preagg`, `pl_preagg_ex_ic`, `pl_preagg_only_ic`, `pl_sections`, `pl_df`, `pl_result`, `bs_result`, `result` at the default (these are small or already aggregated)
 
-   With 4 companies × 2 years = 8 cells, 6 entries per bucket means the LRU evicts companies a worker hasn't touched in 30 min. The pre-fetch chain (`_prefetch_bs_background`, `_prefetch_prev_year_background`, `_prefetch_pl_sections_background`) keeps the most-recently-used pair hot.
+   With 4 companies × 2 years = 8 cells, 6 entries per bucket means the LRU evicts companies a worker hasn't touched in 3 hours. The pre-fetch chain (`_prefetch_bs_background`, `_prefetch_prev_year_background`, `_prefetch_pl_sections_background`) keeps the most-recently-used pair hot.
 
 3. **Drop `FETCH_MAX_WORKERS` from 5 to 2** in `.env` (default at [backend/config/settings.py:33](../backend/config/settings.py#L33), env override at [settings.py:70](../backend/config/settings.py#L70)). Original Tier 2.3 framed this as DB-contention; reframe: fewer concurrent fetches means less concurrent pandas allocation per request, which is what's actually pressuring memory under load. The DB-contention argument still holds but is secondary.
 

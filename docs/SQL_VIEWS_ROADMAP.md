@@ -263,7 +263,7 @@ All three follow the per-CIA + `REPORTES` umbrella topology (UNION ALL across th
 6. **✅ Delete the row-level caches (done — commit `37c45a1`).** `_caches["df"]` / `pl_stmt` / `pl_preagg` / `pl_preagg_ex_ic` / `pl_preagg_only_ic` / `bs` are gone, along with the dead `_ensure_pl_stmt_cached` chain and `invalidate_cache`. This is the change that dropped resident memory under the 5.8 GB ceiling.
 
 **What stays.**
-- **In-memory LRU+TTL cache** in `data_service.py`. Still useful — avoids re-querying SQL for every dashboard click within the 30-min TTL.
+- **In-memory LRU+TTL cache** in `data_service.py`. Still useful — avoids re-querying SQL for every dashboard click within the 3-hour TTL.
 - **At least 2 workers.** Even after the server-side Excel/PDF export was removed, a single worker would still mean a slow dashboard load (cold-cache fetch) freezes every other user. 2 workers is the safety floor.
 - **Drill-down's row-level path.** Phase C only collapses the summary; drill-down into journal entries still needs row-level rows.
 
@@ -273,7 +273,7 @@ All three follow the per-CIA + `REPORTES` umbrella topology (UNION ALL across th
 Browser ──▶ Nginx ──▶ Gunicorn (2 sync workers)
                        │
                        ▼
-                  in-memory LRU+TTL cache (30-min)
+                  in-memory LRU+TTL cache (3-hour)
                        │ miss
                        ▼
                   SQL Server (REPORTES.VISTA_PNL_SUMARIO etc.)
