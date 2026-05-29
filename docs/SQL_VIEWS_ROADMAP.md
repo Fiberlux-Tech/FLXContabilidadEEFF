@@ -1,10 +1,10 @@
 # SQL Views Roadmap — push transforms into the database
 
-> **Status**: This is the **active capacity plan** as of 2026-05-28. **Phases A, B, C, D, and E are shipped.** Summaries read from `VISTA_PNL_SUMARIO` / `VISTA_BS_SUMARIO`; journal-entry drill-down reads from `VISTA_*_PREPARADO` via paginated SQL (Phase D). **The memory ceiling is NOT yet relieved** — see the 2026-05-28 finding below. Next up: **Phase F** (migrate P&L section detail + BS note tables off the row-level caches), which is the prerequisite that finally lets **Phase C+1** delete those caches and reclaim RAM.
+> **Status**: **Phases A, B, C, D, E, and F are shipped, and the Phase C+1 cleanup is essentially complete (2026-05-29).** Summaries read from `VISTA_PNL_SUMARIO` / `VISTA_BS_SUMARIO`; journal-entry drill-down reads from `VISTA_*_PREPARADO` via paginated SQL (Phase D); P&L section detail + BS note tables read from `VISTA_PNL_PREAGG` + inline filter-first BS cumsum SQL (Phase F). **The row-level DataFrame caches and the disk pickle are gone** — the memory ceiling is structurally relieved. The remaining C+1 items are done or deliberately deferred (see Phase C+1 below).
 > **Owner**: Backend team. DDL deploys require DBA (current `STERNERO` login is SELECT-only on the new views).
-> **Last updated**: 2026-05-28.
+> **Last updated**: 2026-05-29.
 >
-> **⚠️ 2026-05-28 finding — the memory win has NOT landed yet.** A staging-vs-prod benchmark found prod at **98% RAM (0.1 GB free), swap-thrashing**: identical row-level fetches ranged 0.4 s → 285 s depending on whether the working set was resident or swapped out, and "warm" cache hits took 65 s because the cached DataFrame had been swapped to disk. Root cause: **Phases C and D shrank the *summary* and *drill-down* payloads, but every `load_pl_data` / `load_bs_data` still builds and caches the full ~400 MB row-level DataFrame** (`_caches["df"]` / `pl_stmt` / `pl_preagg` / `pl_preagg_ex_ic` / `pl_preagg_only_ic` / `bs`). Those caches survive because **`compute_pl_section` (P&L section detail tables) and the BS note tables (`bs_detail_by_cuenta`, `bs_top20_by_nit`) still read them.** Until those two consumers move to SQL (Phase F), the caches can't be deleted and the box stays memory-bound. This corrects the earlier Phase C claim that "the worker holds ~10 KB after Phase C" — true for the summary, false for resident memory.
+> **✅ 2026-05-29 — the memory win has landed.** Phase F moved the last two row-level consumers (`compute_pl_section`, the BS note tables) onto SQL views, and commit `37c45a1` then deleted the row-level caches (`_caches["df"]` / `pl_stmt` / `pl_preagg*` / `bs`), the disk-pickle layer, and the dead P&L-stmt fetch chain. The 2026-05-28 finding below (prod at 98% RAM, swap-thrashing because every `load_*_data` cached a ~400 MB DataFrame) is the problem this resolved. The server-side staging stack (~2.4 GB) was also decommissioned (C+1 item 0). What remains is in-memory LRU+TTL caching of small SQL results only.
 > **Supersedes**: The Python-side Phase 2 (monthly fact pickles) plan that previously lived in [SCALING_ROADMAP.md](SCALING_ROADMAP.md) and `docs/FACT_TABLE.md` (deleted 2026-05-22). The SQL views path delivers the same aggregated artifact in the database engine, shared across all workers, with no per-worker pickle-load tax.
 > **Related**: [SCALING_ROADMAP.md](SCALING_ROADMAP.md) (memory budget — Phase C of this doc is where the budget gets structurally easier).
 
@@ -176,9 +176,11 @@ This is the work that replaced the former Python-side fact-pickle plan (`docs/FA
 
 **Reclassification timing semantics — resolved 2026-05-27.** Original DDL evaluated the "balance is negative" predicate at the year's last available month via `FIRST_VALUE(SALDO_CUMSUM) OVER (... ORDER BY MES DESC)`. Old Python `_reclassify_bs_cuentas` evaluated it at the displayed month (`vals[-1]` of the displayed value array — effectively DEC for full-year, MAY for partial). The two paths disagreed by S/. 39,863.69 net across TOTAL ACTIVO for FIBERLINE 2025/5 (two pairs that sum to zero within their sections). Resolution: the SQL view was rewritten to displayed-month semantics (the `last_month_balance` CTE + `FIRST_VALUE` window were deleted; the `reclassified` CTE now uses `c.SALDO_CUMSUM` directly). For cuentas crossing zero mid-year the new SQL and old Python disagree by a few thousand PEN that nets to zero within each section — accepted because BS is pre-production at FLX and the section-balance invariant still holds.
 
-### Phase F — migrate P&L section detail + BS note tables to SQL  (the keystone the roadmap was missing)
+### Phase F — migrate P&L section detail + BS note tables to SQL  (shipped 2026-05-29)
 
-**Why this phase exists.** Discovered 2026-05-28: the row-level caches (`_caches["df"]` / `pl_stmt` / `pl_preagg` / `pl_preagg_ex_ic` / `pl_preagg_only_ic` / `bs`, ~400 MB per `(company, year)`) are the actual resident-memory cost on the box, and **nothing deletes them yet.** Phase C moved the *summary* off them; Phase D moved *journal-entry drill-down* off them; but two consumers remain:
+**Shipped.** P&L section detail now reads `VISTA_PNL_PREAGG` (the three-column IC pattern); BS note tables read inline filter-first cumsum SQL against `VISTA_BS_PREPARADO` (`_BS_CUENTA_CUMSUM_SQL`, `_BS_NIT_TOP50_SQL` in `queries.py` — see commits `cd260ad`, `1499713`, `33273af`). The dedicated `VISTA_BS_*_CUMSUM` detail views were tried first but the outer `PARTIDA_BS` filter couldn't push through the CROSS JOIN + window chain (~18–100 s/partida), so the detail path computes the cumsum inline with the partida filtered in the source CTE (~3–9 s/partida). With both consumers off the row-level frame, commit `37c45a1` deleted the caches — the hand-off to C+1 items 4–6, all now done. **DBA follow-up:** the deployed `VISTA_BS_DETALLE_NIT_CUMSUM` view is now unused by the app and can be dropped.
+
+**Why this phase existed.** Discovered 2026-05-28: the row-level caches (`_caches["df"]` / `pl_stmt` / `pl_preagg` / `pl_preagg_ex_ic` / `pl_preagg_only_ic` / `bs`, ~400 MB per `(company, year)`) are the actual resident-memory cost on the box, and **nothing deletes them yet.** Phase C moved the *summary* off them; Phase D moved *journal-entry drill-down* off them; but two consumers remain:
 
 1. **P&L section detail tables** — `compute_pl_section` ([data_service.py](../backend/services/data_service.py)) builds sales_details / detail_by_ceco / detail_by_cuenta / resultado_financiero splits / etc. from the cached `df_stmt` + three `preagg` frames.
 2. **BS note tables** — `bs_detail_by_cuenta` and `bs_top20_by_nit` build the cuenta-grain note tables and NIT top-20 rankings from the cached `df_bs`.
@@ -244,21 +246,21 @@ All three follow the per-CIA + `REPORTES` umbrella topology (UNION ALL across th
 
 2. *"Can we have task-typed workers — one for browsing, one for Excel, one for PDF?"* — Moot as of the server-side export removal: all requests are equivalent dashboard JSON loads, so task-typing no longer has a meaningful axis to split on. Generic workers remain the right call.
 
-**What ships in Phase C+1.** Items 0–2 are independent of Phase F and can ship now; items 4–5 require Phase F first (the caches must have no readers before they can be deleted). Ship in order of confidence:
+**What ships in Phase C+1.** As of 2026-05-29 items 0–6 are all **done** except for a few one-shot DBA/ops follow-ups noted inline. Original ship order preserved for the record:
 
-0. **Decommission the server-side staging stack (ship now).** Stop + disable `flxcontabilidad-staging`; pre-prod validation moves to a laptop clone (see the 2026-05-28 decision above). Frees ~2.4 GB permanently — the biggest single headroom win and the one that doesn't depend on any code change. Commands: `sudo systemctl stop flxcontabilidad-staging && sudo systemctl disable flxcontabilidad-staging`. The `~/FLXContabilidad-staging` tree can then be archived/removed. After this, `deploy.sh`'s `FLXContabilidad-staging` branch is dead code — leave it or trim it.
+0. **✅ Decommission the server-side staging stack (done 2026-05-29).** `flxcontabilidad-staging` stopped + disabled; pre-prod validation moved to a laptop clone (see the 2026-05-28 decision above). Freed ~2.4 GB permanently — the biggest single headroom win, no code change. The `~/FLXContabilidad-staging` tree can be archived/removed at leisure. `deploy.sh` no longer has a staging branch.
 
-1. **Gate background prefetch on available memory (ship now — cheap OOM valve).** `_prefetch_bs_background` / `_prefetch_prev_year_background` / `_prefetch_pl_sections_background` are what turned a single cold FIBERLINE click into a two-year row-level load that OOM-killed a worker (Incident 3). Skip prefetch when `sys_available` is below a threshold (e.g. 800 MB) — the `mem_monitor` already samples this. Independent of Phase F; prevents the exact failure observed 2026-05-28.
+1. **✅ Gate background prefetch on available memory (done).** `_memory_ok_for_prefetch` (`data_service.py`, 800 MB threshold) gates all three `_prefetch_*_background` spawns. Post-Phase-F the prefetches only pull small SQL results, so the gate is now cheap insurance rather than the load-bearing valve it was when it prevented the Incident 3 OOM. Kept regardless — the box is still memory-bound.
 
-2. **Add a request-timeout middleware** that logs (and optionally pages) when any request exceeds ~15 s. Cheap, surfaces problems early, useful regardless of other changes.
+2. **✅ Request-timeout / slow-request logging (done).** `app.py` `before_request`/`after_request` hooks log any `/api/` request slower than `_SLOW_REQUEST_SEC = 15.0` to the `flxcontabilidad.slow` logger. Log-only, no paging.
 
-3. **Drop `workers = 3` to `workers = 2`** in `backend/gunicorn.conf.py`. Memory floor drops by ~400 MB/worker; one worker is still free during any slow request. Easy to roll back. (Bigger drops wait on Phase F — until the row-level caches are gone, even 2 workers can OOM at 4 companies × 2 years per Incident 3.)
+3. **✅ Drop `workers = 3` to `workers = 2` (done — commit `d410b43`).** `gunicorn.conf.py` defaults to `workers=2` (env-overridable). 2 is the safety floor — one worker stays free during a slow request; don't drop below it.
 
-4. **Remove the disk pickle layer.** *Depends on Phase F.* Once summaries + section/note tables all come from SQL, the disk pickle (a cold-start optimization for 157 MB row-level pickles) is pointless. Delete `_save_to_disk`, `_try_pl_stmt_from_disk`, the `.stmt_cache/` wiring.
+4. **✅ Remove the disk pickle layer (done — commit `37c45a1`).** `_save_to_disk` / `_load_from_disk` / `_stmt_disk_path` / `_delete_disk_cache` / `_clear_all_disk_cache` / `.stmt_cache/` wiring all deleted. **Ops follow-up:** `rm -rf backend/services/.stmt_cache` on the prod box to reclaim the ~970 MB of orphaned pickles (no longer written or read).
 
-5. **Remove the single-flight flock.** *Depends on Phase F.* `_CrossProcLock` was load-bearing when concurrent cold-cache fetches could pull 1.2 GB of duplicate pandas into RAM. Once fetches pull small SQL results, deduplicating them isn't worth the fcntl machinery. Keep the in-process `threading.Lock` for the drill-down path.
+5. **✅ Remove the single-flight flock (done — 2026-05-29).** `_CrossProcLock` + `import fcntl` deleted. P&L never used it post-Phase-F; the BS path's last use was removed once `load_bs_data` became a handful of small SQL-view reads — cross-worker dedup of cheap queries isn't worth the fcntl machinery. The in-process `_get_inflight_lock` (`threading.Lock`) still coalesces threads within a worker.
 
-6. **Delete the row-level caches.** *The payoff of Phase F.* Once `compute_pl_section` + BS note tables read from SQL, stop writing `_caches["df"]` / `pl_stmt` / `pl_preagg` / `pl_preagg_ex_ic` / `pl_preagg_only_ic` / `bs`. This is what finally drops resident memory under the 5.8 GB ceiling.
+6. **✅ Delete the row-level caches (done — commit `37c45a1`).** `_caches["df"]` / `pl_stmt` / `pl_preagg` / `pl_preagg_ex_ic` / `pl_preagg_only_ic` / `bs` are gone, along with the dead `_ensure_pl_stmt_cached` chain and `invalidate_cache`. This is the change that dropped resident memory under the 5.8 GB ceiling.
 
 **What stays.**
 - **In-memory LRU+TTL cache** in `data_service.py`. Still useful — avoids re-querying SQL for every dashboard click within the 30-min TTL.
@@ -280,13 +282,9 @@ Browser ──▶ Nginx ──▶ Gunicorn (2 sync workers)
                   back to Flask, build JSON, return
 ```
 
-Compare to today's stack (3 workers × disk pickle × in-memory × single-flight × scheduler). Phase C+1 removes 3 of those 5 layers.
+This is now the live posture. The pre-Phase-C stack was 3 workers × disk pickle × in-memory × single-flight flock × scheduler; C+1 removed the scheduler (Phase A.5), the disk pickle, the flock, the extra worker, and the row-level caches — leaving just the in-memory LRU+TTL over small SQL results.
 
-**Gates.**
-- Phase C must be deployed in prod and stable for at least 2 weeks before starting C+1. The current complexity is paying for a real problem that Phase C *should* solve; we want to confirm it actually does under real load before tearing out the safety nets.
-- Each C+1 item ships as its own commit so any can be rolled back independently. Order in the list above is suggested order of safety.
-
-**Why not do this now.** Phase C isn't shipped yet. Tearing out the cache layers before the summary views are in production would leave the system in a worse state than today. C+1 is the cleanup that becomes possible *after* the structural fix lands.
+**How C+1 shipped.** Each item landed as its own commit so any could be rolled back independently (scheduler A.5; workers/slow-log in the Phase-C+1 perf commits; disk-pickle + caches in `37c45a1`; flock in the 2026-05-29 cleanup). The "stable in prod for 2 weeks before tearing out safety nets" gate was honored — Phases C/D/E ran in prod through late May before the F→C+1 deletions landed.
 
 ## Drift mitigation
 

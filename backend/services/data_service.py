@@ -10,12 +10,10 @@ Detail P&L sections (ingresos, costo, etc.) are computed lazily via
 load_pl_section() — only when the user navigates to that view.
 """
 
-import fcntl
 import logging
 import time
 import threading
 from collections import OrderedDict
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -112,8 +110,8 @@ class LRUTTLCache:
 
 # ── Single-flight: deduplicate concurrent fetches ─────────────────────
 #
-# When the in-memory + disk cache both miss, multiple threads landing on
-# the same (company, year, kind) must not all fire the same SQL query.
+# When the in-memory cache misses, multiple threads landing on the same
+# (company, year, kind) must not all fire the same SQL query.
 # A per-key lock serializes them: the first thread fetches and populates
 # the cache; later threads re-check the cache under the lock and return
 # the just-fetched data without a second DB hit.
@@ -134,55 +132,6 @@ def _get_inflight_lock(company: str, year: int, kind: str) -> threading.Lock:
             lock = threading.Lock()
             _inflight_locks[key] = lock
         return lock
-
-
-# Cross-process single-flight via fcntl.flock. The in-process lock only serializes
-# threads within one gunicorn worker — across workers we need a kernel-level lock.
-# Lockfiles live under /tmp; PrivateTmp=true in the systemd unit means all workers
-# of this service share the same /tmp namespace but it is isolated from the host.
-
-_FLOCK_DIR = Path("/tmp")
-
-
-class _CrossProcLock:
-    """fcntl.flock acquired on a per-key file. Use as a context manager.
-
-    Acquires LOCK_EX (blocking) on enter, releases + closes on exit. If the
-    file cannot be opened (e.g. /tmp not writable), falls back to a no-op so
-    fetches still complete — degrades single-flight to per-worker but does
-    not break correctness.
-    """
-
-    def __init__(self, company: str, year: int, kind: str):
-        self.path = _FLOCK_DIR / f"flx_inflight_{kind}_{company}_{year}.lock"
-        self._fh = None
-
-    def __enter__(self):
-        try:
-            self._fh = open(self.path, "w")
-            fcntl.flock(self._fh, fcntl.LOCK_EX)
-        except OSError as e:
-            logger.warning("cross-proc lock unavailable for %s: %s", self.path.name, e)
-            if self._fh is not None:
-                try:
-                    self._fh.close()
-                except OSError:
-                    pass
-                self._fh = None
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        if self._fh is not None:
-            try:
-                fcntl.flock(self._fh, fcntl.LOCK_UN)
-            except OSError:
-                pass
-            try:
-                self._fh.close()
-            except OSError:
-                pass
-            self._fh = None
-        return False
 
 
 # All buckets hold small aggregated SQL results (summaries, sections, the
@@ -859,13 +808,12 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
         if hit is not None:
             return hit
 
-    # Slow path: serialize concurrent fetchers of the same (company, year).
-    # NOTE: BS has no disk cache, so unlike P&L, sibling workers across processes
-    # do not benefit from a "winner writes disk, losers read disk" pattern — they
-    # will still each fetch when the flock releases. The cross-proc flock here
-    # still helps by serializing those fetches one at a time instead of letting
-    # them all run concurrently, which is the contention pattern we are avoiding.
-    # Full cross-worker dedup for BS arrives with Tier 2.1 (Redis shared cache).
+    # Slow path: serialize concurrent fetchers of the same (company, year)
+    # within this worker. Post-Phase-F the BS fetch is a handful of small
+    # SQL-view reads (no row-level df_bs), so cross-worker dedup isn't worth a
+    # flock — at worst each of the 2 workers fires the same cheap query once on
+    # a simultaneous cold miss. The in-process lock still coalesces the threads
+    # within a worker that actually contend.
     lock = _get_inflight_lock(company, year, "bs")
     with lock:
         if not force_refresh:
@@ -874,72 +822,65 @@ def load_bs_data(company: str, year: int, *, force_refresh: bool = False) -> dic
                 logger.info("BS %s/%d: served from cache after lock wait", company, year)
                 return hit
 
-        with _CrossProcLock(company, year, "bs"):
-            if not force_refresh:
-                hit = _try_bs_result_from_cache(company, year)
-                if hit is not None:
-                    logger.info("BS %s/%d: served from cache after cross-proc wait", company, year)
-                    return hit
+        t0 = time.perf_counter()
 
-            t0 = time.perf_counter()
-
-            # Ensure P&L summary is available (needed for Resultados del Ejercicio).
-            # load_pl_data has its own single-flight lock on ("pl"), distinct from
-            # ours on ("bs"), so this nested call cannot self-deadlock.
+        # Ensure P&L summary is available (needed for Resultados del Ejercicio).
+        # load_pl_data has its own single-flight lock on ("pl"), distinct from
+        # ours on ("bs"), so this nested call cannot self-deadlock.
+        pl_df = _caches["pl_df"].get(company, year)
+        if pl_df is None:
+            logger.info("P&L not cached for %s/%d — loading first (BS dependency)", company, year)
+            load_pl_data(company, year)
             pl_df = _caches["pl_df"].get(company, year)
-            if pl_df is None:
-                logger.info("P&L not cached for %s/%d — loading first (BS dependency)", company, year)
-                load_pl_data(company, year)
-                pl_df = _caches["pl_df"].get(company, year)
 
-            t1 = time.perf_counter()
-            # BS summary from VISTA_BS_SUMARIO (Phase C).  last_month = last
-            # posted BS month (MAX(MES) over the row-level view); None ⇒ no BS
-            # activity for the year ⇒ empty result, no notes.
-            last_month = fetch_bs_last_month_only(company, year)
-            if last_month is not None:
-                bs_long = fetch_bs_summary_only(company, year)
-                bs = bs_summary_from_view(bs_long, pl_summary_df=pl_df)
-            else:
-                bs = pd.DataFrame()
-            logger.info("BS transforms: %.2fs", time.perf_counter() - t1)
+        t1 = time.perf_counter()
+        # BS summary from VISTA_BS_SUMARIO (Phase C).  last_month = last
+        # posted BS month (MAX(MES) over the row-level view); None ⇒ no BS
+        # activity for the year ⇒ empty result, no notes.
+        last_month = fetch_bs_last_month_only(company, year)
+        if last_month is not None:
+            bs_long = fetch_bs_summary_only(company, year)
+            bs = bs_summary_from_view(bs_long, pl_summary_df=pl_df)
+        else:
+            bs = pd.DataFrame()
+        logger.info("BS transforms: %.2fs", time.perf_counter() - t1)
 
-            result = {
-                "bs_summary": _df_to_records(bs),
-                "company": company,
-                "year": year,
-                "months": MONTH_NAMES_LIST,
-            }
+        result = {
+            "bs_summary": _df_to_records(bs),
+            "company": company,
+            "year": year,
+            "months": MONTH_NAMES_LIST,
+        }
 
-            # BS note detail tables — built from pre-aggregated cumsum views
-            # (Phase F).  No row-level df_bs; cumsum + densification done in SQL.
-            if last_month is not None:
-                for key, partidas, include_pf, exclude_pf in BS_DETAIL_ENTRIES:
-                    frame = fetch_bs_detalle_cuenta_only(company, year, partidas)
-                    detail = bs_detail_by_cuenta(
-                        frame,
-                        last_month=last_month,
-                        cuenta_prefixes=include_pf,
-                        exclude_cuenta_prefixes=exclude_pf,
-                    )
-                    detail = append_total_row(detail, DESCRIPCION)
-                    result[key] = _df_to_records(detail)
+        # BS note detail tables — built from pre-aggregated cumsum views
+        # (Phase F).  No row-level df_bs; cumsum + densification done in SQL.
+        if last_month is not None:
+            for key, partidas, include_pf, exclude_pf in BS_DETAIL_ENTRIES:
+                frame = fetch_bs_detalle_cuenta_only(company, year, partidas)
+                detail = bs_detail_by_cuenta(
+                    frame,
+                    last_month=last_month,
+                    cuenta_prefixes=include_pf,
+                    exclude_cuenta_prefixes=exclude_pf,
+                )
+                detail = append_total_row(detail, DESCRIPCION)
+                result[key] = _df_to_records(detail)
 
-                # NIT top-20 ranking tables
-                _BS_NIT_RANKINGS = [
-                    ("bs_cxc_comerciales_nit_top20", ["Cuentas por cobrar comerciales (neto)"]),
-                    ("bs_cxc_otras_nit_top20",       ["Otras cuentas por cobrar (neto)"]),
-                    ("bs_cxp_comerciales_nit_top20", ["Cuentas por pagar comerciales"]),
-                    ("bs_cxp_otras_nit_top20",       ["Otras cuentas por pagar"]),
-                ]
-                for key, partidas in _BS_NIT_RANKINGS:
-                    frame = fetch_bs_detalle_nit_only(company, year, partidas)
-                    result[key] = _df_to_records(bs_top20_by_nit(frame, last_month=last_month))
+            # NIT top-20 ranking tables
+            _BS_NIT_RANKINGS = [
+                ("bs_cxc_comerciales_nit_top20", ["Cuentas por cobrar comerciales (neto)"]),
+                ("bs_cxc_otras_nit_top20",       ["Otras cuentas por cobrar (neto)"]),
+                ("bs_cxp_comerciales_nit_top20", ["Cuentas por pagar comerciales"]),
+                ("bs_cxp_otras_nit_top20",       ["Otras cuentas por pagar"]),
+            ]
+            for key, partidas in _BS_NIT_RANKINGS:
+                frame = fetch_bs_detalle_nit_only(company, year, partidas)
+                result[key] = _df_to_records(bs_top20_by_nit(frame, last_month=last_month))
 
-            _caches["bs_result"].set(company, year, result)
-            logger.info("Total load_bs_data: %.2fs", time.perf_counter() - t0)
+        _caches["bs_result"].set(company, year, result)
+        logger.info("Total load_bs_data: %.2fs", time.perf_counter() - t0)
 
-            return result
+        return result
 
 
 # ── Background BS pre-fetch ───────────────────────────────────────────
@@ -948,8 +889,11 @@ _bg_lock = threading.Lock()
 _bg_tasks: dict[tuple[str, int], threading.Thread] = {}
 
 # OOM safety valve: skip speculative prefetches when free RAM is below this.
-# The box is memory-bound (5.8 GB, row-level caches still resident pre-Phase F);
-# a cold click that fans out three prefetches once SIGKILLed a worker.
+# Post-Phase-F the prefetches only pull small SQL-view results, so this is now
+# cheap insurance rather than the load-bearing guard it was when a cold click
+# fanned out three prefetches that each cached a ~400 MB row-level DataFrame and
+# once SIGKILLed a worker. The box is still memory-bound (5.8 GB), so the valve
+# stays.
 _PREFETCH_MIN_AVAILABLE_BYTES = 800 * 1024 * 1024
 
 
