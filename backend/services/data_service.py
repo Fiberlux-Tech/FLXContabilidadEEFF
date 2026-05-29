@@ -56,7 +56,7 @@ class LRUTTLCache:
     Keyed by (company, year) tuples. Each entry holds transformed data + timestamp.
     """
 
-    def __init__(self, name: str, ttl: int = 1800, max_entries: int = 20):
+    def __init__(self, name: str, ttl: int = 10800, max_entries: int = 20):
         self.name = name
         self.ttl = ttl
         self.max_entries = max_entries
@@ -380,6 +380,7 @@ def _compute_analysis_planilla_base(df_stmt, preagg):
     return {
         "planilla_by_cuenta": detail_planilla(df_stmt, preagg=preagg),
         "revenue_by_cuenta": sales_details(df_stmt, preagg=preagg),
+        "otros_revenue_by_cuenta": detail_by_cuenta(df_stmt, ["OTROS INGRESOS"], preagg=preagg),
     }
 
 

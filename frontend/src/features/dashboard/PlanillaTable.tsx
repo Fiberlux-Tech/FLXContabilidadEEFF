@@ -436,7 +436,9 @@ interface PlanillaTableProps {
     rows: ReportRow[];
     columns: DisplayColumn[];
     revenueRow: ReportRow | null;
+    otrosRevenueRow: ReportRow | null;
     revenueByCuenta: ReportRow[];
+    otrosRevenueByCuenta: ReportRow[];
     headcountMap?: HeadcountMap | null;
     selectedYear: number;
     /** MonthSource[] for trailing 12M, null for YTD */
@@ -444,7 +446,7 @@ interface PlanillaTableProps {
     company: string;
 }
 
-export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuenta, headcountMap, selectedYear, monthSources, company }: PlanillaTableProps) {
+export default function PlanillaTable({ rows, columns, revenueRow, otrosRevenueRow, revenueByCuenta, otrosRevenueByCuenta, headcountMap, selectedYear, monthSources, company }: PlanillaTableProps) {
     const [expandedPartidas, setExpandedPartidas] = useState<Set<string>>(new Set());
     const [expandedCecos, setExpandedCecos] = useState<Set<string>>(new Set());
     const [expandedPctPartidas, setExpandedPctPartidas] = useState<Set<string>>(new Set());
@@ -455,8 +457,9 @@ export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuen
     const [rosterModal, setRosterModal] = useState<RosterModalState | null>(null);
     const [rosterEmployees, setRosterEmployees] = useState<{ empleado: string; nombre: string }[]>([]);
     const [rosterLoading, setRosterLoading] = useState(false);
-    const [excludedCuentas, setExcludedCuentas] = useState<Set<string>>(new Set());
+    const [excludedPartidas, setExcludedPartidas] = useState<Set<string>>(new Set());
     const [revenueFilterOpen, setRevenueFilterOpen] = useState(false);
+    const [revenueExpanded, setRevenueExpanded] = useState(false);
     const revenueFilterRef = useRef<HTMLDivElement>(null);
 
     // Close revenue filter dropdown on click outside
@@ -491,38 +494,18 @@ export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuen
         });
     }, [rosterModal, company]);
 
-    // ── Revenue cuenta filter ──────────────────────────────────────────
-    // Filter out synthetic TOTAL rows (added by trailing 12M merge)
-    const revenueDataRows = useMemo(
-        () => revenueByCuenta.filter(r => String(r['CUENTA_CONTABLE'] ?? '') !== 'TOTAL'),
-        [revenueByCuenta],
-    );
-
-    const revenueCuentas = useMemo(() => {
-        const list: { cuenta: string; desc: string }[] = [];
-        const seen = new Set<string>();
-        for (const row of revenueDataRows) {
-            const cuenta = String(row['CUENTA_CONTABLE'] ?? '');
-            if (!cuenta || seen.has(cuenta)) continue;
-            seen.add(cuenta);
-            list.push({ cuenta, desc: String(row['DESCRIPCION'] ?? '') });
-        }
-        list.sort((a, b) => a.cuenta.localeCompare(b.cuenta));
-        return list;
-    }, [revenueDataRows]);
-
-    const adjustedRevenueRow = useMemo<ReportRow | null>(() => {
-        if (!revenueRow) return null;
-        // When no cuenta-level data available, fall back to pl_summary row
-        if (revenueDataRows.length === 0) return revenueRow;
-        // Always build from individual cuenta rows so the denominator stays
-        // consistent whether or not cuentas are excluded.
-        const included = revenueDataRows.filter(
-            r => !excludedCuentas.has(String(r['CUENTA_CONTABLE'] ?? ''))
-        );
-        if (included.length === 0) return null;
-        const synth: ReportRow = { PARTIDA_PL: 'INGRESOS ORDINARIOS' };
-        for (const row of included) {
+    // ── Revenue partida filter ─────────────────────────────────────────
+    // Build a per-partida synthetic row by summing its cuenta-level detail
+    // (or falling back to the pl_summary row if detail is empty).
+    const buildPartidaRow = useCallback((
+        partidaLabel: string,
+        dataRows: ReportRow[],
+        fallback: ReportRow | null,
+    ): ReportRow | null => {
+        const clean = dataRows.filter(r => String(r['CUENTA_CONTABLE'] ?? '') !== 'TOTAL');
+        if (clean.length === 0) return fallback;
+        const synth: ReportRow = { PARTIDA_PL: partidaLabel };
+        for (const row of clean) {
             for (const key of Object.keys(row)) {
                 if (key === 'CUENTA_CONTABLE' || key === 'DESCRIPCION') continue;
                 const val = row[key] as number | null;
@@ -532,23 +515,75 @@ export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuen
             }
         }
         return synth;
-    }, [revenueRow, revenueDataRows, excludedCuentas]);
+    }, []);
 
-    const toggleCuentaExclusion = useCallback((cuenta: string) => {
-        setExcludedCuentas(prev => {
+    const ordRevenueRow = useMemo<ReportRow | null>(
+        () => buildPartidaRow('INGRESOS ORDINARIOS', revenueByCuenta, revenueRow),
+        [buildPartidaRow, revenueByCuenta, revenueRow],
+    );
+    const otrosRevenueRowSynth = useMemo<ReportRow | null>(
+        () => buildPartidaRow('OTROS INGRESOS', otrosRevenueByCuenta, otrosRevenueRow),
+        [buildPartidaRow, otrosRevenueByCuenta, otrosRevenueRow],
+    );
+
+    const ordIncluded = !excludedPartidas.has('INGRESOS ORDINARIOS');
+    const otrosIncluded = !excludedPartidas.has('OTROS INGRESOS');
+
+    // Combined denominator: sum the partidas the user has kept selected.
+    const totalRevenueRow = useMemo<ReportRow | null>(() => {
+        const sources: (ReportRow | null)[] = [];
+        if (ordIncluded) sources.push(ordRevenueRow);
+        if (otrosIncluded) sources.push(otrosRevenueRowSynth);
+        const present = sources.filter((s): s is ReportRow => s !== null);
+        if (present.length === 0) return null;
+        const synth: ReportRow = { PARTIDA_PL: 'TOTAL INGRESOS' };
+        for (const source of present) {
+            for (const key of Object.keys(source)) {
+                if (key === 'PARTIDA_PL' || key === 'CUENTA_CONTABLE' || key === 'DESCRIPCION') continue;
+                const val = source[key] as number | null;
+                if (val != null && typeof val === 'number') {
+                    synth[key] = ((synth[key] as number) ?? 0) + val;
+                }
+            }
+        }
+        return synth;
+    }, [ordRevenueRow, otrosRevenueRowSynth, ordIncluded, otrosIncluded]);
+
+    // Backwards-compatible alias — the % table consumes this as the denominator.
+    const adjustedRevenueRow = totalRevenueRow;
+
+    const togglePartidaExclusion = useCallback((partida: string) => {
+        setExcludedPartidas(prev => {
             const next = new Set(prev);
-            if (next.has(cuenta)) next.delete(cuenta);
-            else next.add(cuenta);
+            if (next.has(partida)) next.delete(partida);
+            else next.add(partida);
             return next;
         });
     }, []);
 
+    // Stable list of cost partidas present in the data — derived from the
+    // unfiltered `rows` so toggling one off doesn't make it disappear from
+    // the filter dropdown.
+    const costPartidaNames = useMemo(() => {
+        const set = new Set<string>();
+        for (const r of rows) {
+            const name = String(r['PARTIDA_PL'] ?? '');
+            if (name && name !== 'TOTAL') set.add(name);
+        }
+        return Array.from(set).sort();
+    }, [rows]);
+
     const filteredRows = useMemo(() => {
-        if (planillaFilter === 'all') return rows;
+        let out = rows;
         if (planillaFilter === 'variable')
-            return rows.filter(r => String(r['CUENTA_CONTABLE'] ?? '') === VARIABLE_CUENTA);
-        return rows.filter(r => String(r['CUENTA_CONTABLE'] ?? '') !== VARIABLE_CUENTA);
-    }, [rows, planillaFilter]);
+            out = out.filter(r => String(r['CUENTA_CONTABLE'] ?? '') === VARIABLE_CUENTA);
+        else if (planillaFilter === 'fija')
+            out = out.filter(r => String(r['CUENTA_CONTABLE'] ?? '') !== VARIABLE_CUENTA);
+        if (excludedPartidas.size > 0) {
+            out = out.filter(r => !excludedPartidas.has(String(r['PARTIDA_PL'] ?? '')));
+        }
+        return out;
+    }, [rows, planillaFilter, excludedPartidas]);
 
     const { partidas: allPartidas } = useMemo(() => buildHierarchy(filteredRows, columns), [filteredRows, columns]);
 
@@ -811,50 +846,64 @@ export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuen
                         </select>
                     </div>
 
-                    {/* Revenue cuenta exclusion filter */}
-                    {revenueCuentas.length > 0 && (
+                    {/* Partida exclusion filter \u2014 Ingresos (Ord/Otros) + Egresos (cost partidas) */}
+                    {(ordRevenueRow || otrosRevenueRowSynth || costPartidaNames.length > 0) && (
                         <div ref={revenueFilterRef} className="relative flex items-center gap-3">
-                            <span className="filter-label !mb-0">Ingresos</span>
+                            <span className="filter-label !mb-0">Partidas</span>
                             <button
                                 onClick={() => setRevenueFilterOpen(prev => !prev)}
                                 className="select-base text-left flex items-center gap-2"
                             >
                                 <span>
-                                    {excludedCuentas.size === 0
-                                        ? 'Todas las cuentas'
-                                        : `${revenueCuentas.length - excludedCuentas.size}/${revenueCuentas.length} cuentas`}
+                                    {excludedPartidas.size === 0
+                                        ? 'Todas'
+                                        : `${excludedPartidas.size} excluida${excludedPartidas.size > 1 ? 's' : ''}`}
                                 </span>
                                 <span className="text-xs">{revenueFilterOpen ? '\u25B4' : '\u25BE'}</span>
                             </button>
                             {revenueFilterOpen && (
                                 <div
-                                    className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border-light rounded-md shadow-lg py-1 max-h-72 overflow-y-auto"
-                                    style={{ minWidth: '380px' }}
+                                    className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border-light rounded-md shadow-lg py-1 max-h-80 overflow-y-auto"
+                                    style={{ minWidth: '260px' }}
                                 >
-                                    {revenueCuentas.map(({ cuenta, desc }) => (
-                                        <label
-                                            key={cuenta}
-                                            className="flex items-center gap-2 px-3 py-1.5 hover:bg-surface-hover cursor-pointer text-sm"
-                                        >
+                                    <div className="px-3 pt-1 pb-0.5 text-[10px] uppercase tracking-wider text-txt-muted">Ingresos</div>
+                                    {ordRevenueRow && (
+                                        <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-surface-hover cursor-pointer text-sm">
                                             <input
                                                 type="checkbox"
-                                                checked={!excludedCuentas.has(cuenta)}
-                                                onChange={() => toggleCuentaExclusion(cuenta)}
+                                                checked={ordIncluded}
+                                                onChange={() => togglePartidaExclusion('INGRESOS ORDINARIOS')}
                                                 className="rounded"
                                             />
-                                            <span className="font-mono text-xs text-txt-muted">{cuenta}</span>
-                                            <span>{desc}</span>
+                                            <span>Ingresos Ordinarios</span>
                                         </label>
-                                    ))}
-                                    {excludedCuentas.size > 0 && (
-                                        <div className="border-t border-border-light px-3 py-1.5">
-                                            <button
-                                                onClick={() => setExcludedCuentas(new Set())}
-                                                className="text-xs text-accent hover:underline"
-                                            >
-                                                Restaurar todas
-                                            </button>
-                                        </div>
+                                    )}
+                                    {otrosRevenueRowSynth && (
+                                        <label className="flex items-center gap-2 px-3 py-1.5 hover:bg-surface-hover cursor-pointer text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={otrosIncluded}
+                                                onChange={() => togglePartidaExclusion('OTROS INGRESOS')}
+                                                className="rounded"
+                                            />
+                                            <span>Otros Ingresos</span>
+                                        </label>
+                                    )}
+                                    {costPartidaNames.length > 0 && (
+                                        <>
+                                            <div className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-txt-muted border-t border-border-light mt-1">Egresos</div>
+                                            {costPartidaNames.map(name => (
+                                                <label key={name} className="flex items-center gap-2 px-3 py-1.5 hover:bg-surface-hover cursor-pointer text-sm">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={!excludedPartidas.has(name)}
+                                                        onChange={() => togglePartidaExclusion(name)}
+                                                        className="rounded"
+                                                    />
+                                                    <span>{name}</span>
+                                                </label>
+                                            ))}
+                                        </>
                                     )}
                                 </div>
                             )}
@@ -906,15 +955,23 @@ export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuen
                     : <TableHead columns={columns} />
                 }
                 <tbody>
-                    {/* Revenue row — always shows gasto regardless of primary metric */}
+                    {/* Revenue rows — collapsible TOTAL INGRESOS with Ord + Otros children. */}
                     {adjustedRevenueRow && (
                         <>
-                            <tr className="rpt-row-highlight">
+                            <tr
+                                className="rpt-row-highlight cursor-pointer"
+                                onClick={() => setRevenueExpanded(prev => !prev)}
+                            >
                                 <td className="rpt-sticky">
-                                    Ingresos Ordinarios
-                                    {excludedCuentas.size > 0 && (
+                                    <span className="rpt-chevron">{revenueExpanded ? '▾' : '▸'}</span>
+                                    TOTAL INGRESOS
+                                    {(!ordIncluded || !otrosIncluded) && (
                                         <span className="text-xs text-txt-muted ml-1">
-                                            ({revenueCuentas.length - excludedCuentas.size}/{revenueCuentas.length} cuentas)
+                                            ({ordIncluded && !otrosIncluded
+                                                ? 'solo Ordinarios'
+                                                : !ordIncluded && otrosIncluded
+                                                    ? 'solo Otros'
+                                                    : 'ninguno'})
                                         </span>
                                     )}
                                 </td>
@@ -931,6 +988,40 @@ export default function PlanillaTable({ rows, columns, revenueRow, revenueByCuen
                                     </>
                                 )}
                             </tr>
+                            {revenueExpanded && ordIncluded && ordRevenueRow && (
+                                <tr className="rpt-row-l1">
+                                    <td className="rpt-sticky">Ingresos Ordinarios</td>
+                                    {isDual ? (
+                                        <>
+                                            <NumCellsDual row={ordRevenueRow} columns={columns} activeHeaders={activeHeaders} getMetric={() => ''} />
+                                            <TotalCell val={ordRevenueRow['TOTAL'] as number | null} />
+                                            <td className="rpt-col-metric"></td>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <NumCells row={ordRevenueRow} columns={columns} activeHeaders={activeHeaders} />
+                                            <TotalCell val={ordRevenueRow['TOTAL'] as number | null} />
+                                        </>
+                                    )}
+                                </tr>
+                            )}
+                            {revenueExpanded && otrosIncluded && otrosRevenueRowSynth && (
+                                <tr className="rpt-row-l1">
+                                    <td className="rpt-sticky">Otros Ingresos</td>
+                                    {isDual ? (
+                                        <>
+                                            <NumCellsDual row={otrosRevenueRowSynth} columns={columns} activeHeaders={activeHeaders} getMetric={() => ''} />
+                                            <TotalCell val={otrosRevenueRowSynth['TOTAL'] as number | null} />
+                                            <td className="rpt-col-metric"></td>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <NumCells row={otrosRevenueRowSynth} columns={columns} activeHeaders={activeHeaders} />
+                                            <TotalCell val={otrosRevenueRowSynth['TOTAL'] as number | null} />
+                                        </>
+                                    )}
+                                </tr>
+                            )}
                             <tr className="rpt-row-spacer"><td colSpan={colSpanAll}></td></tr>
                         </>
                     )}

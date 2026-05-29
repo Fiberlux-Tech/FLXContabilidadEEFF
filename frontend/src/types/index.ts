@@ -119,6 +119,9 @@ export interface ReportData {
   revenue_by_cuenta?: ReportRow[];
   revenue_by_cuenta_ex_ic?: ReportRow[];
   revenue_by_cuenta_only_ic?: ReportRow[];
+  otros_revenue_by_cuenta?: ReportRow[];
+  otros_revenue_by_cuenta_ex_ic?: ReportRow[];
+  otros_revenue_by_cuenta_only_ic?: ReportRow[];
   proveedores_transporte?: ReportRow[];
   proveedores_cecos?: ReportRow[];
   // Proxy Flujo de Caja

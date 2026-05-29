@@ -606,14 +606,30 @@ export function useViewExport(): { handleExport: () => void; canExport: boolean 
                 });
             }
 
-            // Sheet 3: % de Ingresos
+            // Sheet 3: % de Ingresos — denominator = INGRESOS ORDINARIOS + OTROS INGRESOS
             const plSummaryRows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
-            const revenueRow = plSummaryRows.find(r => r['PARTIDA_PL'] === 'INGRESOS ORDINARIOS');
-            if (revenueRow) {
+            const ordRow = plSummaryRows.find(r => r['PARTIDA_PL'] === 'INGRESOS ORDINARIOS');
+            const otrosRow = plSummaryRows.find(r => r['PARTIDA_PL'] === 'OTROS INGRESOS');
+            const totalRevenueRow: ReportRow | null = (() => {
+                if (!ordRow && !otrosRow) return null;
+                const synth: ReportRow = { PARTIDA_PL: 'TOTAL INGRESOS' };
+                for (const source of [ordRow, otrosRow]) {
+                    if (!source) continue;
+                    for (const key of Object.keys(source)) {
+                        if (key === 'PARTIDA_PL') continue;
+                        const val = source[key] as number | null;
+                        if (val != null && typeof val === 'number') {
+                            synth[key] = ((synth[key] as number) ?? 0) + val;
+                        }
+                    }
+                }
+                return synth;
+            })();
+            if (totalRevenueRow) {
                 sheets.push({
                     kind: 'planilla',
                     sheetName: '% de Ingresos',
-                    flatRows: buildPctRows(partidas, revenueRow, cols),
+                    flatRows: buildPctRows(partidas, totalRevenueRow, cols),
                     columns: cols,
                     year: selectedYear,
                     numFmt: '0.0"%"',

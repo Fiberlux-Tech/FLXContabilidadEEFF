@@ -217,13 +217,17 @@ export default function MainContent() {
             const planillaRows = getMergedDetailRows('planilla_by_cuenta', planillaKeys);
             const plSummaryRows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
             const revenueRow = plSummaryRows.find(r => r['PARTIDA_PL'] === 'INGRESOS ORDINARIOS') ?? null;
+            const otrosRevenueRow = plSummaryRows.find(r => r['PARTIDA_PL'] === 'OTROS INGRESOS') ?? null;
             const revenueByCuenta = getMergedDetailRows('revenue_by_cuenta', ['CUENTA_CONTABLE', 'DESCRIPCION']);
+            const otrosRevenueByCuenta = getMergedDetailRows('otros_revenue_by_cuenta', ['CUENTA_CONTABLE', 'DESCRIPCION']);
             return (
                 <PlanillaTable
                     rows={planillaRows}
                     columns={plColumns}
                     revenueRow={revenueRow}
+                    otrosRevenueRow={otrosRevenueRow}
                     revenueByCuenta={revenueByCuenta}
+                    otrosRevenueByCuenta={otrosRevenueByCuenta}
                     headcountMap={headcountMap}
                     selectedYear={selectedYear}
                     monthSources={periodRange === 'trailing12' ? trailingMonthSources : null}
