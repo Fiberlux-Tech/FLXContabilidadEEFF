@@ -8,7 +8,7 @@ FLXContabilidad/
 │   ├── app.py            # Flask app factory, sys.path setup, CORS, blueprint registration
 │   ├── auth.py           # SQLite-based session auth (login, logout, /me, rate limiting)
 │   ├── routes.py         # API endpoints (data loading, drill-down)
-│   ├── manage.py         # CLI for user management (create, list, delete, reset-password)
+│   ├── scripts/          # Operational CLIs (manage_users.py: create, list, delete, set-password, set-admin)
 │   ├── gunicorn.conf.py  # Production WSGI server config
 │   ├── logs/             # Access/error logs
 │   ├── services/         # Python data pipeline
@@ -74,7 +74,7 @@ The dashboard's "Export current view to Excel" button is implemented entirely in
 ## Authentication
 - **Storage**: SQLite file (`backend/users.db`)
 - **Method**: Flask server-side sessions with secure cookies
-- **No signup page** — users are created via CLI: `python manage.py create-user`
+- **No signup page** — users are created via CLI: `python backend/scripts/manage_users.py create`
 - **Session flow**: Login → cookie set → all requests include cookie → /auth/me verifies
 - **Rate limiting**: Failed logins are rate-limited per IP
 

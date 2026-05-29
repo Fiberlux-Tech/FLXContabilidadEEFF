@@ -18,7 +18,7 @@ Both environments read the **same read-only SQL Server** for financial data, but
 
 Each environment has its own `SECRET_KEY`, so a session cookie signed by one is invalid on the other.
 
-**Staging auth is intentionally minimal — only the `admin` user exists there.** Finance team users live on prod only. Do **not** mirror prod users to staging: the point of the isolation is that staging is a developer sandbox, not a shadow production environment. If you ever need a non-admin account on staging for testing, create it explicitly with `backend/manage.py create-user` in the staging tree — do not copy `users.db` across.
+**Staging auth is intentionally minimal — only the `admin` user exists there.** Finance team users live on prod only. Do **not** mirror prod users to staging: the point of the isolation is that staging is a developer sandbox, not a shadow production environment. If you ever need a non-admin account on staging for testing, create it explicitly with `backend/scripts/manage_users.py create` in the staging tree — do not copy `users.db` across.
 
 ## Golden rules
 

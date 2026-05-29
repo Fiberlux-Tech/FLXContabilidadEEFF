@@ -191,10 +191,9 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the staging + prod workflow, the `deploy.
 
 ### Create Users
 ```bash
-cd backend
-../venv/bin/python manage.py create-user --username john --password secret123
-../venv/bin/python manage.py list-users
-../venv/bin/python manage.py reset-password --username john --password newpass
-../venv/bin/python manage.py delete-user --username john
+venv/bin/python backend/scripts/manage_users.py create john "John Doe"   # prompts for password
+venv/bin/python backend/scripts/manage_users.py list
+venv/bin/python backend/scripts/manage_users.py set-password john         # prompts for new password
+venv/bin/python backend/scripts/manage_users.py delete john              # prompts to confirm
 ```
 Run these in the **staging tree only** if you're adding a non-admin test account — never mirror prod users to staging (see DEPLOYMENT.md).
