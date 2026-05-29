@@ -5,7 +5,7 @@ import pandas as pd
 
 from config.calendar import MONTH_NAMES, MONTH_NAMES_LIST, MONTH_NAMES_SET
 from config.fields import (
-    CUENTA_CONTABLE, DESCRIPCION, PARTIDA_PL, PARTIDA_BS,
+    CUENTA_CONTABLE, DESCRIPCION, PARTIDA_PL,
     CENTRO_COSTO, DESC_CECO, SALDO, MES, NIT, RAZON_SOCIAL,
 )
 from config.period import get_period_months, get_ytd_months
@@ -207,18 +207,6 @@ def sales_details(df: pd.DataFrame, with_total_row: bool = False,
 
 # ── BS detail helpers ────────────────────────────────────────────────────────
 
-def last_data_month(df: pd.DataFrame) -> int | None:
-    """Return the highest MES (1–12) present in *df*, or None if empty.
-
-    Used to distinguish closed months (cumsum carries balance forward) from
-    future months (should display as 0 / blank, not the last closed balance).
-    """
-    if df.empty or MES not in df.columns:
-        return None
-    max_mes = df[MES].max()
-    return int(max_mes) if pd.notna(max_mes) else None
-
-
 # Column name emitted by VISTA_BS_PREPARADO_CUMSUM / VISTA_BS_DETALLE_NIT_CUMSUM.
 # Not in config.fields because it is a view-output column, like the SALDO_* columns
 # that statements.py references directly.
@@ -330,41 +318,6 @@ def bs_top20_by_nit(frame: pd.DataFrame, *,
     pivot = pivot.head(top_n).reset_index(drop=True)
     pivot = append_total_row(pivot, RAZON_SOCIAL)
     return pivot
-
-
-def _bs_relacionadas_by_nit(df: pd.DataFrame, partida: str) -> pd.DataFrame:
-    """Pivot a BS partida by NIT x CUENTA description, with TOTAL row and column.
-
-    Rows are unique NIT + RAZON_SOCIAL combinations.
-    Columns are the DESCRIPCION (name) of each CUENTA_CONTABLE.
-    Values are the total SALDO for each NIT / CUENTA combination.
-    A TOTAL column and TOTAL row are appended.
-    """
-    filtered = df[df[PARTIDA_BS] == partida]
-    if filtered.empty:
-        return pd.DataFrame()
-    agg = filtered.groupby([NIT, RAZON_SOCIAL, DESCRIPCION], as_index=False)[SALDO].sum()
-    pivot = agg.pivot_table(index=[NIT, RAZON_SOCIAL], columns=DESCRIPCION,
-                            values=SALDO, aggfunc="sum", fill_value=0)
-    pivot = pivot.reset_index()
-    pivot.columns.name = None
-    # Add TOTAL column
-    value_cols = [c for c in pivot.columns if c not in (NIT, RAZON_SOCIAL)]
-    pivot[TOTAL_COL] = pivot[value_cols].sum(axis=1)
-    pivot = pivot.sort_values(TOTAL_COL, ascending=False).reset_index(drop=True)
-    # Add TOTAL row
-    pivot = append_total_row(pivot, RAZON_SOCIAL)
-    return pivot
-
-
-def bs_cxc_relacionadas_by_nit(df: pd.DataFrame) -> pd.DataFrame:
-    """Pivot BS 'Otras cuentas por cobrar relacionadas' by NIT x CUENTA description."""
-    return _bs_relacionadas_by_nit(df, "Otras cuentas por cobrar relacionadas")
-
-
-def bs_cxp_relacionadas_by_nit(df: pd.DataFrame) -> pd.DataFrame:
-    """Pivot BS 'Otras cuentas por Pagar Relacionadas' by NIT x CUENTA description."""
-    return _bs_relacionadas_by_nit(df, "Otras cuentas por Pagar Relacionadas")
 
 
 def proyectos_especiales(df: pd.DataFrame, mes_cols: list[str],

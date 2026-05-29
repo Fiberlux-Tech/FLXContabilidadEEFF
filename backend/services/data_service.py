@@ -1,11 +1,10 @@
-"""Data service — single fetch, transforms P&L + BS, returns JSON-ready dicts.
+"""Data service — fetches P&L + BS from SQL views, returns JSON-ready dicts.
 
-Sole data path for the web API: loads all report data in one call and
-serves it from an in-memory + disk cache.
+Sole data path for the web API: serves report data from an in-memory cache,
+fetching small aggregated results from the SQL views on a miss.
 
 Split endpoints (load_pl_data / load_bs_data) allow the dashboard to fetch
-P&L first (fast) and defer BS until the user needs it, with background
-pre-fetching to warm the cache.
+P&L first (fast) and defer BS until the user needs it.
 
 Detail P&L sections (ingresos, costo, etc.) are computed lazily via
 load_pl_section() — only when the user navigates to that view.
@@ -23,7 +22,6 @@ import pandas as pd
 import psutil
 
 from data.fetcher import (
-    fetch_all_data, fetch_pnl_only, fetch_bs_only,
     fetch_pnl_summary_only, fetch_bs_summary_only,
     fetch_pnl_preagg_only,
     fetch_bs_detalle_cuenta_only, fetch_bs_detalle_nit_only,
@@ -31,9 +29,8 @@ from data.fetcher import (
     fetch_pnl_detail_only, fetch_pnl_detail_count_only,
     fetch_bs_detail_only, fetch_bs_detail_count_only,
 )
-from accounting.transforms import prepare_pnl_from_view, prepare_bs_from_view
 from accounting.aggregation import (
-    ensure_month_columns, preaggregate, sales_details,
+    ensure_month_columns, sales_details,
     proyectos_especiales,
     detail_by_ceco, detail_by_cuenta, detail_ceco_by_cuenta,
     detail_resultado_financiero, detail_diferencia_cambio, detail_planilla,
@@ -47,8 +44,7 @@ from config.company import VALID_COMPANIES
 from config.views import statement_for_view
 from config.fields import (
     ASIENTO, CUENTA_CONTABLE, DESCRIPCION, NIT, RAZON_SOCIAL,
-    CENTRO_COSTO, DESC_CECO, FECHA, SALDO, PARTIDA_PL, PARTIDA_BS, MES,
-    IS_INTERCOMPANY,
+    CENTRO_COSTO, DESC_CECO, FECHA, SALDO, PARTIDA_PL, MES,
 )
 
 logger = logging.getLogger("flxcontabilidad.data_service")
@@ -189,21 +185,14 @@ class _CrossProcLock:
         return False
 
 
-# Phase 0 (docs/SCALING_ROADMAP.md): cap the 4 heavy buckets that hold full
-# DataFrames at max_entries=6 (5 companies × 2 years = 10 cells; 6 evicts
-# untouched companies after ~30 min TTL). Light/aggregated buckets keep the
-# constructor default max_entries=20 from LRUTTLCache.__init__.
+# All buckets hold small aggregated SQL results (summaries, sections, the
+# preagg triple) and keep the constructor default max_entries=20 from
+# LRUTTLCache.__init__ — no full row-level DataFrames are cached anymore.
 _caches: dict[str, LRUTTLCache] = {
     "result": LRUTTLCache("result"),
-    "df": LRUTTLCache("df", max_entries=6),
-    "bs": LRUTTLCache("bs", max_entries=6),
     "pl_result": LRUTTLCache("pl_result"),
     "bs_result": LRUTTLCache("bs_result"),
     "pl_df": LRUTTLCache("pl_df"),
-    "pl_stmt": LRUTTLCache("pl_stmt", max_entries=6),
-    "pl_preagg": LRUTTLCache("pl_preagg"),
-    "pl_preagg_ex_ic": LRUTTLCache("pl_preagg_ex_ic"),
-    "pl_preagg_only_ic": LRUTTLCache("pl_preagg_only_ic"),
     "pl_sections": LRUTTLCache("pl_sections"),
     # Phase F: the (preagg, ex_ic, only_ic) triple sliced from VISTA_PNL_PREAGG.
     # ~10²–10³ rows per frame — small enough to keep the default max_entries.
@@ -214,73 +203,6 @@ _caches: dict[str, LRUTTLCache] = {
 def get_cache_stats() -> dict:
     """Return cache hit/miss counters and current entry counts per store."""
     return {name: cache.stats() for name, cache in _caches.items()}
-
-
-def invalidate_cache(company: str | None = None, year: int | None = None) -> None:
-    """Clear cache entries. If both args are given, clear only that key."""
-    if company and year:
-        for cache in _caches.values():
-            cache.pop(company, year)
-        _delete_disk_cache(company, year)
-    else:
-        for cache in _caches.values():
-            cache.clear()
-        _clear_all_disk_cache()
-
-
-# ── Disk cache for df_stmt (survives restarts) ────────────────────────
-
-_STMT_CACHE_DIR = Path(__file__).parent / ".stmt_cache"
-_DISK_CACHE_TTL = 30 * 24 * 3600  # 30 days
-
-
-def _stmt_disk_path(company: str, year: int, kind: str = "df_stmt") -> Path:
-    return _STMT_CACHE_DIR / f"{kind}_{company}_{year}.pkl"
-
-
-def _load_from_disk(company: str, year: int, kind: str = "df_stmt") -> pd.DataFrame | None:
-    """Load a cached DataFrame from disk if available and not expired."""
-    path = _stmt_disk_path(company, year, kind)
-    if not path.exists():
-        return None
-    age = time.time() - path.stat().st_mtime
-    if age > _DISK_CACHE_TTL:
-        path.unlink(missing_ok=True)
-        return None
-    try:
-        df = pd.read_pickle(path)
-        logger.info("Loaded %s from disk cache: %s", kind, path.name)
-        return df
-    except Exception:
-        logger.warning("Disk cache corrupted, will re-fetch: %s", path.name)
-        path.unlink(missing_ok=True)
-        return None
-
-
-def _save_to_disk(company: str, year: int, df: pd.DataFrame, kind: str = "df_stmt") -> None:
-    """Persist a DataFrame to disk cache."""
-    _STMT_CACHE_DIR.mkdir(exist_ok=True)
-    path = _stmt_disk_path(company, year, kind)
-    try:
-        df.to_pickle(path)
-        size_mb = path.stat().st_size / 1e6
-        logger.info("Saved %s to disk cache: %s (%.1fMB)", kind, path.name, size_mb)
-    except Exception:
-        logger.warning("Failed to write disk cache: %s", path.name)
-
-
-def _delete_disk_cache(company: str, year: int) -> None:
-    """Delete disk cache files for a specific company/year."""
-    for kind in ("df_stmt", "preagg", "preagg_ex_ic", "preagg_only_ic"):
-        path = _stmt_disk_path(company, year, kind)
-        path.unlink(missing_ok=True)
-
-
-def _clear_all_disk_cache() -> None:
-    """Delete all disk cache files."""
-    if _STMT_CACHE_DIR.exists():
-        for f in _STMT_CACHE_DIR.glob("*.pkl"):
-            f.unlink(missing_ok=True)
 
 
 # ── IC-filtered variant helper ───────────────────────────────────────
@@ -738,34 +660,6 @@ def load_report_data(company: str, year: int, *, force_refresh: bool = False) ->
 
 # ── Split P&L / BS loading (fast dashboard path) ──────────────────────
 
-def _run_pl_summary_only(raw_current_full: pd.DataFrame, company: str, year: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
-    """Fast path: prepare data + compute only P&L summaries (no detail pivots).
-
-    Returns (df_stmt, preagg, pl_df, summary_records_dict).
-
-    raw_current_full comes from VISTA_PNL_PREPARADO and is kept for the
-    detail/drill-down path (cached as df_stmt by callers).  The three P&L
-    summaries themselves are built from VISTA_PNL_SUMARIO via a single
-    SQL roundtrip — one row returns SALDO_TOTAL / SALDO_EX_IC / SALDO_ONLY_IC.
-    """
-    df_stmt = prepare_pnl_from_view(raw_current_full)
-    if "IS_STATEMENT_ELIGIBLE" in df_stmt.columns:
-        df_stmt = df_stmt[df_stmt["IS_STATEMENT_ELIGIBLE"].astype(bool)].copy()
-    preagg = preaggregate(df_stmt)
-
-    summaries = pl_summary_from_view(fetch_pnl_summary_only(company, year))
-    pl         = ensure_month_columns(summaries["total"])
-    pl_ex_ic   = ensure_month_columns(summaries["ex_ic"])
-    pl_only_ic = ensure_month_columns(summaries["only_ic"])
-
-    records = {
-        "pl_summary": _df_to_records(pl),
-        "pl_summary_ex_ic": _df_to_records(pl_ex_ic),
-        "pl_summary_only_ic": _df_to_records(pl_only_ic),
-    }
-    return df_stmt, preagg, pl, records
-
-
 def _run_pl_transforms(company: str, year: int) -> tuple[pd.DataFrame, dict]:
     """Full P&L transform pipeline: summaries + all detail sections.
 
@@ -800,125 +694,11 @@ def _run_pl_transforms(company: str, year: int) -> tuple[pd.DataFrame, dict]:
     return pl, records
 
 
-def _try_pl_stmt_from_cache(company: str, year: int):
-    """Return (df_stmt, preagg, preagg_ex_ic, preagg_only_ic) if all four are
-    in the in-memory cache, else None. Pure read — no side effects."""
-    df_stmt = _caches["pl_stmt"].get(company, year)
-    preagg = _caches["pl_preagg"].get(company, year)
-    preagg_ex_ic = _caches["pl_preagg_ex_ic"].get(company, year)
-    preagg_only_ic = _caches["pl_preagg_only_ic"].get(company, year)
-    if (df_stmt is not None and preagg is not None
-            and preagg_ex_ic is not None and preagg_only_ic is not None):
-        return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
-    return None
-
-
-def _try_pl_stmt_from_disk(company: str, year: int):
-    """Try to load df_stmt + preaggs from disk; if found, populate memory caches.
-    Returns the 4-tuple on hit, None on miss."""
-    df_stmt = _load_from_disk(company, year, "df_stmt")
-    if df_stmt is None:
-        return None
-    preagg = _load_from_disk(company, year, "preagg")
-    if preagg is None:
-        preagg = preaggregate(df_stmt)
-    preagg_ex_ic = _load_from_disk(company, year, "preagg_ex_ic")
-    preagg_only_ic = _load_from_disk(company, year, "preagg_only_ic")
-    if preagg_ex_ic is None or preagg_only_ic is None:
-        preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
-        preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
-        _save_to_disk(company, year, preagg_ex_ic, "preagg_ex_ic")
-        _save_to_disk(company, year, preagg_only_ic, "preagg_only_ic")
-    _caches["pl_stmt"].set(company, year, df_stmt)
-    _caches["pl_preagg"].set(company, year, preagg)
-    _caches["pl_preagg_ex_ic"].set(company, year, preagg_ex_ic)
-    _caches["pl_preagg_only_ic"].set(company, year, preagg_only_ic)
-    _caches["df"].set(company, year, df_stmt)
-    pl = ensure_month_columns(
-        pl_summary_from_view(fetch_pnl_summary_only(company, year))["total"]
-    )
-    _caches["pl_df"].set(company, year, pl)
-    return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
-
-
-def _ensure_pl_stmt_cached(company: str, year: int, *, force_refresh: bool = False) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Return (df_stmt, preagg, preagg_ex_ic, preagg_only_ic) for a company/year.
-
-    Checks: in-memory cache → disk cache → SQL fetch + transform.
-    Also populates pl_df cache for BS dependency. The two IC-filtered preaggs
-    are cached alongside the base preagg so _add_ic_variants doesn't have to
-    re-aggregate on every section call.
-
-    Concurrent calls for the same (company, year) coalesce on a single-flight
-    lock: only one thread does the fetch; the rest re-check the cache and
-    return the just-populated data. force_refresh callers bypass coalescing.
-    """
-    if not force_refresh:
-        hit = _try_pl_stmt_from_cache(company, year)
-        if hit is not None:
-            return hit
-        hit = _try_pl_stmt_from_disk(company, year)
-        if hit is not None:
-            return hit
-
-    # Slow path: acquire the in-process lock, then the cross-process flock,
-    # re-checking caches after each acquire so we never duplicate a fetch
-    # that a sibling worker just completed.
-    lock = _get_inflight_lock(company, year, "pl")
-    with lock:
-        if not force_refresh:
-            hit = _try_pl_stmt_from_cache(company, year)
-            if hit is not None:
-                logger.info("P&L %s/%d: served from cache after lock wait", company, year)
-                return hit
-            hit = _try_pl_stmt_from_disk(company, year)
-            if hit is not None:
-                logger.info("P&L %s/%d: served from disk after lock wait", company, year)
-                return hit
-
-        with _CrossProcLock(company, year, "pl"):
-            if not force_refresh:
-                hit = _try_pl_stmt_from_cache(company, year)
-                if hit is not None:
-                    logger.info("P&L %s/%d: served from cache after cross-proc wait", company, year)
-                    return hit
-                hit = _try_pl_stmt_from_disk(company, year)
-                if hit is not None:
-                    logger.info("P&L %s/%d: served from disk after cross-proc wait", company, year)
-                    return hit
-
-            # Elected fetcher — actually hit the DB.
-            t0 = time.perf_counter()
-            raw = fetch_pnl_only(company, year)
-            logger.info("P&L fetch: %.2fs (%d rows)", time.perf_counter() - t0, len(raw))
-
-            df_stmt, preagg, pl, _ = _run_pl_summary_only(raw, company, year)
-            preagg_ex_ic = preaggregate(df_stmt[~df_stmt[IS_INTERCOMPANY]])
-            preagg_only_ic = preaggregate(df_stmt[df_stmt[IS_INTERCOMPANY]])
-
-            _caches["pl_stmt"].set(company, year, df_stmt)
-            _caches["pl_preagg"].set(company, year, preagg)
-            _caches["pl_preagg_ex_ic"].set(company, year, preagg_ex_ic)
-            _caches["pl_preagg_only_ic"].set(company, year, preagg_only_ic)
-            _caches["df"].set(company, year, df_stmt)
-            _caches["pl_df"].set(company, year, pl)
-
-            # Persist to disk BEFORE releasing the cross-proc lock so sibling
-            # workers waiting on the flock see the disk pickles on their recheck.
-            _save_to_disk(company, year, df_stmt, "df_stmt")
-            _save_to_disk(company, year, preagg, "preagg")
-            _save_to_disk(company, year, preagg_ex_ic, "preagg_ex_ic")
-            _save_to_disk(company, year, preagg_only_ic, "preagg_only_ic")
-
-            return df_stmt, preagg, preagg_ex_ic, preagg_only_ic
-
-
 def _ensure_pl_preagg_cached(company: str, year: int, *, force_refresh: bool = False
                              ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return (preagg, preagg_ex_ic, preagg_only_ic) for a company/year.
 
-    Phase F replacement for the preagg portion of _ensure_pl_stmt_cached: the
-    three frames are sliced from a single VISTA_PNL_PREAGG fetch instead of
+    The three frames are sliced from a single VISTA_PNL_PREAGG fetch instead of
     grouped from a cached ~400 MB row-level df_stmt.  No disk pickle, no
     df_stmt — just a small SQL result cached in-memory.
 
@@ -966,7 +746,6 @@ def load_pl_data(company: str, year: int, *, force_refresh: bool = False) -> dic
     t0 = time.perf_counter()
 
     if force_refresh:
-        _delete_disk_cache(company, year)
         _caches["pl_sections"].pop(company, year)
         _caches["pl_preagg_triple"].pop(company, year)
 

@@ -1,22 +1,18 @@
-"""Data fetching — concurrent DB queries for the dashboard."""
+"""Data fetching — per-query DB calls for the dashboard, each on its own connection."""
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 import pandas as pd
 
 from data.db import connect
 from data.queries import (
-    fetch_pnl_data, fetch_bs_data,
     fetch_pnl_summary, fetch_bs_summary,
     fetch_pnl_preagg, fetch_bs_detalle_cuenta, fetch_bs_detalle_nit,
     fetch_bs_last_month,
     fetch_pnl_detail, fetch_pnl_detail_count,
     fetch_bs_detail, fetch_bs_detail_count,
 )
-from config.period import month_end_boundary
-from config.settings import get_config
 
 
 logger = logging.getLogger("plantillas.data_fetcher")
@@ -26,83 +22,6 @@ def _fetch_with_own_conn(fetch_fn, conn_factory, *args, **kwargs) -> pd.DataFram
     """Run *fetch_fn* using its own database connection (thread-safe)."""
     with conn_factory() as conn:
         return fetch_fn(conn, *args, **kwargs)
-
-
-def fetch_all_data(company: str, year: int, month: int | None, conn_factory=None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Connect to DB and fetch the dashboard's raw P&L + BS DataFrames concurrently.
-
-    Each query runs on its own connection (pyodbc connections are not thread-safe).
-
-    Returns (raw_current_full, raw_bs) — both filtered to the eligible/statement
-    subset by the underlying SQL views.
-    """
-    if conn_factory is None:
-        conn_factory = connect
-
-    logger.info("Fetching data concurrently...")
-    max_workers = get_config().db.fetch_max_workers
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            "raw_full": pool.submit(
-                _fetch_with_own_conn, fetch_pnl_data, conn_factory,
-                company, year, None,
-            ),
-            "raw_bs": pool.submit(
-                _fetch_with_own_conn, fetch_bs_data, conn_factory,
-                company, year, month,
-            ),
-        }
-
-    # Per-query timeout prevents hung DB connections from blocking. Add slack
-    # over pyodbc's conn.timeout so HYT00 fires first with a real SQL error
-    # instead of the executor wrapping it in a generic FuturesTimeoutError.
-    per_query_timeout = get_config().db.query_timeout + 30
-    results = {}
-    for name, fut in futures.items():
-        try:
-            t_wait = time.perf_counter()
-            results[name] = fut.result(timeout=per_query_timeout)
-            logger.info("Query '%s': %.2fs, %d rows", name, time.perf_counter() - t_wait, len(results[name]))
-        except FuturesTimeoutError:
-            raise RuntimeError(f"DB query '{name}' timed out after {per_query_timeout}s")
-        except Exception:
-            logger.exception("DB query '%s' failed", name)
-            raise
-
-    raw_current_full = results["raw_full"]
-    raw_bs = results["raw_bs"]
-
-    if month is not None:
-        start = pd.Timestamp(year, month, 1)
-        end_y, end_m = month_end_boundary(year, month)
-        end = pd.Timestamp(end_y, end_m, 1)
-        raw_current_full = raw_current_full[
-            (raw_current_full["FECHA"] >= start) & (raw_current_full["FECHA"] < end)
-        ].copy()
-
-    return raw_current_full, raw_bs
-
-
-# ── Single-statement fetch functions (for split dashboard loading) ─────
-
-def fetch_pnl_only(company: str, year: int, conn_factory=None) -> pd.DataFrame:
-    """Fetch only P&L data for a single year.  Used by the split dashboard endpoint."""
-    if conn_factory is None:
-        conn_factory = connect
-    t0 = time.perf_counter()
-    df = _fetch_with_own_conn(fetch_pnl_data, conn_factory, company, year, None)
-    logger.info("fetch_pnl_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
-    return df
-
-
-def fetch_bs_only(company: str, year: int, conn_factory=None) -> pd.DataFrame:
-    """Fetch only BS data for a single year.  Used by the split dashboard endpoint."""
-    if conn_factory is None:
-        conn_factory = connect
-    t0 = time.perf_counter()
-    df = _fetch_with_own_conn(fetch_bs_data, conn_factory, company, year, None)
-    logger.info("fetch_bs_only %s/%d: %.2fs, %d rows", company, year, time.perf_counter() - t0, len(df))
-    return df
 
 
 # ── Phase C summary fetches (pre-aggregated, ~100–360 rows) ────────────
