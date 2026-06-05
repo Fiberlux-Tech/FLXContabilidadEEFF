@@ -221,9 +221,10 @@ function buildFinanzasRows(
 
 /**
  * Build flat "database" rows for the Finanzas (costos/gastos) view.
- * Each row = Partida P&L × Centro Costo × Cuenta, followed by month values + TOTAL.
- *  - grouped=true:  cuenta column = 2-digit prefix bucket (named when known, bare prefix otherwise)
- *  - grouped=false: cuenta column = raw "CUENTA_CONTABLE DESCRIPCION"
+ * Label columns: Partida P&L · Centro Costo (code) · Desc. CECO (name) · cuenta code · cuenta name.
+ *  - grouped=true:  cuenta = 2-digit prefix bucket → [prefijo, nombre agrup.]
+ *                   (named category when known, bare prefix as name otherwise)
+ *  - grouped=false: cuenta = raw account → [CUENTA_CONTABLE, DESCRIPCION]
  */
 function buildFinanzasDatabaseRows(
     summaryRows: ReportRow[],
@@ -251,24 +252,28 @@ function buildFinanzasDatabaseRows(
         const cecoGroups = buildCecoGroups(detailRows, columns);
 
         for (const group of cecoGroups) {
+            // Centro Costo code/name come straight off the cuenta rows (same for the whole group)
+            const ccCode = String(group.cuentaRows[0]?.['CENTRO_COSTO'] ?? '');
+            const ccDesc = String(group.cuentaRows[0]?.['DESC_CECO'] ?? '');
+
             if (grouped) {
                 // Bucket every cuenta under its 2-digit prefix
-                const buckets = new Map<string, { label: string; values: Record<string, number> }>();
+                const buckets = new Map<string, { prefix: string; name: string; values: Record<string, number> }>();
                 for (const row of group.cuentaRows) {
                     const cuenta = String(row['CUENTA_CONTABLE'] ?? '');
                     if (!cuenta || cuenta === 'TOTAL') continue;
                     const known = getCuentaPrefix(cuenta);          // named category or null
                     const prefix = getCuentaPrefixAny(cuenta);      // always a 2-digit (or '—')
-                    const label = known ? `${known}: ${CUENTA_PREFIX_LABELS[known]}` : prefix;
-                    if (!buckets.has(prefix)) buckets.set(prefix, { label, values: {} });
+                    const name = known ? CUENTA_PREFIX_LABELS[known] : prefix;
+                    if (!buckets.has(prefix)) buckets.set(prefix, { prefix, name, values: {} });
                     const b = buckets.get(prefix)!;
                     for (const m of monthKeys) {
                         b.values[m] = (b.values[m] ?? 0) + ((row[m] as number) ?? 0);
                     }
                     b.values['TOTAL'] = (b.values['TOTAL'] ?? 0) + ((row['TOTAL'] as number) ?? 0);
                 }
-                for (const { label, values } of buckets.values()) {
-                    flat.push({ labels: [partida, group.label, label], values });
+                for (const { prefix, name, values } of buckets.values()) {
+                    flat.push({ labels: [partida, ccCode, ccDesc, prefix, name], values });
                 }
             } else {
                 // One row per raw cuenta
@@ -282,7 +287,7 @@ function buildFinanzasDatabaseRows(
                         if (v !== null) values[col.sourceMonths[0]] = v;
                     }
                     values['TOTAL'] = (row['TOTAL'] as number) ?? 0;
-                    flat.push({ labels: [partida, group.label, `${cuenta} ${desc}`], values });
+                    flat.push({ labels: [partida, ccCode, ccDesc, cuenta, desc], values });
                 }
             }
         }
@@ -734,7 +739,7 @@ export function useViewExport(): { handleExport: () => void; canExport: boolean 
             sheets.push({
                 kind: 'database',
                 sheetName: 'BD Agrupado',
-                headerLabels: ['Partida P&L', 'Centro Costo', 'Cuenta (agrup.)'],
+                headerLabels: ['Partida P&L', 'Centro Costo', 'Desc. CECO', 'Prefijo', 'Nombre agrup.'],
                 flatRows: buildFinanzasDatabaseRows(rows, cols, getMergedDetailRows, true),
                 columns: cols,
                 year: selectedYear,
@@ -743,7 +748,7 @@ export function useViewExport(): { handleExport: () => void; canExport: boolean 
             sheets.push({
                 kind: 'database',
                 sheetName: 'BD Detalle',
-                headerLabels: ['Partida P&L', 'Centro Costo', 'Cuenta Contable'],
+                headerLabels: ['Partida P&L', 'Centro Costo', 'Desc. CECO', 'Cuenta Contable', 'Descripción'],
                 flatRows: buildFinanzasDatabaseRows(rows, cols, getMergedDetailRows, false),
                 columns: cols,
                 year: selectedYear,

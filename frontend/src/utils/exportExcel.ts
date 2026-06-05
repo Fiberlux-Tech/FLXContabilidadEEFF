@@ -330,8 +330,9 @@ function buildDatabaseSheet(def: DatabaseSheetDef): XLSX.WorkSheet {
     }
 
     ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: totalCols - 1 } });
+    // Widen "name"-style label columns; keep short code columns narrow
     ws['!cols'] = [
-        ...headerLabels.map((_, i) => ({ wch: i === 0 ? 22 : 32 })),
+        ...headerLabels.map(h => ({ wch: /desc|nombre|partida/i.test(h) ? 30 : 14 })),
         ...Array(dataCols).fill({ wch: 14 }),
     ];
 
