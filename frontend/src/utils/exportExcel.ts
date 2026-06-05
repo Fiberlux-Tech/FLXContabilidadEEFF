@@ -30,6 +30,21 @@ export interface PlanillaExportRow {
     values: Record<string, number>; // month keys + TOTAL
 }
 
+/** A single flat "database" row: N label cells + month/TOTAL values. */
+export interface FlatRow {
+    labels: string[];               // e.g. ['COSTO', '101 - Operaciones', '62: Gasto de Personal']
+    values: Record<string, number>; // month keys + TOTAL
+}
+
+export interface DatabaseSheetDef {
+    kind: 'database';
+    sheetName: string;
+    headerLabels: string[];         // e.g. ['Partida P&L', 'Centro Costo', 'Cuenta']
+    flatRows: FlatRow[];
+    columns: DisplayColumn[];
+    year: number;
+}
+
 export interface PlanillaSheetDef {
     kind: 'planilla';
     sheetName: string;
@@ -40,7 +55,7 @@ export interface PlanillaSheetDef {
     numFmt?: string;
 }
 
-export type ExportSheet = SummarySheetDef | DetailSheetDef | PlanillaSheetDef;
+export type ExportSheet = SummarySheetDef | DetailSheetDef | PlanillaSheetDef | DatabaseSheetDef;
 
 export interface ExportOptions {
     sheets: ExportSheet[];
@@ -266,6 +281,63 @@ function buildPlanillaSheet(def: PlanillaSheetDef): XLSX.WorkSheet {
     return ws;
 }
 
+// ── Database (flat table) sheet builder ──────────────────────────────
+
+function buildDatabaseSheet(def: DatabaseSheetDef): XLSX.WorkSheet {
+    const { headerLabels, flatRows, columns, year } = def;
+    const dataCols = columns.length + 1; // +1 for year total
+    const totalCols = headerLabels.length + dataCols;
+
+    const ws: XLSX.WorkSheet = {};
+    let r = 0;
+
+    // Header row: label columns + month columns + year total
+    headerLabels.forEach((hl, ci) => {
+        ws[cellRef(r, ci)] = { v: hl, t: 's', s: HEADER_LABEL_STYLE };
+    });
+    columns.forEach((col, ci) => {
+        ws[cellRef(r, headerLabels.length + ci)] = { v: col.header, t: 's', s: HEADER_STYLE };
+    });
+    ws[cellRef(r, headerLabels.length + columns.length)] = { v: String(year), t: 's', s: HEADER_STYLE };
+    r++;
+
+    // Data rows
+    for (const row of flatRows) {
+        // Label columns
+        headerLabels.forEach((_, ci) => {
+            ws[cellRef(r, ci)] = { v: row.labels[ci] ?? '', t: 's', s: LABEL_STYLE };
+        });
+
+        // Month columns
+        columns.forEach((col, ci) => {
+            const val = getCellValue(row.values as unknown as ReportRow, col);
+            if (val !== null && val !== undefined) {
+                ws[cellRef(r, headerLabels.length + ci)] = { v: val, t: 'n', s: NUM_STYLE };
+            } else {
+                ws[cellRef(r, headerLabels.length + ci)] = { v: '', t: 's', s: NUM_STYLE };
+            }
+        });
+
+        // Year total
+        const total = row.values['TOTAL'] ?? null;
+        if (total !== null && total !== undefined) {
+            ws[cellRef(r, headerLabels.length + columns.length)] = { v: total, t: 'n', s: NUM_STYLE };
+        } else {
+            ws[cellRef(r, headerLabels.length + columns.length)] = { v: '', t: 's', s: NUM_STYLE };
+        }
+
+        r++;
+    }
+
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: r - 1, c: totalCols - 1 } });
+    ws['!cols'] = [
+        ...headerLabels.map((_, i) => ({ wch: i === 0 ? 22 : 32 })),
+        ...Array(dataCols).fill({ wch: 14 }),
+    ];
+
+    return ws;
+}
+
 // ── Main export function ─────────────────────────────────────────────
 
 export function exportToExcel({ sheets, filename }: ExportOptions): void {
@@ -276,7 +348,9 @@ export function exportToExcel({ sheets, filename }: ExportOptions): void {
             ? buildSummarySheet(sheet)
             : sheet.kind === 'planilla'
                 ? buildPlanillaSheet(sheet)
-                : buildDetailSheet(sheet);
+                : sheet.kind === 'database'
+                    ? buildDatabaseSheet(sheet)
+                    : buildDetailSheet(sheet);
 
         XLSX.utils.book_append_sheet(wb, ws, safeSheetName(sheet.sheetName));
     }

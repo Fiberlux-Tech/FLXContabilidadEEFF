@@ -1,13 +1,14 @@
 import { useCallback } from 'react';
 import { useReport } from '@/contexts/ReportContext';
 import { VIEW_TITLE_MAP, VIEW_TABLE_CONFIGS, ALL_MONTHS, isAllZeroTable, type NoteView } from '@/config/viewConfigs';
-import { exportToExcel, type ExportSheet, type SummarySheetDef, type DetailSheetDef, type PlanillaExportRow } from '@/utils/exportExcel';
+import { exportToExcel, type ExportSheet, type SummarySheetDef, type DetailSheetDef, type PlanillaExportRow, type FlatRow } from '@/utils/exportExcel';
 import type { ReportData, ReportRow, DisplayColumn, Month, MonthSource } from '@/types';
 import type { HeadcountMap } from '@/features/dashboard/useHeadcount';
 import { useHeadcount } from '@/features/dashboard/useHeadcount';
 import { getCellValue, getSummaryTotal } from '@/utils/cellValue';
 import { getDataKeyForTable } from '@/utils/dataKeyMapping';
 import { buildCecoGroups, buildCuentaEntries, sumRows } from '@/utils/cecoGrouping';
+import { getCuentaPrefix, getCuentaPrefixAny, CUENTA_PREFIX_LABELS } from '@/config/cecoGroups';
 
 // ── Planilla grouping (mirrors PlanillaTable hierarchy) ─────────────
 
@@ -211,6 +212,78 @@ function buildFinanzasRows(
                 }
                 eVals['TOTAL'] = (src['TOTAL'] as number) ?? 0;
                 flat.push({ label: eLabel, level: 2, values: eVals });
+            }
+        }
+    }
+
+    return flat;
+}
+
+/**
+ * Build flat "database" rows for the Finanzas (costos/gastos) view.
+ * Each row = Partida P&L × Centro Costo × Cuenta, followed by month values + TOTAL.
+ *  - grouped=true:  cuenta column = 2-digit prefix bucket (named when known, bare prefix otherwise)
+ *  - grouped=false: cuenta column = raw "CUENTA_CONTABLE DESCRIPCION"
+ */
+function buildFinanzasDatabaseRows(
+    summaryRows: ReportRow[],
+    columns: DisplayColumn[],
+    getMergedDetailRows: (key: keyof ReportData, labelKeys: string[]) => ReportRow[],
+    grouped: boolean,
+): FlatRow[] {
+    const cecoKeys = ['CENTRO_COSTO', 'DESC_CECO', 'CUENTA_CONTABLE', 'DESCRIPCION'];
+    const monthKeys = new Set<string>();
+    for (const col of columns) {
+        for (const m of col.sourceMonths) monthKeys.add(m);
+    }
+    const flat: FlatRow[] = [];
+
+    const summaryByPartida = new Map(
+        summaryRows.map(r => [r['PARTIDA_PL'] as string, r]),
+    );
+
+    for (const partida of FINANZAS_PARTIDA_ORDER) {
+        if (!summaryByPartida.has(partida)) continue;
+        const dataKey = PARTIDA_TO_DATA_KEY[partida];
+        if (!dataKey) continue;
+
+        const detailRows = getMergedDetailRows(dataKey, cecoKeys);
+        const cecoGroups = buildCecoGroups(detailRows, columns);
+
+        for (const group of cecoGroups) {
+            if (grouped) {
+                // Bucket every cuenta under its 2-digit prefix
+                const buckets = new Map<string, { label: string; values: Record<string, number> }>();
+                for (const row of group.cuentaRows) {
+                    const cuenta = String(row['CUENTA_CONTABLE'] ?? '');
+                    if (!cuenta || cuenta === 'TOTAL') continue;
+                    const known = getCuentaPrefix(cuenta);          // named category or null
+                    const prefix = getCuentaPrefixAny(cuenta);      // always a 2-digit (or '—')
+                    const label = known ? `${known}: ${CUENTA_PREFIX_LABELS[known]}` : prefix;
+                    if (!buckets.has(prefix)) buckets.set(prefix, { label, values: {} });
+                    const b = buckets.get(prefix)!;
+                    for (const m of monthKeys) {
+                        b.values[m] = (b.values[m] ?? 0) + ((row[m] as number) ?? 0);
+                    }
+                    b.values['TOTAL'] = (b.values['TOTAL'] ?? 0) + ((row['TOTAL'] as number) ?? 0);
+                }
+                for (const { label, values } of buckets.values()) {
+                    flat.push({ labels: [partida, group.label, label], values });
+                }
+            } else {
+                // One row per raw cuenta
+                for (const row of group.cuentaRows) {
+                    const cuenta = String(row['CUENTA_CONTABLE'] ?? '');
+                    if (!cuenta || cuenta === 'TOTAL') continue;
+                    const desc = String(row['DESCRIPCION'] ?? '');
+                    const values: Record<string, number> = {};
+                    for (const col of columns) {
+                        const v = getCellValue(row, col);
+                        if (v !== null) values[col.sourceMonths[0]] = v;
+                    }
+                    values['TOTAL'] = (row['TOTAL'] as number) ?? 0;
+                    flat.push({ labels: [partida, group.label, `${cuenta} ${desc}`], values });
+                }
             }
         }
     }
@@ -649,10 +722,29 @@ export function useViewExport(): { handleExport: () => void; canExport: boolean 
         } else if (currentView === 'analysis_pl_finanzas') {
             const rows = getMergedRows('pl_summary', 'PARTIDA_PL', 'pl');
             const cols = getDisplayColumns('pl');
+            // Tab 1: hierarchical planilla (unchanged — mirrors the screen)
             sheets.push({
                 kind: 'planilla',
                 sheetName: viewTitle,
                 flatRows: buildFinanzasRows(rows, cols, getMergedDetailRows),
+                columns: cols,
+                year: selectedYear,
+            });
+            // Tab 2: flat DB, cuenta grouped by 2-digit prefix
+            sheets.push({
+                kind: 'database',
+                sheetName: 'BD Agrupado',
+                headerLabels: ['Partida P&L', 'Centro Costo', 'Cuenta (agrup.)'],
+                flatRows: buildFinanzasDatabaseRows(rows, cols, getMergedDetailRows, true),
+                columns: cols,
+                year: selectedYear,
+            });
+            // Tab 3: flat DB, each raw cuenta contable
+            sheets.push({
+                kind: 'database',
+                sheetName: 'BD Detalle',
+                headerLabels: ['Partida P&L', 'Centro Costo', 'Cuenta Contable'],
+                flatRows: buildFinanzasDatabaseRows(rows, cols, getMergedDetailRows, false),
                 columns: cols,
                 year: selectedYear,
             });
