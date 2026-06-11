@@ -94,11 +94,14 @@ def bulk_upsert_roster(db_path: str, records: list[dict]) -> int:
     """Insert or ignore raw employee roster rows.
 
     Each dict must have keys: cia, centro_costo, year_month, empleado, nombre.
-    Returns the number of rows written.
+    Returns the number of rows actually inserted — rows skipped by the
+    UNIQUE constraint (duplicates / already present) are not counted.
     """
     if not records:
         return 0
     with _connect(db_path) as conn:
+        # A fresh connection starts at total_changes == 0, so after this
+        # executemany it equals exactly the rows INSERT OR IGNORE wrote.
         conn.executemany(
             "INSERT OR IGNORE INTO employee_roster "
             "(cia, centro_costo, year_month, empleado, nombre) "
@@ -107,8 +110,12 @@ def bulk_upsert_roster(db_path: str, records: list[dict]) -> int:
               r["empleado"], r.get("nombre", ""))
              for r in records],
         )
-    logger.info("Upserted %d roster records", len(records))
-    return len(records)
+        inserted = conn.total_changes
+    logger.info(
+        "Roster upsert: %d inserted, %d skipped (already present)",
+        inserted, len(records) - inserted,
+    )
+    return inserted
 
 
 def fetch_roster_detail(
