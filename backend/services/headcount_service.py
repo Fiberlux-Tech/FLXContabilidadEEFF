@@ -203,6 +203,9 @@ _HEADER_ALIASES: dict[str, list[str]] = {
     "nombre": ["NOMBRE", "NAME", "NOMBRE_EMPLEADO"],
     "ceco_code": [
         "COD_CENTRO_DE_COSTO", "COD_CENTRO_COSTO", "CECO_CODE",
+        # Newer planilla layout names the *code* column plainly "Centro de
+        # Costo" (the CECO name/description sits in a separate column).
+        "CENTRO_DE_COSTO", "CENTRO_COSTO",
     ],
 }
 
@@ -213,7 +216,7 @@ def _detect_roster_columns(header: list[str]) -> dict[str, int]:
     Raises ValueError if any required column is not found.
     """
     normalised = [
-        h.strip().upper().replace(" ", "_").replace("-", "_")
+        h.strip().upper().replace(" ", "_").replace("-", "_").replace("+", "_")
         for h in header
     ]
     result: dict[str, int] = {}
@@ -222,19 +225,20 @@ def _detect_roster_columns(header: list[str]) -> dict[str, int]:
             if col in [a.replace("-", "_") for a in aliases]:
                 result[key] = i
                 break
-    # Fallback: assume standard column order if header detection fails
-    missing = [k for k in _HEADER_ALIASES if k not in result]
+    # The data-bearing columns must be matched by header name. Guessing their
+    # position silently corrupts the import (e.g. storing a CECO description
+    # where the code belongs), so we refuse to guess for these.
+    required = ["ano_mes", "empresa", "empleado", "ceco_code"]
+    missing = [k for k in required if k not in result]
     if missing:
-        # Try positional fallback: A=año-mes, B=empresa, C=empleado, D=nombre, F=cod ceco
-        if len(header) >= 6:
-            result.setdefault("ano_mes", 0)
-            result.setdefault("empresa", 1)
-            result.setdefault("empleado", 2)
-            result.setdefault("nombre", 3)
-            result.setdefault("ceco_code", 5)
-        else:
-            raise ValueError(
-                f"Could not detect required columns: {missing}. "
-                f"Expected headers: Año-Mes, EMPRESA, EMPLEADO, COD CENTRO DE COSTO"
-            )
+        raise ValueError(
+            f"No se pudieron detectar las columnas requeridas: {missing}. "
+            f"Encabezados encontrados: {header}. "
+            f"Se esperan: Año-Mes, EMPRESA, EMPLEADO, "
+            f"y el código del centro de costo (Centro de Costo / COD CENTRO DE COSTO)."
+        )
+    # `nombre` (employee name) is optional — fall back to its conventional
+    # position only when present and unmatched, otherwise leave it unset.
+    if "nombre" not in result and len(header) > 3:
+        result.setdefault("nombre", 3)
     return result
